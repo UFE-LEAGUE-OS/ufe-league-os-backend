@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: league_os_db
+    env_file:
+      - .env
+    volumes:
+      - league_os_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U league_os_user -d league_os"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: league_os_backend
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - league_os_media:/app/media
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  league_os_postgres_data:
+  league_os_media:
