@@ -1,0 +1,168 @@
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from rest_framework import serializers
+
+User = get_user_model()
+
+
+def normalize_phone_number(phone_number):
+    """Normalize Ugandan phone numbers into +256 format"""
+
+    if not phone_number:
+        return phone_number
+
+    value = phone_number.strip().replace(" ", "").replace("-", "")
+
+    if value.startswith("+"):
+        return value
+
+    if value.startswith("0"):
+        return f"+256{value[1:]}"
+
+    if value.startswith("256"):
+        return f"+{value}"
+
+    return value
+
+
+class UserSerializer(serializers.ModelSerializer):
+    """Serializer for returning safe user data to the frontend."""
+
+    full_name = serializers.CharField(read_only=True)
+    role_display = serializers.CharField(source="get_role_display", read_only=True)
+    avatar_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "email",
+            "phone_number",
+            "first_name",
+            "last_name",
+            "full_name",
+            "role",
+            "role_display",
+            "avatar",
+            "avatar_url",
+            "is_email_verified",
+            "is_phone_verified",
+            "date_joined",
+        )
+
+        read_only_fields = (
+            "id",
+            "role",
+            "role_display",
+            "avatar_url",
+            "is_email_verified",
+            "is_phone_verified",
+            "date_joined",
+        )
+
+    def get_avatar_url(self, obj):
+        request = self.context.get("request")
+
+        if not obj.avatar:
+            return None
+
+        if request:
+            return request.build_absolute_uri(obj.avatar.url)
+
+        return obj.avatar.url
+
+
+class RegisterSerializer(serializers.Serializer):
+    """Serializer for user registration"""
+
+    email = serializers.EmailField()
+    phone_number = serializers.CharField(max_length=20)
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate_email(self, value):
+        email = value.strip().lower()
+
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError(
+                "A user with this email address already exists."
+            )
+
+        return email
+
+    def validate_phone_number(self, value):
+        phone_number = normalize_phone_number(value)
+
+        if User.objects.filter(phone_number=phone_number).exists():
+            raise serializers.ValidationError(
+                "A user with this phone number already exists."
+            )
+
+        return phone_number
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
+
+        validate_password(attrs["password"])
+
+        return attrs
+
+    def create(self, validated_data):
+        validated_data.pop("confirm_password")
+
+        password = validated_data.pop("password")
+
+        user = User.objects.create_user(
+            email=validated_data["email"],
+            password=password,
+            phone_number=validated_data["phone_number"],
+            first_name=validated_data["first_name"].strip(),
+            last_name=validated_data["last_name"].strip(),
+            role=User.Role.FAN,
+        )
+
+        return user
+
+
+class LoginSerializer(serializers.Serializer):
+    """Serializer for login with email or phone number."""
+
+    identifier = serializers.CharField()
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        identifier = attrs.get("identifier", "").strip()
+        password = attrs.get("password", "")
+
+        if not identifier:
+            raise serializers.ValidationError(
+                {"identifier": "Email or phone number is required."}
+            )
+
+        if not password:
+            raise serializers.ValidationError({"password": "Password is required."})
+
+        user = self.get_user_by_identifier(identifier)
+
+        if user is None or not user.check_password(password):
+            raise serializers.ValidationError("Invalid login credentials.")
+
+        if not user.is_active:
+            raise serializers.ValidationError("This account is inactive.")
+
+        attrs["user"] = user
+
+        return attrs
+
+    def get_user_by_identifier(self, identifier):
+        if "@" in identifier:
+            return User.objects.filter(email__iexact=identifier.lower()).first()
+
+        phone_number = normalize_phone_number(identifier)
+
+        return User.objects.filter(phone_number=phone_number).first()
