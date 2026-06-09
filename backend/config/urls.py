@@ -16,8 +16,21 @@ Including another URLconf
 """
 
 from django.contrib import admin
+from django.http import JsonResponse
 from django.urls import path
+
+
+def health_check_view(request):
+    return JsonResponse(
+        {
+            "status": "OK",
+            "service": "League OS Backend API",
+            "version": "sprint-1-foundation",
+        }
+    )
+
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("api/health/", health_check_view, name="health-check"),
 ]
