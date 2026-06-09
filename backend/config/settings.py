@@ -46,6 +46,8 @@ INSTALLED_APPS = [
     # Third-party apps
     "corsheaders",
     "rest_framework",
+    # Local apps
+    "accounts",
 ]
 
 MIDDLEWARE = [
@@ -179,3 +181,6 @@ DEFAULT_FROM_EMAIL = config(
 OTP_EXPIRY_MINUTES = config("OTP_EXPIRY_MINUTES", default=10, cast=int)
 
 OTP_MAX_ATTEMPTS = config("OTP_MAX_ATTEMPTS", default=5, cast=int)
+
+# Custom User Model
+AUTH_USER_MODEL = "accounts.User"
