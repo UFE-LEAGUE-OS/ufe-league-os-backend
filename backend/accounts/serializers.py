@@ -166,3 +166,32 @@ class LoginSerializer(serializers.Serializer):
         phone_number = normalize_phone_number(identifier)
 
         return User.objects.filter(phone_number=phone_number).first()
+
+
+class VerifyOTPSerializer(serializers.Serializer):
+    """Serializer for verifying an email OTP."""
+
+    email = serializers.EmailField()
+    code = serializers.CharField(max_length=6)
+    purpose = serializers.ChoiceField(
+        choices=["EMAIL_VERIFICATION"],
+        default="EMAIL_VERIFICATION",
+        required=False,
+    )
+
+    def validate_code(self, value):
+        code = value.strip()
+
+        if not code.isdigit():
+            raise serializers.ValidationError("OTP code must contain digits only.")
+
+        if len(code) != 6:
+            raise serializers.ValidationError("OTP code must be 6 digits long.")
+
+        return code
+
+
+class ResendOTPSerializer(serializers.Serializer):
+    """Serializer for requesting a new email verification OTP."""
+
+    email = serializers.EmailField()

@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import User
+from .models import User, EmailOTP
 
 
 # Register your models here.
@@ -99,3 +99,14 @@ class CustomUserAdmin(UserAdmin):
             },
         ),
     )
+
+
+@admin.register(EmailOTP)
+class EmailOTPAdmin(admin.ModelAdmin):
+    """Django admin configuration for email OTP records"""
+
+    list_display = ("user", "code", "purpose", "is_used", "attempts", "expires_at")
+    list_filter = ("purpose", "is_used", "created_at", "expires_at")
+    search_fields = ("user__email", "user__phone_number", "code")
+    readonly_fields = ("created_at", "updated_at")
+    ordering = ("-created_at",)

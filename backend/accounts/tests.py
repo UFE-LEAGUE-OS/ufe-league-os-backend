@@ -1,6 +1,9 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
+
+from .models import EmailOTP
 
 # Create your tests here.
 
@@ -262,3 +265,155 @@ class AuthAPITests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["email"], user.email)
+
+    def test_register_creates_email_otp(self):
+        payload = {
+            "email": "otpuser@example.com",
+            "phone_number": "+256710000000",
+            "first_name": "Otp",
+            "last_name": "User",
+            "password": "StrongPass123",
+            "confirm_password": "StrongPass123",
+        }
+
+        response = self.client.post(
+            "/api/accounts/register/",
+            payload,
+            format="json",
+        )
+
+        user = User.objects.get(email=payload["email"])
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            EmailOTP.objects.filter(
+                user=user,
+                purpose=EmailOTP.Purpose.EMAIL_VERIFICATION,
+                is_used=False,
+            ).exists()
+        )
+
+    def test_verify_email_otp_successful(self):
+        user = User.objects.create_user(
+            email="verify@example.com",
+            phone_number="+256711000000",
+            password="StrongPass123",
+            first_name="Verify",
+            last_name="User",
+        )
+
+        otp = EmailOTP.objects.create(
+            user=user,
+            code="123456",
+            purpose=EmailOTP.Purpose.EMAIL_VERIFICATION,
+            expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        )
+
+        response = self.client.post(
+            "/api/accounts/verify-otp/",
+            {
+                "email": user.email,
+                "code": otp.code,
+                "purpose": "EMAIL_VERIFICATION",
+            },
+            format="json",
+        )
+
+        user.refresh_from_db()
+        otp.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(user.is_email_verified)
+        self.assertTrue(otp.is_used)
+
+    def test_verify_email_otp_with_invalid_code_fails(self):
+        user = User.objects.create_user(
+            email="invalid-otp@example.com",
+            phone_number="+256712000000",
+            password="StrongPass123",
+            first_name="Invalid",
+            last_name="Otp",
+        )
+
+        otp = EmailOTP.objects.create(
+            user=user,
+            code="123456",
+            purpose=EmailOTP.Purpose.EMAIL_VERIFICATION,
+            expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        )
+
+        response = self.client.post(
+            "/api/accounts/verify-otp/",
+            {
+                "email": user.email,
+                "code": "000000",
+                "purpose": "EMAIL_VERIFICATION",
+            },
+            format="json",
+        )
+
+        user.refresh_from_db()
+        otp.refresh_from_db()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(user.is_email_verified)
+        self.assertEqual(otp.attempts, 1)
+
+    def test_verify_email_otp_with_expired_code_fails(self):
+        user = User.objects.create_user(
+            email="expired-otp@example.com",
+            phone_number="+256713000000",
+            password="StrongPass123",
+            first_name="Expired",
+            last_name="Otp",
+        )
+
+        otp = EmailOTP.objects.create(
+            user=user,
+            code="123456",
+            purpose=EmailOTP.Purpose.EMAIL_VERIFICATION,
+            expires_at=timezone.now() - timezone.timedelta(minutes=1),
+        )
+
+        response = self.client.post(
+            "/api/accounts/verify-otp/",
+            {
+                "email": user.email,
+                "code": otp.code,
+                "purpose": "EMAIL_VERIFICATION",
+            },
+            format="json",
+        )
+
+        user.refresh_from_db()
+        otp.refresh_from_db()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(user.is_email_verified)
+        self.assertTrue(otp.is_used)
+
+    def test_resend_email_otp_successful(self):
+        user = User.objects.create_user(
+            email="resend@example.com",
+            phone_number="+256714000000",
+            password="StrongPass123",
+            first_name="Resend",
+            last_name="Otp",
+        )
+
+        response = self.client.post(
+            "/api/accounts/resend-otp/",
+            {
+                "email": user.email,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            EmailOTP.objects.filter(
+                user=user,
+                purpose=EmailOTP.Purpose.EMAIL_VERIFICATION,
+                is_used=False,
+            ).exists()
+        )

@@ -47,3 +47,37 @@ class User(AbstractUser):
     @property
     def full_name(self):
         return f"{self.first_name} {self.last_name}".strip()
+
+
+class EmailOTP(models.Model):
+    """Stores one-time password codes used for email verification"""
+
+    class Purpose(models.TextChoices):
+        EMAIL_VERIFICATION = "EMAIL_VERIFICATION", "Email Verification"
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="email_otps")
+    code = models.CharField(max_length=6)
+    purpose = models.CharField(
+        max_length=50, choices=Purpose.choices, default=Purpose.EMAIL_VERIFICATION
+    )
+    is_used = models.BooleanField(default=False)
+    attempts = models.PositiveIntegerField(default=0)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "purpose", "is_used"]),
+            models.Index(fields=["code"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} - {self.purpose} - {self.code}"
+
+    @property
+    def is_expired(self):
+        from django.utils import timezone
+
+        return timezone.now() >= self.expires_at
