@@ -195,3 +195,85 @@ class ResendOTPSerializer(serializers.Serializer):
     """Serializer for requesting a new email verification OTP."""
 
     email = serializers.EmailField()
+
+
+MAX_AVATAR_SIZE_BYTES = 2 * 1024 * 1024
+
+ALLOWED_AVATAR_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+}
+
+
+class ProfileUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for updating the authenticated user's profile."""
+
+    avatar = serializers.ImageField(
+        required=False,
+        allow_null=True,
+    )
+
+    class Meta:
+        model = User
+        fields = (
+            "first_name",
+            "last_name",
+            "phone_number",
+            "avatar",
+        )
+
+    def validate_phone_number(self, value):
+        if value in ("", None):
+            return None
+
+        phone_number = normalize_phone_number(value)
+
+        existing_user = User.objects.filter(phone_number=phone_number)
+
+        if self.instance:
+            existing_user = existing_user.exclude(pk=self.instance.pk)
+
+        if existing_user.exists():
+            raise serializers.ValidationError(
+                "A user with this phone number already exists."
+            )
+
+        return phone_number
+
+    def validate_avatar(self, value):
+        if value is None:
+            return value
+
+        if value.size > MAX_AVATAR_SIZE_BYTES:
+            raise serializers.ValidationError("Avatar file size must not exceed 2MB.")
+
+        content_type = getattr(value, "content_type", "")
+
+        if content_type not in ALLOWED_AVATAR_CONTENT_TYPES:
+            raise serializers.ValidationError(
+                "Avatar must be a JPEG, PNG, WEBP, or GIF image."
+            )
+
+        return value
+
+    def update(self, instance, validated_data):
+        first_name = validated_data.get("first_name")
+        last_name = validated_data.get("last_name")
+
+        if first_name is not None:
+            instance.first_name = first_name.strip()
+
+        if last_name is not None:
+            instance.last_name = last_name.strip()
+
+        if "phone_number" in validated_data:
+            instance.phone_number = validated_data["phone_number"]
+
+        if "avatar" in validated_data:
+            instance.avatar = validated_data["avatar"]
+
+        instance.save()
+
+        return instance

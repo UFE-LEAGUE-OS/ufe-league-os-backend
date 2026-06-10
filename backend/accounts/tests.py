@@ -1,6 +1,10 @@
+import shutil
+import tempfile
+
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
 from .models import EmailOTP
@@ -8,6 +12,13 @@ from .models import EmailOTP
 # Create your tests here.
 
 User = get_user_model()
+
+TEST_MEDIA_ROOT = tempfile.mkdtemp()
+
+SMALL_GIF_IMAGE = (
+    b"GIF87a\x01\x00\x01\x00\x80\x01\x00\x00\x00\x00\xff\xff\xff,"
+    b"\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+)
 
 
 class UserModelTests(TestCase):
@@ -417,3 +428,151 @@ class AuthAPITests(TestCase):
                 is_used=False,
             ).exists()
         )
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
+class ProfileAPITests(TestCase):
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+        super().tearDownClass()
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email="profile@example.com",
+            phone_number="+256720000000",
+            password="StrongPass123",
+            first_name="Profile",
+            last_name="User",
+        )
+
+        login_response = self.client.post(
+            "/api/accounts/login/",
+            {
+                "identifier": self.user.email,
+                "password": "StrongPass123",
+            },
+            format="json",
+        )
+
+        self.access_token = login_response.data["access"]
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {self.access_token}",
+        )
+
+    def test_profile_endpoint_requires_authentication(self):
+        unauthenticated_client = APIClient()
+
+        response = unauthenticated_client.get("/api/accounts/profile/")
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_get_profile_successful(self):
+        response = self.client.get("/api/accounts/profile/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["email"], self.user.email)
+
+    def test_update_profile_successful(self):
+        response = self.client.patch(
+            "/api/accounts/profile/",
+            {
+                "first_name": "Updated",
+                "last_name": "Name",
+                "phone_number": "0721000000",
+            },
+            format="json",
+        )
+
+        self.user.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.user.first_name, "Updated")
+        self.assertEqual(self.user.last_name, "Name")
+        self.assertEqual(self.user.phone_number, "+256721000000")
+        self.assertEqual(response.data["user"]["full_name"], "Updated Name")
+
+    def test_update_profile_rejects_duplicate_phone_number(self):
+        User.objects.create_user(
+            email="other@example.com",
+            phone_number="+256722000000",
+            password="StrongPass123",
+            first_name="Other",
+            last_name="User",
+        )
+
+        response = self.client.patch(
+            "/api/accounts/profile/",
+            {
+                "phone_number": "0722000000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("phone_number", response.data)
+
+    def test_upload_avatar_successful(self):
+        avatar = SimpleUploadedFile(
+            "avatar.gif",
+            SMALL_GIF_IMAGE,
+            content_type="image/gif",
+        )
+
+        response = self.client.patch(
+            "/api/accounts/profile/",
+            {
+                "avatar": avatar,
+            },
+            format="multipart",
+        )
+
+        self.user.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(bool(self.user.avatar))
+        self.assertIsNotNone(response.data["user"]["avatar_url"])
+
+    def test_upload_avatar_rejects_large_file(self):
+        large_image = SimpleUploadedFile(
+            "large-avatar.gif",
+            SMALL_GIF_IMAGE + (b"0" * ((2 * 1024 * 1024) + 1)),
+            content_type="image/gif",
+        )
+
+        response = self.client.patch(
+            "/api/accounts/profile/",
+            {
+                "avatar": large_image,
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("avatar", response.data)
+
+    def test_remove_avatar_successful(self):
+        avatar = SimpleUploadedFile(
+            "avatar.gif",
+            SMALL_GIF_IMAGE,
+            content_type="image/gif",
+        )
+
+        upload_response = self.client.patch(
+            "/api/accounts/profile/",
+            {
+                "avatar": avatar,
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(upload_response.status_code, 200)
+
+        response = self.client.delete("/api/accounts/profile/avatar/")
+
+        self.user.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(bool(self.user.avatar))
+        self.assertIsNone(response.data["user"]["avatar_url"])

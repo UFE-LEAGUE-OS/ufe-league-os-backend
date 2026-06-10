@@ -10,6 +10,7 @@ from .serializers import (
     UserSerializer,
     VerifyOTPSerializer,
     ResendOTPSerializer,
+    ProfileUpdateSerializer,
 )
 from .services import (
     create_email_verification_otp,
@@ -166,3 +167,56 @@ def resend_otp_view(request):
         )
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def profile_view(request):
+    """Retrieve or update the authenticated user's profile."""
+
+    if request.method == "GET":
+        return Response(
+            UserSerializer(request.user, context={"request": request}).data,
+            status=status.HTTP_200_OK,
+        )
+
+    serializer = ProfileUpdateSerializer(
+        request.user,
+        data=request.data,
+        partial=True,
+        context={"request": request},
+    )
+
+    if serializer.is_valid():
+        user = serializer.save()
+
+        return Response(
+            {
+                "message": "Profile updated successfully.",
+                "user": UserSerializer(user, context={"request": request}).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def remove_avatar_view(request):
+    """Remove the authenticated user's avatar."""
+
+    user = request.user
+
+    if user.avatar:
+        user.avatar.delete(save=False)
+        user.avatar = None
+        user.save(update_fields=["avatar"])
+
+    return Response(
+        {
+            "message": "Avatar removed successfully.",
+            "user": UserSerializer(user, context={"request": request}).data,
+        },
+        status=status.HTTP_200_OK,
+    )
