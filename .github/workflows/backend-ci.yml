@@ -85,6 +85,10 @@ jobs:
         working-directory: backend
         run: python manage.py makemigrations --check --dry-run
 
+      - name: Apply migrations
+        working-directory: backend
+        run: python manage.py migrate --noinput
+
       - name: Run backend tests
         working-directory: backend
         run: python manage.py test
