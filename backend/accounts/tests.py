@@ -23,7 +23,7 @@ SMALL_GIF_IMAGE = (
 
 class UserModelTests(TestCase):
     def test_create_user_with_email_successful(self):
-        """Test confirms that normal users can becreated with email"""
+        """Test confirms that normal users can be created with email"""
         user = User.objects.create_user(
             email="fan@example.com",
             password="StrongPass123",

@@ -36,6 +36,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/health/", health_check_view, name="health-check"),
     path("api/accounts/", include("accounts.urls")),
+    path("api/dashboards/", include("dashboards.urls")),
 ]
 
 if settings.DEBUG:

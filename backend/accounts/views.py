@@ -17,40 +17,7 @@ from .services import (
     resend_email_verification_otp,
     verify_email_otp,
 )
-
-
-def get_dashboard_route(user):
-    """Return the frontend dashboard route for a user role."""
-
-    role_routes = {
-        "FAN": "/dashboard/fan",
-        "CLUB_ADMIN": "/dashboard/club-admin",
-        "LEAGUE_ADMIN": "/dashboard/league-admin",
-        "UNION_ADMIN": "/dashboard/union-admin",
-        "SUPER_ADMIN": "/dashboard/super-admin",
-        "REFEREE": "/dashboard/referee",
-        "TICKETING_OFFICER": "/dashboard/ticketing-officer",
-        "SPONSOR": "/dashboard/sponsor",
-    }
-
-    return role_routes.get(user.role, "/dashboard")
-
-
-def get_backend_dashboard_route(user):
-    """Return the backend dashboard API route for a user role."""
-
-    role_routes = {
-        "FAN": "/api/dashboards/fan/",
-        "CLUB_ADMIN": "/api/dashboards/club-admin/",
-        "LEAGUE_ADMIN": "/api/dashboards/league-admin/",
-        "UNION_ADMIN": "/api/dashboards/union-admin/",
-        "SUPER_ADMIN": "/api/dashboards/super-admin/",
-        "REFEREE": "/api/dashboards/referee/",
-        "TICKETING_OFFICER": "/api/dashboards/ticketing-officer/",
-        "SPONSOR": "/api/dashboards/sponsor/",
-    }
-
-    return role_routes.get(user.role, "/api/dashboards/")
+from .routing import get_backend_dashboard_route, get_dashboard_route
 
 
 def build_token_response(user):
