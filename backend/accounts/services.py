@@ -14,7 +14,7 @@ def generate_otp_code():
 
 
 def create_email_verification_otp(user):
-    """Create a new email verificaiton OTP for a user"""
+    """Create a new email verification OTP for a user"""
 
     EmailOTP.objects.filter(
         user=user,

@@ -12,7 +12,7 @@ class UserManager(BaseUserManager):
         """Create and return a normal user like a fan/member account"""
 
         if not email:
-            raise ValueError("Users must have an eamil address.")
+            raise ValueError("Users must have an email address.")
 
         email = self.normalize_email(email)
 
