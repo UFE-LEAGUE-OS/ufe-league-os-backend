@@ -393,3 +393,4 @@ class AddSponsorMemberSerializer(serializers.Serializer):
             user=member_user,
             member_role=validated_data["member_role"],
         )
+
