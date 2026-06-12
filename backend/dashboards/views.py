@@ -211,15 +211,23 @@ DASHBOARD_CONTENT = {
 }
 
 
-def build_dashboard_response(request, required_role):
+def build_dashboard_response(request, role, message=None):
     """Build a consistent dashboard response for the authenticated user's role."""
 
     user = request.user
-    content = DASHBOARD_CONTENT[required_role]
+    content = DASHBOARD_CONTENT.get(role)
+
+    if content is None:
+        return Response(
+            {"detail": "No dashboard is configured for this user role."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    success_message = message or f"{content['title']} loaded successfully."
 
     return Response(
         {
-            "message": f"{content['title']} loaded successfully.",
+            "message": success_message,
             "role": user.role,
             "role_display": user.get_role_display(),
             "frontend_dashboard_route": get_dashboard_route(user),
@@ -236,28 +244,11 @@ def build_dashboard_response(request, required_role):
 def my_dashboard_view(request):
     """Return the dashboard route and summary for the authenticated user's role"""
 
-    user = request.user
-    content = DASHBOARD_CONTENT.get(user.role)
-
-    if content is None:
-        return Response(
-            {"detail": "No dashboard is configured for this user role."},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-
-    return Response(
-        {
-            "message": "Dashboard resolved successfully.",
-            "role": user.role,
-            "role_display": user.get_role_display(),
-            "frontend_dashboard_route": get_dashboard_route(user),
-            "backend_dashboard_route": get_backend_dashboard_route(user),
-            "dashboard": content,
-            "user": UserSerializer(user, context={"request": request}).data,
-        },
-        status=status.HTTP_200_OK,
+    return build_dashboard_response(
+        request, 
+        request.user.role, 
+        message="Dashboard resolved successfully."
     )
-
 
 @api_view(["GET"])
 @permission_classes([IsFan])
