@@ -245,10 +245,11 @@ def my_dashboard_view(request):
     """Return the dashboard route and summary for the authenticated user's role"""
 
     return build_dashboard_response(
-        request, 
-        request.user.role, 
-        message="Dashboard resolved successfully."
+        request,
+        request.user.role,
+        message="Dashboard resolved successfully.",
     )
+
 
 @api_view(["GET"])
 @permission_classes([IsFan])
