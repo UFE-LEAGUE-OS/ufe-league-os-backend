@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.test import TestCase
+from rest_framework.test import APIClient
 
 from .models import SponsorAccount, SponsorAccountMember
 
@@ -259,3 +260,233 @@ class SponsorAccountModelTests(TestCase):
         self.assertEqual(sponsor_account.registration_country, "UG")
         self.assertEqual(sponsor_account.brn, "BRN-12345")
         self.assertEqual(sponsor_account.tin, "TIN-12345")
+
+
+class SponsorshipAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def authenticate(self, user):
+        login_response = self.client.post(
+            "/api/accounts/login/",
+            {
+                "identifier": user.email,
+                "password": "StrongPass123",
+            },
+            format="json",
+        )
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {login_response.data['access']}",
+        )
+
+    def create_user(self, email="api-user@example.com"):
+        return User.objects.create_user(
+            email=email,
+            phone_number=None,
+            password="StrongPass123",
+            first_name="API",
+            last_name="User",
+        )
+
+    def test_individual_sponsor_can_register_directly(self):
+        response = self.client.post(
+            "/api/sponsorships/register/",
+            {
+                "sponsor_type": "INDIVIDUAL",
+                "email": "direct-individual@example.com",
+                "phone_number": "0702000101",
+                "first_name": "Direct",
+                "last_name": "Sponsor",
+                "password": "StrongPass123",
+                "confirm_password": "StrongPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+
+        user = User.objects.get(email="direct-individual@example.com")
+
+        self.assertEqual(user.role, User.Role.FAN)
+        self.assertTrue(user.sponsor_memberships.filter(is_active=True).exists())
+        self.assertEqual(
+            response.data["sponsor_account"]["sponsor_type"],
+            SponsorAccount.SponsorType.INDIVIDUAL,
+        )
+
+    def test_corporate_sponsor_can_register_directly(self):
+        response = self.client.post(
+            "/api/sponsorships/register/",
+            {
+                "sponsor_type": "CORPORATE",
+                "company_name": "KCB Bank Uganda",
+                "registration_country": "UG",
+                "brn": "BRN-API-001",
+                "tin": "1000000001",
+                "email": "kcb-api-owner@example.com",
+                "phone_number": "0702000102",
+                "first_name": "KCB",
+                "last_name": "Owner",
+                "password": "StrongPass123",
+                "confirm_password": "StrongPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+
+        sponsor_account = SponsorAccount.objects.get(name="KCB Bank Uganda")
+
+        self.assertEqual(
+            sponsor_account.sponsor_type,
+            SponsorAccount.SponsorType.CORPORATE,
+        )
+        self.assertEqual(sponsor_account.registration_country, "UG")
+        self.assertEqual(sponsor_account.brn, "BRN-API-001")
+        self.assertEqual(sponsor_account.tin, "1000000001")
+
+    def test_corporate_sponsor_registration_rejects_duplicate_brn(self):
+        owner = self.create_user("existing-brn-owner@example.com")
+
+        SponsorAccount.objects.create(
+            owner=owner,
+            sponsor_type=SponsorAccount.SponsorType.CORPORATE,
+            name="Existing Corporate",
+            registration_country="UG",
+            brn="BRN-DUP-001",
+            tin="1000000002",
+        )
+
+        response = self.client.post(
+            "/api/sponsorships/register/",
+            {
+                "sponsor_type": "CORPORATE",
+                "company_name": "Duplicate Corporate",
+                "registration_country": "UG",
+                "brn": "BRN-DUP-001",
+                "tin": "1000000003",
+                "email": "duplicate-brn@example.com",
+                "phone_number": "0702000103",
+                "first_name": "Duplicate",
+                "last_name": "Owner",
+                "password": "StrongPass123",
+                "confirm_password": "StrongPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("brn", response.data)
+
+    def test_existing_fan_can_create_individual_sponsor_account(self):
+        user = self.create_user("fan-upgrade-api@example.com")
+        self.authenticate(user)
+
+        response = self.client.post(
+            "/api/sponsorships/accounts/",
+            {
+                "sponsor_type": "INDIVIDUAL",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+
+        user.refresh_from_db()
+
+        self.assertEqual(user.role, User.Role.FAN)
+        self.assertTrue(user.sponsor_memberships.filter(is_active=True).exists())
+
+    def test_authenticated_user_can_list_own_sponsor_accounts(self):
+        user = self.create_user("list-sponsors@example.com")
+
+        sponsor_account = SponsorAccount.objects.create(
+            owner=user,
+            sponsor_type=SponsorAccount.SponsorType.INDIVIDUAL,
+            name=user.full_name,
+        )
+
+        SponsorAccountMember.objects.create(
+            sponsor_account=sponsor_account,
+            user=user,
+            member_role=SponsorAccountMember.MemberRole.OWNER,
+        )
+
+        self.authenticate(user)
+
+        response = self.client.get("/api/sponsorships/accounts/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+
+    def test_corporate_sponsor_owner_can_add_member(self):
+        owner = self.create_user("corporate-owner-api@example.com")
+        member_user = self.create_user("corporate-member-api@example.com")
+
+        sponsor_account = SponsorAccount.objects.create(
+            owner=owner,
+            sponsor_type=SponsorAccount.SponsorType.CORPORATE,
+            name="Corporate Member Test",
+            registration_country="UG",
+            brn="BRN-MEMBER-001",
+            tin="1000000004",
+        )
+
+        SponsorAccountMember.objects.create(
+            sponsor_account=sponsor_account,
+            user=owner,
+            member_role=SponsorAccountMember.MemberRole.OWNER,
+        )
+
+        self.authenticate(owner)
+
+        response = self.client.post(
+            f"/api/sponsorships/accounts/{sponsor_account.id}/members/",
+            {
+                "email": member_user.email,
+                "member_role": "ADMIN",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+
+        self.assertTrue(
+            SponsorAccountMember.objects.filter(
+                sponsor_account=sponsor_account,
+                user=member_user,
+                member_role=SponsorAccountMember.MemberRole.ADMIN,
+            ).exists()
+        )
+
+    def test_fan_with_sponsor_membership_can_access_sponsor_dashboard(self):
+        user = self.create_user("sponsor-dashboard-api@example.com")
+
+        sponsor_account = SponsorAccount.objects.create(
+            owner=user,
+            sponsor_type=SponsorAccount.SponsorType.INDIVIDUAL,
+            name=user.full_name,
+        )
+
+        SponsorAccountMember.objects.create(
+            sponsor_account=sponsor_account,
+            user=user,
+            member_role=SponsorAccountMember.MemberRole.OWNER,
+        )
+
+        self.authenticate(user)
+
+        response = self.client.get("/api/dashboards/sponsor/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["dashboard_role"], User.Role.SPONSOR)
+        self.assertEqual(response.data["dashboard"]["title"], "Sponsor Dashboard")
+
+    def test_fan_without_sponsor_membership_cannot_access_sponsor_dashboard(self):
+        user = self.create_user("normal-fan-api@example.com")
+        self.authenticate(user)
+
+        response = self.client.get("/api/dashboards/sponsor/")
+
+        self.assertEqual(response.status_code, 403)

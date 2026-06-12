@@ -44,5 +44,19 @@ class IsTicketingOfficer(HasDashboardRole):
     allowed_roles = [User.Role.TICKETING_OFFICER]
 
 
-class IsSponsor(HasDashboardRole):
-    allowed_roles = [User.Role.SPONSOR]
+class IsSponsor(BasePermission):
+    """
+    Allows access to users who either have the legacy SPONSOR role
+    or belong to at least one active sponsor account.
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+
+        if not user or not user.is_authenticated:
+            return False
+
+        if user.role == User.Role.SPONSOR:
+            return True
+
+        return user.sponsor_memberships.filter(is_active=True).exists()
