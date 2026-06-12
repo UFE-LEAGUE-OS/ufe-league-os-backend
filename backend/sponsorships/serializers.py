@@ -8,7 +8,6 @@ from accounts.services import create_email_verification_otp
 
 from .models import SponsorAccount, SponsorAccountMember
 
-
 User = get_user_model()
 
 
