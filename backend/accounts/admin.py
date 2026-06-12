@@ -1,7 +1,8 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import User, EmailOTP
+from .models import AuditLog, EmailOTP, User
+from .rbac import log_role_change
 
 
 # Register your models here.
@@ -99,6 +100,44 @@ class CustomUserAdmin(UserAdmin):
             },
         ),
     )
+
+    def save_model(self, request, obj, form, change):
+        previous_role = None
+
+        if change and obj.pk:
+            existing = User.objects.filter(pk=obj.pk).first()
+            if existing:
+                previous_role = existing.role
+
+        super().save_model(request, obj, form, change)
+
+        if change and previous_role is not None and previous_role != obj.role:
+            log_role_change(
+                target_user=obj,
+                previous_role=previous_role,
+                new_role=obj.role,
+                actor=request.user,
+                reason="admin_role_update",
+            )
+
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    """Django admin configuration for RBAC audit events."""
+
+    list_display = (
+        "category",
+        "action",
+        "actor",
+        "target_user",
+        "status_code",
+        "path",
+        "created_at",
+    )
+    list_filter = ("category", "action", "created_at")
+    search_fields = ("actor__email", "target_user__email", "action", "path")
+    readonly_fields = ("created_at",)
+    ordering = ("-created_at",)
 
 
 @admin.register(EmailOTP)
