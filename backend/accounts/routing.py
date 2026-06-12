@@ -28,4 +28,4 @@ def get_dashboard_route(user):
 
 
 def get_backend_dashboard_route(user):
-    return BACKEND_DASHBOARD_ROUTES.get(user.role, "/api/dashboard/me/")
+    return BACKEND_DASHBOARD_ROUTES.get(user.role, "/api/dashboards/me/")
