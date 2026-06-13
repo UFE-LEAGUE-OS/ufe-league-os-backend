@@ -265,28 +265,34 @@ class SponsorAccountModelTests(TestCase):
 class SponsorshipAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        self.password = "StrongPass123"
+
+    def create_user(self, email="sponsor-api-user@example.com"):
+        return User.objects.create_user(
+            email=email,
+            phone_number=None,
+            password=self.password,
+            first_name="Sponsor",
+            last_name="User",
+        )
 
     def authenticate(self, user):
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
+
         login_response = self.client.post(
             "/api/accounts/login/",
             {
                 "identifier": user.email,
-                "password": "StrongPass123",
+                "password": self.password,
             },
             format="json",
         )
 
+        self.assertEqual(login_response.status_code, 200)
+
         self.client.credentials(
             HTTP_AUTHORIZATION=f"Bearer {login_response.data['access']}",
-        )
-
-    def create_user(self, email="api-user@example.com"):
-        return User.objects.create_user(
-            email=email,
-            phone_number=None,
-            password="StrongPass123",
-            first_name="API",
-            last_name="User",
         )
 
     def test_individual_sponsor_can_register_directly(self):

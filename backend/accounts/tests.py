@@ -2,14 +2,12 @@ import shutil
 import tempfile
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
-from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
 from .models import EmailOTP
-
-# Create your tests here.
 
 User = get_user_model()
 
@@ -23,7 +21,7 @@ SMALL_GIF_IMAGE = (
 
 class UserModelTests(TestCase):
     def test_create_user_with_email_successful(self):
-        """Test confirms that normal users can be created with email"""
+        """Test confirms that normal users can be created with email."""
         user = User.objects.create_user(
             email="fan@example.com",
             password="StrongPass123",
@@ -38,7 +36,7 @@ class UserModelTests(TestCase):
         self.assertFalse(user.is_superuser)
 
     def test_create_user_with_phone_number_successful(self):
-        """Test confirms that phone numebrs can be saved"""
+        """Test confirms that phone numbers can be saved."""
         user = User.objects.create_user(
             email="phoneuser@example.com",
             password="StrongPass123",
@@ -72,7 +70,7 @@ class UserModelTests(TestCase):
         self.assertEqual(user.role, User.Role.SUPER_ADMIN)
 
     def test_full_name_property(self):
-        "Test confirms that full name property works"
+        """Test confirms that full name property works."""
         user = User.objects.create_user(
             email="kseruyange@email.com",
             password="StrongPass123",
@@ -163,13 +161,15 @@ class AuthAPITests(TestCase):
         self.assertIn("phone_number", response.data)
 
     def test_login_with_email_successful(self):
-        User.objects.create_user(
+        user = User.objects.create_user(
             email="login@example.com",
             phone_number="+256705000000",
             password="StrongPass123",
             first_name="Login",
             last_name="Email",
         )
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
 
         response = self.client.post(
             "/api/accounts/login/",
@@ -187,13 +187,15 @@ class AuthAPITests(TestCase):
         self.assertEqual(response.data["frontend_dashboard_route"], "/dashboard/fan")
 
     def test_login_with_phone_number_successful(self):
-        User.objects.create_user(
+        user = User.objects.create_user(
             email="phone-login@example.com",
             phone_number="+256706000000",
             password="StrongPass123",
             first_name="Login",
             last_name="Phone",
         )
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
 
         response = self.client.post(
             "/api/accounts/login/",
@@ -209,13 +211,15 @@ class AuthAPITests(TestCase):
         self.assertEqual(response.data["user"]["phone_number"], "+256706000000")
 
     def test_login_with_local_phone_number_format_successful(self):
-        User.objects.create_user(
+        user = User.objects.create_user(
             email="local-phone@example.com",
             phone_number="+256707000000",
             password="StrongPass123",
             first_name="Local",
             last_name="Phone",
         )
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
 
         response = self.client.post(
             "/api/accounts/login/",
@@ -249,6 +253,30 @@ class AuthAPITests(TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_unverified_user_cannot_login_and_receives_no_tokens(self):
+        User.objects.create_user(
+            email="unverified-login@example.com",
+            phone_number="+256715000000",
+            password="StrongPass123",
+            first_name="Unverified",
+            last_name="User",
+        )
+
+        response = self.client.post(
+            "/api/accounts/login/",
+            {
+                "identifier": "unverified-login@example.com",
+                "password": "StrongPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["code"], "email_not_verified")
+        self.assertTrue(response.data["requires_email_verification"])
+        self.assertNotIn("access", response.data)
+        self.assertNotIn("refresh", response.data)
+
     def test_me_endpoint_returns_authenticated_user(self):
         user = User.objects.create_user(
             email="me@example.com",
@@ -257,6 +285,8 @@ class AuthAPITests(TestCase):
             first_name="Current",
             last_name="User",
         )
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
 
         login_response = self.client.post(
             "/api/accounts/login/",
@@ -446,6 +476,8 @@ class ProfileAPITests(TestCase):
             first_name="Profile",
             last_name="User",
         )
+        self.user.is_email_verified = True
+        self.user.save(update_fields=["is_email_verified"])
 
         login_response = self.client.post(
             "/api/accounts/login/",
