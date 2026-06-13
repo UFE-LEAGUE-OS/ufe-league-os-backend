@@ -18,6 +18,10 @@ class User(AbstractUser):
         TICKETING_OFFICER = "TICKETING_OFFICER", "Ticketing Officer"
         SPONSOR = "SPONSOR", "Sponsor"
 
+    class SponsorType(models.TextChoices):
+        INDIVIDUAL = "INDIVIDUAL", "Individual Sponsor"
+        CORPORATE = "CORPORATE", "Corporate Sponsor"
+
     username = None
 
     email = models.EmailField(unique=True)
@@ -25,6 +29,22 @@ class User(AbstractUser):
     phone_number = models.CharField(max_length=20, unique=True, blank=True, null=True)
 
     role = models.CharField(max_length=30, choices=Role.choices, default=Role.FAN)
+
+    club = models.ForeignKey(
+        "Club",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="members",
+    )
+
+    is_sponsor = models.BooleanField(default=False)
+    sponsor_type = models.CharField(
+        max_length=20,
+        choices=SponsorType.choices,
+        blank=True,
+        null=True,
+    )
 
     avatar = models.ImageField(upload_to="avatars/", blank=True, null=True)
 
@@ -47,6 +67,81 @@ class User(AbstractUser):
     @property
     def full_name(self):
         return f"{self.first_name} {self.last_name}".strip()
+
+    @property
+    def roles(self):
+        roles = {self.role}
+
+        if self.is_sponsor:
+            roles.add(self.Role.SPONSOR)
+
+        sponsor_memberships = getattr(self, "sponsor_memberships", None)
+
+        if self.pk and sponsor_memberships is not None:
+            if sponsor_memberships.filter(is_active=True).exists():
+                roles.add(self.Role.SPONSOR)
+
+        return roles
+
+    def has_role(self, role):
+        return role in self.roles
+
+
+class Club(models.Model):
+    name = models.CharField(max_length=150, unique=True)
+    slug = models.SlugField(max_length=150, unique=True)
+    admin = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="administered_clubs",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class AuditLog(models.Model):
+    """Store audit events for RBAC actions and access violations."""
+
+    class Category(models.TextChoices):
+        ACCESS_VIOLATION = "ACCESS_VIOLATION", "Access Violation"
+        ROLE_CHANGE = "ROLE_CHANGE", "Role Change"
+
+    category = models.CharField(max_length=50, choices=Category.choices)
+    actor = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        related_name="audit_logs",
+        on_delete=models.SET_NULL,
+    )
+    target_user = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        related_name="target_audit_logs",
+        on_delete=models.SET_NULL,
+    )
+    action = models.CharField(max_length=100)
+    path = models.CharField(max_length=255, blank=True)
+    method = models.CharField(max_length=10, blank=True)
+    status_code = models.PositiveSmallIntegerField(null=True, blank=True)
+    ip_address = models.CharField(max_length=45, blank=True)
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        subject = self.target_user or self.actor
+        return f"{self.category} {self.action} ({subject})"
 
 
 class EmailOTP(models.Model):

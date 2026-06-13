@@ -1,13 +1,10 @@
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.models import User
-from accounts.routing import get_backend_dashboard_route, get_dashboard_route
-from accounts.serializers import UserSerializer
-
-from .permissions import (
+from accounts.permissions import (
+    IsAuthenticatedAudit,
     IsClubAdmin,
     IsFan,
     IsLeagueAdmin,
@@ -17,6 +14,12 @@ from .permissions import (
     IsTicketingOfficer,
     IsUnionAdmin,
 )
+from accounts.routing import (
+    get_backend_dashboard_route,
+    get_dashboard_route,
+    get_dashboard_routes,
+)
+from accounts.serializers import UserSerializer
 
 # Create your views here.
 
@@ -268,7 +271,7 @@ def build_dashboard_response(request, role, message=None):
             "dashboard_role": role,
             "frontend_dashboard_route": frontend_dashboard_route,
             "backend_dashboard_route": backend_dashboard_route,
-            "available_dashboards": build_available_dashboards(user),
+            "available_dashboards": get_dashboard_routes(user),
             "dashboard": content,
             "user": UserSerializer(user, context={"request": request}).data,
         },
@@ -277,7 +280,7 @@ def build_dashboard_response(request, role, message=None):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticatedAudit])
 def my_dashboard_view(request):
     """Return the dashboard route and summary for the authenticated user's role"""
 

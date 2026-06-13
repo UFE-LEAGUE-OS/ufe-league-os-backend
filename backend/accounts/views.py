@@ -1,10 +1,20 @@
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from accounts.permissions import (
+    IsAuthenticatedAudit,
+    IsSuperAdmin,
+    IsClubAdmin,
+    IsLeagueAdmin,
+    IsUnionAdmin,
+)
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .models import Club, User
 from .serializers import (
+    AdminCreateUserSerializer,
+    HierarchicalCreateUserSerializer,
     LoginSerializer,
     RegisterSerializer,
     UserSerializer,
@@ -12,12 +22,24 @@ from .serializers import (
     ResendOTPSerializer,
     ProfileUpdateSerializer,
 )
+from .rbac import get_dashboard_routes, log_role_change
 from .services import (
     create_email_verification_otp,
     resend_email_verification_otp,
     verify_email_otp,
 )
 from .routing import get_backend_dashboard_route, get_dashboard_route
+from sponsorships.serializers import (
+    SponsorAccountCreateSerializer,
+    SponsorAccountSerializer,
+)
+
+
+@api_view(["GET"])
+def roles_view(request):
+    """Return all available user roles."""
+    roles = [{"key": choice[0], "label": choice[1]} for choice in User.Role.choices]
+    return Response({"roles": roles})
 
 
 def build_token_response(user):
@@ -73,7 +95,7 @@ def login_view(request):
                 "token_type": "Bearer",
                 "user": UserSerializer(user, context={"request": request}).data,
                 "role": user.role,
-                "dashboard_route": get_dashboard_route(user),
+                "frontend_dashboard_route": get_dashboard_route(user),
                 "backend_dashboard_route": get_backend_dashboard_route(user),
                 "requires_email_verification": not user.is_email_verified,
             },
@@ -84,7 +106,7 @@ def login_view(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticatedAudit])
 def me_view(request):
     """Return the currently authenticated user."""
 
@@ -137,7 +159,7 @@ def resend_otp_view(request):
 
 
 @api_view(["GET", "PATCH"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticatedAudit])
 def profile_view(request):
     """Retrieve or update the authenticated user's profile."""
 
@@ -169,7 +191,7 @@ def profile_view(request):
 
 
 @api_view(["DELETE"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticatedAudit])
 def remove_avatar_view(request):
     """Remove the authenticated user's avatar."""
 
@@ -187,3 +209,172 @@ def remove_avatar_view(request):
         },
         status=status.HTTP_200_OK,
     )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAudit])
+def become_sponsor_view(request):
+    """
+    Create a proper sponsor account for an existing user.
+
+    This endpoint is kept as a shortcut/backward-compatible route.
+    The real sponsorship source of truth is:
+    - SponsorAccount
+    - SponsorAccountMember
+
+    User.is_sponsor is only updated as a legacy helper flag.
+    """
+
+    serializer = SponsorAccountCreateSerializer(
+        data=request.data,
+        context={"request": request},
+    )
+
+    if serializer.is_valid():
+        sponsor_account = serializer.save()
+        user = request.user
+
+        update_fields = []
+
+        if not user.is_sponsor:
+            user.is_sponsor = True
+            update_fields.append("is_sponsor")
+
+        if user.sponsor_type != sponsor_account.sponsor_type:
+            user.sponsor_type = sponsor_account.sponsor_type
+            update_fields.append("sponsor_type")
+
+        if update_fields:
+            user.save(update_fields=update_fields)
+
+        return Response(
+            {
+                "message": "Sponsor account created successfully.",
+                "user": UserSerializer(user, context={"request": request}).data,
+                "sponsor_account": SponsorAccountSerializer(
+                    sponsor_account,
+                    context={"request": request},
+                ).data,
+                "dashboard_routes": get_dashboard_routes(user),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAudit, IsSuperAdmin])
+def superadmin_create_user_view(request):
+    """Allow a superadmin to create a new authenticated user with a role."""
+
+    serializer = AdminCreateUserSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    validated = serializer.validated_data
+    club = None
+    if validated.get("club_id"):
+        club = Club.objects.filter(pk=validated["club_id"]).first()
+
+    user = User.objects.create_user(
+        email=validated["email"],
+        password=validated["password"],
+        phone_number=validated.get("phone_number"),
+        first_name=validated["first_name"].strip(),
+        last_name=validated["last_name"].strip(),
+        role=validated["role"],
+        club=club,
+    )
+
+    log_role_change(
+        target_user=user,
+        previous_role=None,
+        new_role=user.role,
+        actor=request.user,
+        reason="superadmin_create",
+    )
+
+    return Response(
+        {
+            "message": "User created successfully.",
+            "user": UserSerializer(user, context={"request": request}).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+def _create_user_by_admin(request, reason_prefix):
+    """
+    Shared helper for admin-level user creation views.
+    Uses HierarchicalCreateUserSerializer which validates the target role
+    against the calling admin's role hierarchy.
+    """
+    serializer = HierarchicalCreateUserSerializer(
+        data=request.data,
+        context={"admin_user": request.user},
+    )
+
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    validated = serializer.validated_data
+    club = None
+    if validated.get("club_id"):
+        club = Club.objects.filter(pk=validated["club_id"]).first()
+
+    user = User.objects.create_user(
+        email=validated["email"],
+        password=validated["password"],
+        phone_number=validated.get("phone_number"),
+        first_name=validated["first_name"].strip(),
+        last_name=validated["last_name"].strip(),
+        role=validated["role"],
+        club=club,
+    )
+
+    log_role_change(
+        target_user=user,
+        previous_role=None,
+        new_role=user.role,
+        actor=request.user,
+        reason=f"{reason_prefix}_create",
+    )
+
+    return Response(
+        {
+            "message": "User created successfully.",
+            "user": UserSerializer(user, context={"request": request}).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAudit, IsUnionAdmin])
+def union_admin_create_user_view(request):
+    """
+    Allow a union admin to create a user.
+    Can create: REFEREE, TICKETING_OFFICER
+    """
+    return _create_user_by_admin(request, "union_admin")
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAudit, IsLeagueAdmin])
+def league_admin_create_user_view(request):
+    """
+    Allow a league admin to create a user.
+    Can create: CLUB_ADMIN, REFEREE, TICKETING_OFFICER
+    """
+    return _create_user_by_admin(request, "league_admin")
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAudit, IsClubAdmin])
+def club_admin_create_user_view(request):
+    """
+    Allow a club admin to create a user.
+    Can create: TICKETING_OFFICER
+    """
+    return _create_user_by_admin(request, "club_admin")
