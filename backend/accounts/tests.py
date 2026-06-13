@@ -459,6 +459,251 @@ class AuthAPITests(TestCase):
             ).exists()
         )
 
+    def test_password_reset_request_creates_password_reset_otp(self):
+        user = User.objects.create_user(
+            email="reset-request@example.com",
+            phone_number="+256730000000",
+            password="OldStrongPass123",
+            first_name="Reset",
+            last_name="Request",
+        )
+
+        response = self.client.post(
+            "/api/accounts/password-reset/request/",
+            {
+                "email": user.email,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            EmailOTP.objects.filter(
+                user=user,
+                purpose=EmailOTP.Purpose.PASSWORD_RESET,
+                is_used=False,
+            ).exists()
+        )
+
+    def test_password_reset_request_rejects_unknown_email(self):
+        response = self.client.post(
+            "/api/accounts/password-reset/request/",
+            {
+                "email": "missing-user@example.com",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("email", response.data)
+
+    def test_password_reset_confirm_successful(self):
+        user = User.objects.create_user(
+            email="reset-confirm@example.com",
+            phone_number="+256731000000",
+            password="OldStrongPass123",
+            first_name="Reset",
+            last_name="Confirm",
+        )
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
+
+        otp = EmailOTP.objects.create(
+            user=user,
+            code="123456",
+            purpose=EmailOTP.Purpose.PASSWORD_RESET,
+            expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        )
+
+        response = self.client.post(
+            "/api/accounts/password-reset/confirm/",
+            {
+                "email": user.email,
+                "code": otp.code,
+                "password": "NewStrongPass123",
+                "confirm_password": "NewStrongPass123",
+            },
+            format="json",
+        )
+
+        user.refresh_from_db()
+        otp.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(user.check_password("NewStrongPass123"))
+        self.assertTrue(otp.is_used)
+
+    def test_user_can_login_with_new_password_after_password_reset(self):
+        user = User.objects.create_user(
+            email="reset-login@example.com",
+            phone_number="+256732000000",
+            password="OldStrongPass123",
+            first_name="Reset",
+            last_name="Login",
+        )
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
+
+        otp = EmailOTP.objects.create(
+            user=user,
+            code="123456",
+            purpose=EmailOTP.Purpose.PASSWORD_RESET,
+            expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        )
+
+        reset_response = self.client.post(
+            "/api/accounts/password-reset/confirm/",
+            {
+                "email": user.email,
+                "code": otp.code,
+                "password": "NewStrongPass123",
+                "confirm_password": "NewStrongPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(reset_response.status_code, 200)
+
+        old_login_response = self.client.post(
+            "/api/accounts/login/",
+            {
+                "identifier": user.email,
+                "password": "OldStrongPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(old_login_response.status_code, 400)
+
+        new_login_response = self.client.post(
+            "/api/accounts/login/",
+            {
+                "identifier": user.email,
+                "password": "NewStrongPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(new_login_response.status_code, 200)
+        self.assertIn("access", new_login_response.data)
+        self.assertIn("refresh", new_login_response.data)
+
+    def test_password_reset_confirm_rejects_invalid_otp_and_increments_attempts(self):
+        user = User.objects.create_user(
+            email="reset-invalid@example.com",
+            phone_number="+256733000000",
+            password="OldStrongPass123",
+            first_name="Reset",
+            last_name="Invalid",
+        )
+
+        otp = EmailOTP.objects.create(
+            user=user,
+            code="123456",
+            purpose=EmailOTP.Purpose.PASSWORD_RESET,
+            expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        )
+
+        response = self.client.post(
+            "/api/accounts/password-reset/confirm/",
+            {
+                "email": user.email,
+                "code": "000000",
+                "password": "NewStrongPass123",
+                "confirm_password": "NewStrongPass123",
+            },
+            format="json",
+        )
+
+        otp.refresh_from_db()
+        user.refresh_from_db()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("code", response.data)
+        self.assertEqual(otp.attempts, 1)
+        self.assertTrue(user.check_password("OldStrongPass123"))
+
+    def test_password_reset_confirm_rejects_expired_otp(self):
+        user = User.objects.create_user(
+            email="reset-expired@example.com",
+            phone_number="+256734000000",
+            password="OldStrongPass123",
+            first_name="Reset",
+            last_name="Expired",
+        )
+
+        otp = EmailOTP.objects.create(
+            user=user,
+            code="123456",
+            purpose=EmailOTP.Purpose.PASSWORD_RESET,
+            expires_at=timezone.now() - timezone.timedelta(minutes=1),
+        )
+
+        response = self.client.post(
+            "/api/accounts/password-reset/confirm/",
+            {
+                "email": user.email,
+                "code": otp.code,
+                "password": "NewStrongPass123",
+                "confirm_password": "NewStrongPass123",
+            },
+            format="json",
+        )
+
+        otp.refresh_from_db()
+        user.refresh_from_db()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("code", response.data)
+        self.assertTrue(otp.is_used)
+        self.assertTrue(user.check_password("OldStrongPass123"))
+
+    def test_used_password_reset_otp_cannot_be_reused(self):
+        user = User.objects.create_user(
+            email="reset-reuse@example.com",
+            phone_number="+256735000000",
+            password="OldStrongPass123",
+            first_name="Reset",
+            last_name="Reuse",
+        )
+
+        otp = EmailOTP.objects.create(
+            user=user,
+            code="123456",
+            purpose=EmailOTP.Purpose.PASSWORD_RESET,
+            expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        )
+
+        first_response = self.client.post(
+            "/api/accounts/password-reset/confirm/",
+            {
+                "email": user.email,
+                "code": otp.code,
+                "password": "NewStrongPass123",
+                "confirm_password": "NewStrongPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+
+        second_response = self.client.post(
+            "/api/accounts/password-reset/confirm/",
+            {
+                "email": user.email,
+                "code": otp.code,
+                "password": "AnotherStrongPass123",
+                "confirm_password": "AnotherStrongPass123",
+            },
+            format="json",
+        )
+
+        user.refresh_from_db()
+
+        self.assertEqual(second_response.status_code, 400)
+        self.assertIn("code", second_response.data)
+        self.assertTrue(user.check_password("NewStrongPass123"))
+
 
 @override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
 class ProfileAPITests(TestCase):

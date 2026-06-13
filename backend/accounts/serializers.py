@@ -431,6 +431,42 @@ ALLOWED_AVATAR_CONTENT_TYPES = {
 }
 
 
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """Serializer for requesting a password reset OTP."""
+
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """Serializer for confirming password reset using OTP."""
+
+    email = serializers.EmailField()
+    code = serializers.CharField(max_length=6)
+    password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate_code(self, value):
+        code = value.strip()
+
+        if not code.isdigit():
+            raise serializers.ValidationError("OTP code must contain digits only.")
+
+        if len(code) != 6:
+            raise serializers.ValidationError("OTP code must be 6 digits long.")
+
+        return code
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
+
+        validate_password(attrs["password"])
+
+        return attrs
+
+
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating the authenticated user's profile."""
 

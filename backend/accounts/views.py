@@ -21,12 +21,16 @@ from .serializers import (
     VerifyOTPSerializer,
     ResendOTPSerializer,
     ProfileUpdateSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetConfirmSerializer,
 )
 from .rbac import get_dashboard_routes, log_role_change
 from .services import (
     create_email_verification_otp,
     resend_email_verification_otp,
     verify_email_otp,
+    request_password_reset_otp,
+    reset_password_with_otp,
 )
 from .routing import get_backend_dashboard_route, get_dashboard_route
 from sponsorships.serializers import (
@@ -163,6 +167,48 @@ def resend_otp_view(request):
         return Response(
             {
                 "message": "A new OTP has been sent to your email address.",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+def password_reset_request_view(request):
+    """Request a password reset OTP."""
+
+    serializer = PasswordResetRequestSerializer(data=request.data)
+
+    if serializer.is_valid():
+        request_password_reset_otp(email=serializer.validated_data["email"])
+
+        return Response(
+            {
+                "message": "A password reset OTP has been sent to your email address.",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+def password_reset_confirm_view(request):
+    """Reset password using a valid password reset OTP."""
+
+    serializer = PasswordResetConfirmSerializer(data=request.data)
+
+    if serializer.is_valid():
+        reset_password_with_otp(
+            email=serializer.validated_data["email"],
+            code=serializer.validated_data["code"],
+            new_password=serializer.validated_data["password"],
+        )
+
+        return Response(
+            {
+                "message": "Password reset successful. You can now log in.",
             },
             status=status.HTTP_200_OK,
         )
