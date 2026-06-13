@@ -2,6 +2,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
+from .models import Club
+
 User = get_user_model()
 
 
@@ -31,6 +33,10 @@ class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     role_display = serializers.CharField(source="get_role_display", read_only=True)
     avatar_url = serializers.SerializerMethodField()
+    is_sponsor = serializers.BooleanField(read_only=True)
+    sponsor_type = serializers.CharField(read_only=True)
+    roles = serializers.SerializerMethodField()
+    club = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -43,6 +49,10 @@ class UserSerializer(serializers.ModelSerializer):
             "full_name",
             "role",
             "role_display",
+            "roles",
+            "is_sponsor",
+            "sponsor_type",
+            "club",
             "avatar",
             "avatar_url",
             "is_email_verified",
@@ -54,6 +64,10 @@ class UserSerializer(serializers.ModelSerializer):
             "id",
             "role",
             "role_display",
+            "roles",
+            "is_sponsor",
+            "sponsor_type",
+            "club",
             "avatar_url",
             "is_email_verified",
             "is_phone_verified",
@@ -70,6 +84,18 @@ class UserSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(obj.avatar.url)
 
         return obj.avatar.url
+
+    def get_roles(self, obj):
+        return sorted(list(obj.roles))
+
+    def get_club(self, obj):
+        if not obj.club:
+            return None
+
+        return {
+            "id": obj.club.id,
+            "name": obj.club.name,
+        }
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -127,6 +153,204 @@ class RegisterSerializer(serializers.Serializer):
         )
 
         return user
+
+
+class BecomeSponsorSerializer(serializers.Serializer):
+    sponsor_type = serializers.ChoiceField(choices=User.SponsorType.choices)
+
+
+class AdminCreateUserSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    phone_number = serializers.CharField(
+        max_length=20, required=False, allow_blank=True
+    )
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+    role = serializers.ChoiceField(choices=User.Role.choices)
+    sponsor_type = serializers.ChoiceField(
+        choices=User.SponsorType.choices,
+        required=False,
+        allow_blank=True,
+    )
+    club_id = serializers.IntegerField(required=False)
+
+    def validate_email(self, value):
+        email = value.strip().lower()
+
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError(
+                "A user with this email address already exists."
+            )
+
+        return email
+
+    def validate_phone_number(self, value):
+        if not value:
+            return value
+
+        phone_number = normalize_phone_number(value)
+
+        if User.objects.filter(phone_number=phone_number).exists():
+            raise serializers.ValidationError(
+                "A user with this phone number already exists."
+            )
+
+        return phone_number
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
+
+        validate_password(attrs["password"])
+
+        if attrs["role"] == User.Role.SPONSOR and not attrs.get("sponsor_type"):
+            raise serializers.ValidationError(
+                {"sponsor_type": "Sponsor type is required for sponsors."}
+            )
+
+        return attrs
+
+    def validate_club_id(self, value):
+        if value is None:
+            return value
+
+        if not Club.objects.filter(pk=value).exists():
+            raise serializers.ValidationError("Club does not exist.")
+
+        return value
+
+
+class CreateClubOfficialSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    phone_number = serializers.CharField(
+        max_length=20, required=False, allow_blank=True
+    )
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+    role = serializers.ChoiceField(
+        choices=[
+            (User.Role.REFEREE, User.Role.REFEREE.label),
+            (User.Role.TICKETING_OFFICER, User.Role.TICKETING_OFFICER.label),
+        ]
+    )
+
+    def validate_email(self, value):
+        email = value.strip().lower()
+
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError(
+                "A user with this email address already exists."
+            )
+
+        return email
+
+    def validate_phone_number(self, value):
+        if not value:
+            return value
+
+        phone_number = normalize_phone_number(value)
+
+        if User.objects.filter(phone_number=phone_number).exists():
+            raise serializers.ValidationError(
+                "A user with this phone number already exists."
+            )
+
+        return phone_number
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
+
+        validate_password(attrs["password"])
+
+        return attrs
+
+
+class HierarchicalCreateUserSerializer(serializers.Serializer):
+    """
+    Serializer for admin-level user creation that validates the target role
+    against the hierarchy defined in CREATABLE_ROLES.
+
+    SPONSOR and FAN are NOT creatable by any admin — they are
+    self-registration/self-upgrade roles only.
+    """
+
+    email = serializers.EmailField()
+    phone_number = serializers.CharField(
+        max_length=20, required=False, allow_blank=True
+    )
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+    role = serializers.ChoiceField(choices=User.Role.choices)
+    club_id = serializers.IntegerField(required=False)
+
+    def validate_email(self, value):
+        email = value.strip().lower()
+
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError(
+                "A user with this email address already exists."
+            )
+
+        return email
+
+    def validate_phone_number(self, value):
+        if not value:
+            return value
+
+        phone_number = normalize_phone_number(value)
+
+        if User.objects.filter(phone_number=phone_number).exists():
+            raise serializers.ValidationError(
+                "A user with this phone number already exists."
+            )
+
+        return phone_number
+
+    def validate_role(self, value):
+        admin_user = self.context.get("admin_user")
+        if admin_user is None:
+            raise serializers.ValidationError("Admin context is required.")
+
+        from .rbac import can_admin_create_role
+
+        if not can_admin_create_role(admin_user, value):
+            raise serializers.ValidationError(
+                f"You are not authorized to create a user with the '{value}' role."
+            )
+
+        return value
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
+
+        from django.contrib.auth.password_validation import validate_password
+
+        validate_password(attrs["password"])
+
+        return attrs
+
+    def validate_club_id(self, value):
+        if value is None:
+            return value
+
+        if not Club.objects.filter(pk=value).exists():
+            raise serializers.ValidationError("Club does not exist.")
+
+        return value
 
 
 class LoginSerializer(serializers.Serializer):

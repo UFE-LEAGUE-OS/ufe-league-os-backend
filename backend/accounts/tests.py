@@ -184,7 +184,7 @@ class AuthAPITests(TestCase):
         self.assertIn("access", response.data)
         self.assertIn("refresh", response.data)
         self.assertEqual(response.data["role"], User.Role.FAN)
-        self.assertEqual(response.data["dashboard_route"], "/dashboard/fan")
+        self.assertEqual(response.data["frontend_dashboard_route"], "/dashboard/fan")
 
     def test_login_with_phone_number_successful(self):
         User.objects.create_user(

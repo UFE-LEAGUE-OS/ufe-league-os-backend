@@ -1,13 +1,10 @@
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.models import User
-from accounts.routing import get_backend_dashboard_route, get_dashboard_route
-from accounts.serializers import UserSerializer
-
-from .permissions import (
+from accounts.permissions import (
+    IsAuthenticatedAudit,
     IsClubAdmin,
     IsFan,
     IsLeagueAdmin,
@@ -17,6 +14,12 @@ from .permissions import (
     IsTicketingOfficer,
     IsUnionAdmin,
 )
+from accounts.routing import (
+    get_backend_dashboard_route,
+    get_dashboard_route,
+    get_dashboard_routes,
+)
+from accounts.serializers import UserSerializer
 
 # Create your views here.
 
@@ -211,6 +214,34 @@ DASHBOARD_CONTENT = {
 }
 
 
+def user_has_sponsor_access(user):
+    if user.role == User.Role.SPONSOR:
+        return True
+
+    return user.sponsor_memberships.filter(is_active=True).exists()
+
+
+def build_available_dashboards(user):
+    dashboards = [
+        {
+            "label": user.get_role_display(),
+            "frontend_route": get_dashboard_route(user),
+            "backend_route": get_backend_dashboard_route(user),
+        }
+    ]
+
+    sponsor_dashboard = {
+        "label": "Sponsor Dashboard",
+        "frontend_route": "/dashboard/sponsor",
+        "backend_route": "/api/dashboards/sponsor/",
+    }
+
+    if user_has_sponsor_access(user) and sponsor_dashboard not in dashboards:
+        dashboards.append(sponsor_dashboard)
+
+    return dashboards
+
+
 def build_dashboard_response(request, role, message=None):
     """Build a consistent dashboard response for the authenticated user's role."""
 
@@ -223,6 +254,13 @@ def build_dashboard_response(request, role, message=None):
             status=status.HTTP_404_NOT_FOUND,
         )
 
+    frontend_dashboard_route = get_dashboard_route(user)
+    backend_dashboard_route = get_backend_dashboard_route(user)
+
+    if role == User.Role.SPONSOR:
+        frontend_dashboard_route = "/dashboard/sponsor"
+        backend_dashboard_route = "/api/dashboards/sponsor/"
+
     success_message = message or f"{content['title']} loaded successfully."
 
     return Response(
@@ -230,8 +268,10 @@ def build_dashboard_response(request, role, message=None):
             "message": success_message,
             "role": user.role,
             "role_display": user.get_role_display(),
-            "frontend_dashboard_route": get_dashboard_route(user),
-            "backend_dashboard_route": get_backend_dashboard_route(user),
+            "dashboard_role": role,
+            "frontend_dashboard_route": frontend_dashboard_route,
+            "backend_dashboard_route": backend_dashboard_route,
+            "available_dashboards": get_dashboard_routes(user),
             "dashboard": content,
             "user": UserSerializer(user, context={"request": request}).data,
         },
@@ -240,7 +280,7 @@ def build_dashboard_response(request, role, message=None):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticatedAudit])
 def my_dashboard_view(request):
     """Return the dashboard route and summary for the authenticated user's role"""
 
