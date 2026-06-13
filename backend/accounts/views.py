@@ -14,7 +14,6 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .models import Club, User
 from .serializers import (
     AdminCreateUserSerializer,
-    BecomeSponsorSerializer,
     HierarchicalCreateUserSerializer,
     LoginSerializer,
     RegisterSerializer,
@@ -22,14 +21,22 @@ from .serializers import (
     VerifyOTPSerializer,
     ResendOTPSerializer,
     ProfileUpdateSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetConfirmSerializer,
 )
 from .rbac import get_dashboard_routes, log_role_change
 from .services import (
     create_email_verification_otp,
     resend_email_verification_otp,
     verify_email_otp,
+    request_password_reset_otp,
+    reset_password_with_otp,
 )
 from .routing import get_backend_dashboard_route, get_dashboard_route
+from sponsorships.serializers import (
+    SponsorAccountCreateSerializer,
+    SponsorAccountSerializer,
+)
 
 
 @api_view(["GET"])
@@ -83,6 +90,18 @@ def login_view(request):
 
     if serializer.is_valid():
         user = serializer.validated_data["user"]
+
+        if not user.is_email_verified:
+            return Response(
+                {
+                    "detail": "Please verify your email address before logging in.",
+                    "code": "email_not_verified",
+                    "requires_email_verification": True,
+                    "email": user.email,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         tokens = build_token_response(user)
 
         return Response(
@@ -155,6 +174,48 @@ def resend_otp_view(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+@api_view(["POST"])
+def password_reset_request_view(request):
+    """Request a password reset OTP."""
+
+    serializer = PasswordResetRequestSerializer(data=request.data)
+
+    if serializer.is_valid():
+        request_password_reset_otp(email=serializer.validated_data["email"])
+
+        return Response(
+            {
+                "message": "A password reset OTP has been sent to your email address.",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+def password_reset_confirm_view(request):
+    """Reset password using a valid password reset OTP."""
+
+    serializer = PasswordResetConfirmSerializer(data=request.data)
+
+    if serializer.is_valid():
+        reset_password_with_otp(
+            email=serializer.validated_data["email"],
+            code=serializer.validated_data["code"],
+            new_password=serializer.validated_data["password"],
+        )
+
+        return Response(
+            {
+                "message": "Password reset successful. You can now log in.",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 @api_view(["GET", "PATCH"])
 @permission_classes([IsAuthenticatedAudit])
 def profile_view(request):
@@ -211,22 +272,50 @@ def remove_avatar_view(request):
 @api_view(["POST"])
 @permission_classes([IsAuthenticatedAudit])
 def become_sponsor_view(request):
-    """Convert an existing fan into a sponsor."""
+    """
+    Create a proper sponsor account for an existing user.
 
-    serializer = BecomeSponsorSerializer(data=request.data)
+    This endpoint is kept as a shortcut/backward-compatible route.
+    The real sponsorship source of truth is:
+    - SponsorAccount
+    - SponsorAccountMember
+
+    User.is_sponsor is only updated as a legacy helper flag.
+    """
+
+    serializer = SponsorAccountCreateSerializer(
+        data=request.data,
+        context={"request": request},
+    )
+
     if serializer.is_valid():
+        sponsor_account = serializer.save()
         user = request.user
-        user.is_sponsor = True
-        user.sponsor_type = serializer.validated_data["sponsor_type"]
-        user.save(update_fields=["is_sponsor", "sponsor_type"])
+
+        update_fields = []
+
+        if not user.is_sponsor:
+            user.is_sponsor = True
+            update_fields.append("is_sponsor")
+
+        if user.sponsor_type != sponsor_account.sponsor_type:
+            user.sponsor_type = sponsor_account.sponsor_type
+            update_fields.append("sponsor_type")
+
+        if update_fields:
+            user.save(update_fields=update_fields)
 
         return Response(
             {
-                "message": "Sponsor status activated successfully.",
+                "message": "Sponsor account created successfully.",
                 "user": UserSerializer(user, context={"request": request}).data,
+                "sponsor_account": SponsorAccountSerializer(
+                    sponsor_account,
+                    context={"request": request},
+                ).data,
                 "dashboard_routes": get_dashboard_routes(user),
             },
-            status=status.HTTP_200_OK,
+            status=status.HTTP_201_CREATED,
         )
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

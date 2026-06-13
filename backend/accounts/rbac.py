@@ -1,6 +1,5 @@
 from .models import AuditLog, User
 
-
 ROLE_PERMISSIONS = {
     User.Role.FAN: {
         "dashboard.fan",
@@ -110,13 +109,40 @@ def get_role_permissions(role):
     return ROLE_PERMISSIONS.get(role, set())
 
 
+def user_has_sponsor_access(user):
+    """
+    Return True when the user can access sponsor features.
+
+    Final League OS sponsor logic:
+    - Legacy SPONSOR role is still supported.
+    - Legacy User.is_sponsor flag is still supported.
+    - SponsorAccountMember is the real source of truth for sponsor access.
+    """
+
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+
+    if getattr(user, "role", None) == User.Role.SPONSOR:
+        return True
+
+    if getattr(user, "is_sponsor", False):
+        return True
+
+    sponsor_memberships = getattr(user, "sponsor_memberships", None)
+
+    if sponsor_memberships is None:
+        return False
+
+    return sponsor_memberships.filter(is_active=True).exists()
+
+
 def get_user_permissions(user):
     if user is None or not getattr(user, "is_authenticated", False):
         return set()
 
     permissions = set(get_role_permissions(user.role))
 
-    if getattr(user, "is_sponsor", False):
+    if user_has_sponsor_access(user):
         permissions |= get_role_permissions(User.Role.SPONSOR)
 
     return permissions
@@ -133,6 +159,7 @@ def get_dashboard_routes(user):
     routes = []
 
     default_role = getattr(user, "role", None)
+
     if default_role in FRONTEND_DASHBOARD_ROUTES:
         routes.append(
             {
@@ -143,11 +170,11 @@ def get_dashboard_routes(user):
             }
         )
 
-    if getattr(user, "is_sponsor", False) and user.role != User.Role.SPONSOR:
+    if user_has_sponsor_access(user) and user.role != User.Role.SPONSOR:
         routes.append(
             {
                 "role": User.Role.SPONSOR,
-                "role_display": User.Role.SPONSOR.label,
+                "role_display": "Sponsor",
                 "route": FRONTEND_DASHBOARD_ROUTES[User.Role.SPONSOR],
                 "backend_route": BACKEND_DASHBOARD_ROUTES[User.Role.SPONSOR],
             }
@@ -157,24 +184,16 @@ def get_dashboard_routes(user):
 
 
 def get_dashboard_route(user):
-    if (
-        getattr(user, "is_sponsor", False)
-        and getattr(user, "role", None) == User.Role.FAN
-    ):
-        return FRONTEND_DASHBOARD_ROUTES.get(User.Role.FAN, "/dashboard/fan")
-
-    return FRONTEND_DASHBOARD_ROUTES.get(getattr(user, "role", None), "/dashboard/fan")
+    return FRONTEND_DASHBOARD_ROUTES.get(
+        getattr(user, "role", None),
+        "/dashboard/fan",
+    )
 
 
 def get_backend_dashboard_route(user):
-    if (
-        getattr(user, "is_sponsor", False)
-        and getattr(user, "role", None) == User.Role.FAN
-    ):
-        return BACKEND_DASHBOARD_ROUTES.get(User.Role.FAN, "/api/dashboards/me/")
-
     return BACKEND_DASHBOARD_ROUTES.get(
-        getattr(user, "role", None), "/api/dashboards/me/"
+        getattr(user, "role", None),
+        "/api/dashboards/me/",
     )
 
 

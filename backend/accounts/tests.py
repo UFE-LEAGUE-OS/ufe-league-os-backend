@@ -2,14 +2,12 @@ import shutil
 import tempfile
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
-from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
 from .models import EmailOTP
-
-# Create your tests here.
 
 User = get_user_model()
 
@@ -23,7 +21,7 @@ SMALL_GIF_IMAGE = (
 
 class UserModelTests(TestCase):
     def test_create_user_with_email_successful(self):
-        """Test confirms that normal users can be created with email"""
+        """Test confirms that normal users can be created with email."""
         user = User.objects.create_user(
             email="fan@example.com",
             password="StrongPass123",
@@ -38,7 +36,7 @@ class UserModelTests(TestCase):
         self.assertFalse(user.is_superuser)
 
     def test_create_user_with_phone_number_successful(self):
-        """Test confirms that phone numebrs can be saved"""
+        """Test confirms that phone numbers can be saved."""
         user = User.objects.create_user(
             email="phoneuser@example.com",
             password="StrongPass123",
@@ -72,7 +70,7 @@ class UserModelTests(TestCase):
         self.assertEqual(user.role, User.Role.SUPER_ADMIN)
 
     def test_full_name_property(self):
-        "Test confirms that full name property works"
+        """Test confirms that full name property works."""
         user = User.objects.create_user(
             email="kseruyange@email.com",
             password="StrongPass123",
@@ -163,13 +161,15 @@ class AuthAPITests(TestCase):
         self.assertIn("phone_number", response.data)
 
     def test_login_with_email_successful(self):
-        User.objects.create_user(
+        user = User.objects.create_user(
             email="login@example.com",
             phone_number="+256705000000",
             password="StrongPass123",
             first_name="Login",
             last_name="Email",
         )
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
 
         response = self.client.post(
             "/api/accounts/login/",
@@ -187,13 +187,15 @@ class AuthAPITests(TestCase):
         self.assertEqual(response.data["frontend_dashboard_route"], "/dashboard/fan")
 
     def test_login_with_phone_number_successful(self):
-        User.objects.create_user(
+        user = User.objects.create_user(
             email="phone-login@example.com",
             phone_number="+256706000000",
             password="StrongPass123",
             first_name="Login",
             last_name="Phone",
         )
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
 
         response = self.client.post(
             "/api/accounts/login/",
@@ -209,13 +211,15 @@ class AuthAPITests(TestCase):
         self.assertEqual(response.data["user"]["phone_number"], "+256706000000")
 
     def test_login_with_local_phone_number_format_successful(self):
-        User.objects.create_user(
+        user = User.objects.create_user(
             email="local-phone@example.com",
             phone_number="+256707000000",
             password="StrongPass123",
             first_name="Local",
             last_name="Phone",
         )
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
 
         response = self.client.post(
             "/api/accounts/login/",
@@ -249,6 +253,30 @@ class AuthAPITests(TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_unverified_user_cannot_login_and_receives_no_tokens(self):
+        User.objects.create_user(
+            email="unverified-login@example.com",
+            phone_number="+256715000000",
+            password="StrongPass123",
+            first_name="Unverified",
+            last_name="User",
+        )
+
+        response = self.client.post(
+            "/api/accounts/login/",
+            {
+                "identifier": "unverified-login@example.com",
+                "password": "StrongPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["code"], "email_not_verified")
+        self.assertTrue(response.data["requires_email_verification"])
+        self.assertNotIn("access", response.data)
+        self.assertNotIn("refresh", response.data)
+
     def test_me_endpoint_returns_authenticated_user(self):
         user = User.objects.create_user(
             email="me@example.com",
@@ -257,6 +285,8 @@ class AuthAPITests(TestCase):
             first_name="Current",
             last_name="User",
         )
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
 
         login_response = self.client.post(
             "/api/accounts/login/",
@@ -429,6 +459,251 @@ class AuthAPITests(TestCase):
             ).exists()
         )
 
+    def test_password_reset_request_creates_password_reset_otp(self):
+        user = User.objects.create_user(
+            email="reset-request@example.com",
+            phone_number="+256730000000",
+            password="OldStrongPass123",
+            first_name="Reset",
+            last_name="Request",
+        )
+
+        response = self.client.post(
+            "/api/accounts/password-reset/request/",
+            {
+                "email": user.email,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            EmailOTP.objects.filter(
+                user=user,
+                purpose=EmailOTP.Purpose.PASSWORD_RESET,
+                is_used=False,
+            ).exists()
+        )
+
+    def test_password_reset_request_rejects_unknown_email(self):
+        response = self.client.post(
+            "/api/accounts/password-reset/request/",
+            {
+                "email": "missing-user@example.com",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("email", response.data)
+
+    def test_password_reset_confirm_successful(self):
+        user = User.objects.create_user(
+            email="reset-confirm@example.com",
+            phone_number="+256731000000",
+            password="OldStrongPass123",
+            first_name="Reset",
+            last_name="Confirm",
+        )
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
+
+        otp = EmailOTP.objects.create(
+            user=user,
+            code="123456",
+            purpose=EmailOTP.Purpose.PASSWORD_RESET,
+            expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        )
+
+        response = self.client.post(
+            "/api/accounts/password-reset/confirm/",
+            {
+                "email": user.email,
+                "code": otp.code,
+                "password": "NewStrongPass123",
+                "confirm_password": "NewStrongPass123",
+            },
+            format="json",
+        )
+
+        user.refresh_from_db()
+        otp.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(user.check_password("NewStrongPass123"))
+        self.assertTrue(otp.is_used)
+
+    def test_user_can_login_with_new_password_after_password_reset(self):
+        user = User.objects.create_user(
+            email="reset-login@example.com",
+            phone_number="+256732000000",
+            password="OldStrongPass123",
+            first_name="Reset",
+            last_name="Login",
+        )
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
+
+        otp = EmailOTP.objects.create(
+            user=user,
+            code="123456",
+            purpose=EmailOTP.Purpose.PASSWORD_RESET,
+            expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        )
+
+        reset_response = self.client.post(
+            "/api/accounts/password-reset/confirm/",
+            {
+                "email": user.email,
+                "code": otp.code,
+                "password": "NewStrongPass123",
+                "confirm_password": "NewStrongPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(reset_response.status_code, 200)
+
+        old_login_response = self.client.post(
+            "/api/accounts/login/",
+            {
+                "identifier": user.email,
+                "password": "OldStrongPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(old_login_response.status_code, 400)
+
+        new_login_response = self.client.post(
+            "/api/accounts/login/",
+            {
+                "identifier": user.email,
+                "password": "NewStrongPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(new_login_response.status_code, 200)
+        self.assertIn("access", new_login_response.data)
+        self.assertIn("refresh", new_login_response.data)
+
+    def test_password_reset_confirm_rejects_invalid_otp_and_increments_attempts(self):
+        user = User.objects.create_user(
+            email="reset-invalid@example.com",
+            phone_number="+256733000000",
+            password="OldStrongPass123",
+            first_name="Reset",
+            last_name="Invalid",
+        )
+
+        otp = EmailOTP.objects.create(
+            user=user,
+            code="123456",
+            purpose=EmailOTP.Purpose.PASSWORD_RESET,
+            expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        )
+
+        response = self.client.post(
+            "/api/accounts/password-reset/confirm/",
+            {
+                "email": user.email,
+                "code": "000000",
+                "password": "NewStrongPass123",
+                "confirm_password": "NewStrongPass123",
+            },
+            format="json",
+        )
+
+        otp.refresh_from_db()
+        user.refresh_from_db()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("code", response.data)
+        self.assertEqual(otp.attempts, 1)
+        self.assertTrue(user.check_password("OldStrongPass123"))
+
+    def test_password_reset_confirm_rejects_expired_otp(self):
+        user = User.objects.create_user(
+            email="reset-expired@example.com",
+            phone_number="+256734000000",
+            password="OldStrongPass123",
+            first_name="Reset",
+            last_name="Expired",
+        )
+
+        otp = EmailOTP.objects.create(
+            user=user,
+            code="123456",
+            purpose=EmailOTP.Purpose.PASSWORD_RESET,
+            expires_at=timezone.now() - timezone.timedelta(minutes=1),
+        )
+
+        response = self.client.post(
+            "/api/accounts/password-reset/confirm/",
+            {
+                "email": user.email,
+                "code": otp.code,
+                "password": "NewStrongPass123",
+                "confirm_password": "NewStrongPass123",
+            },
+            format="json",
+        )
+
+        otp.refresh_from_db()
+        user.refresh_from_db()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("code", response.data)
+        self.assertTrue(otp.is_used)
+        self.assertTrue(user.check_password("OldStrongPass123"))
+
+    def test_used_password_reset_otp_cannot_be_reused(self):
+        user = User.objects.create_user(
+            email="reset-reuse@example.com",
+            phone_number="+256735000000",
+            password="OldStrongPass123",
+            first_name="Reset",
+            last_name="Reuse",
+        )
+
+        otp = EmailOTP.objects.create(
+            user=user,
+            code="123456",
+            purpose=EmailOTP.Purpose.PASSWORD_RESET,
+            expires_at=timezone.now() + timezone.timedelta(minutes=10),
+        )
+
+        first_response = self.client.post(
+            "/api/accounts/password-reset/confirm/",
+            {
+                "email": user.email,
+                "code": otp.code,
+                "password": "NewStrongPass123",
+                "confirm_password": "NewStrongPass123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+
+        second_response = self.client.post(
+            "/api/accounts/password-reset/confirm/",
+            {
+                "email": user.email,
+                "code": otp.code,
+                "password": "AnotherStrongPass123",
+                "confirm_password": "AnotherStrongPass123",
+            },
+            format="json",
+        )
+
+        user.refresh_from_db()
+
+        self.assertEqual(second_response.status_code, 400)
+        self.assertIn("code", second_response.data)
+        self.assertTrue(user.check_password("NewStrongPass123"))
+
 
 @override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
 class ProfileAPITests(TestCase):
@@ -446,6 +721,8 @@ class ProfileAPITests(TestCase):
             first_name="Profile",
             last_name="User",
         )
+        self.user.is_email_verified = True
+        self.user.save(update_fields=["is_email_verified"])
 
         login_response = self.client.post(
             "/api/accounts/login/",
