@@ -86,6 +86,18 @@ def login_view(request):
 
     if serializer.is_valid():
         user = serializer.validated_data["user"]
+
+        if not user.is_email_verified:
+            return Response(
+                {
+                    "detail": "Please verify your email address before logging in.",
+                    "code": "email_not_verified",
+                    "requires_email_verification": True,
+                    "email": user.email,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         tokens = build_token_response(user)
 
         return Response(

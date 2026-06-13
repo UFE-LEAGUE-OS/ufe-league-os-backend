@@ -9,26 +9,32 @@ User = get_user_model()
 class DashboardAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        self.password = "StrongPass123"
 
     def create_user(self, email, role):
         return User.objects.create_user(
             email=email,
             phone_number=None,
-            password="StrongPass123",
+            password=self.password,
             first_name="Test",
             last_name="User",
             role=role,
         )
 
     def authenticate(self, user):
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
+
         login_response = self.client.post(
             "/api/accounts/login/",
             {
                 "identifier": user.email,
-                "password": "StrongPass123",
+                "password": self.password,
             },
             format="json",
         )
+
+        self.assertEqual(login_response.status_code, 200)
 
         access_token = login_response.data["access"]
 
