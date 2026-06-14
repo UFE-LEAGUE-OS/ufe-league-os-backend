@@ -237,7 +237,7 @@ class SponsorRegistrationSerializer(serializers.Serializer):
             password=password,
             role=User.Role.FAN,
             is_sponsor=True,
-            sponsor_type=sponsor_type
+            sponsor_type=sponsor_type,
         )
 
         account_name = (
