@@ -58,7 +58,8 @@ def send_email_verification_otp(user, otp):
 
 
 def verify_email_otp(email, code):
-    """Verify a user's email OTP"""
+    """Verify a user's email OTP."""
+
     normalized_email = email.strip().lower()
     normalized_code = code.strip()
 
@@ -68,7 +69,7 @@ def verify_email_otp(email, code):
         raise ValidationError({"email": "No user exists with this email address."})
 
     if user.is_email_verified:
-        return user
+        raise ValidationError({"email": "This email address is already verified."})
 
     otp = (
         EmailOTP.objects.filter(
@@ -99,6 +100,14 @@ def verify_email_otp(email, code):
 
     if otp.code != normalized_code:
         otp.attempts += 1
+
+        if otp.attempts >= settings.OTP_MAX_ATTEMPTS:
+            otp.is_used = True
+            otp.save(update_fields=["attempts", "is_used", "updated_at"])
+            raise ValidationError(
+                {"code": "Maximum OTP attempts exceeded. Please request a new one."}
+            )
+
         otp.save(update_fields=["attempts", "updated_at"])
         raise ValidationError({"code": "Invalid OTP code."})
 
@@ -226,6 +235,14 @@ def reset_password_with_otp(email, code, new_password):
 
     if otp.code != normalized_code:
         otp.attempts += 1
+
+        if otp.attempts >= settings.OTP_MAX_ATTEMPTS:
+            otp.is_used = True
+            otp.save(update_fields=["attempts", "is_used", "updated_at"])
+            raise ValidationError(
+                {"code": "Maximum OTP attempts exceeded. Please request a new one."}
+            )
+
         otp.save(update_fields=["attempts", "updated_at"])
         raise ValidationError({"code": "Invalid OTP code."})
 
