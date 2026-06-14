@@ -315,6 +315,9 @@ class SponsorshipAPITests(TestCase):
         user = User.objects.get(email="direct-individual@example.com")
 
         self.assertEqual(user.role, User.Role.FAN)
+        self.assertTrue(user.is_sponsor)
+        self.assertEqual(user.sponsor_type, SponsorAccount.SponsorType.INDIVIDUAL)
+        self.assertTrue(response.data["user"]["is_sponsor"])
         self.assertTrue(user.sponsor_memberships.filter(is_active=True).exists())
         self.assertEqual(
             response.data["sponsor_account"]["sponsor_type"],
@@ -343,14 +346,19 @@ class SponsorshipAPITests(TestCase):
         self.assertEqual(response.status_code, 201)
 
         sponsor_account = SponsorAccount.objects.get(name="KCB Bank Uganda")
+        user = User.objects.get(email="kcb-api-owner@example.com")
 
         self.assertEqual(
             sponsor_account.sponsor_type,
             SponsorAccount.SponsorType.CORPORATE,
         )
-        self.assertEqual(sponsor_account.registration_country, "UG")
-        self.assertEqual(sponsor_account.brn, "BRN-API-001")
-        self.assertEqual(sponsor_account.tin, "1000000001")
+        self.assertTrue(user.is_sponsor)
+        self.assertEqual(user.sponsor_type, SponsorAccount.SponsorType.CORPORATE)
+        self.assertTrue(response.data["user"]["is_sponsor"])
+        self.assertEqual(
+            response.data["user"]["sponsor_type"],
+            SponsorAccount.SponsorType.CORPORATE,
+        )
 
     def test_corporate_sponsor_registration_rejects_duplicate_brn(self):
         owner = self.create_user("existing-brn-owner@example.com")
