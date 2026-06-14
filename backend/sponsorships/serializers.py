@@ -236,6 +236,8 @@ class SponsorRegistrationSerializer(serializers.Serializer):
             last_name=validated_data["last_name"].strip(),
             password=password,
             role=User.Role.FAN,
+            is_sponsor=True,
+            sponsor_type=sponsor_type,
         )
 
         account_name = (
