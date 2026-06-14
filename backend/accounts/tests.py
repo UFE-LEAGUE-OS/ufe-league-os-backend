@@ -104,6 +104,8 @@ class AuthAPITests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["user"]["email"], payload["email"])
         self.assertEqual(response.data["user"]["role"], User.Role.FAN)
+        self.assertTrue(response.data["requires_email_verification"])
+        self.assertEqual(response.data["next_step"], "VERIFY_EMAIL")
         self.assertTrue(User.objects.filter(email=payload["email"]).exists())
 
     def test_register_rejects_duplicate_email(self):
@@ -185,6 +187,7 @@ class AuthAPITests(TestCase):
         self.assertIn("refresh", response.data)
         self.assertEqual(response.data["role"], User.Role.FAN)
         self.assertEqual(response.data["frontend_dashboard_route"], "/dashboard/fan")
+        self.assertEqual(response.data["next_step"], "DASHBOARD")
 
     def test_login_with_phone_number_successful(self):
         user = User.objects.create_user(
@@ -274,6 +277,7 @@ class AuthAPITests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.data["code"], "email_not_verified")
         self.assertTrue(response.data["requires_email_verification"])
+        self.assertEqual(response.data["next_step"], "VERIFY_EMAIL")
         self.assertNotIn("access", response.data)
         self.assertNotIn("refresh", response.data)
 
@@ -366,6 +370,8 @@ class AuthAPITests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(user.is_email_verified)
         self.assertTrue(otp.is_used)
+        self.assertFalse(response.data["requires_email_verification"])
+        self.assertEqual(response.data["next_step"], "LOG_IN")
 
     def test_verify_email_otp_with_invalid_code_fails(self):
         user = User.objects.create_user(
@@ -458,6 +464,7 @@ class AuthAPITests(TestCase):
                 is_used=False,
             ).exists()
         )
+        self.assertEqual(response.data["next_step"], "VERIFY_EMAIL")
 
     def test_password_reset_request_creates_password_reset_otp(self):
         user = User.objects.create_user(
@@ -484,6 +491,7 @@ class AuthAPITests(TestCase):
                 is_used=False,
             ).exists()
         )
+        self.assertEqual(response.data["next_step"], "RESET_PASSWORD")
 
     def test_password_reset_request_rejects_unknown_email(self):
         response = self.client.post(
@@ -530,6 +538,7 @@ class AuthAPITests(TestCase):
         otp.refresh_from_db()
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["next_step"], "LOG_IN")
         self.assertTrue(user.check_password("NewStrongPass123"))
         self.assertTrue(otp.is_used)
 
@@ -587,6 +596,7 @@ class AuthAPITests(TestCase):
         self.assertEqual(new_login_response.status_code, 200)
         self.assertIn("access", new_login_response.data)
         self.assertIn("refresh", new_login_response.data)
+        self.assertEqual(new_login_response.data["next_step"], "DASHBOARD")
 
     def test_password_reset_confirm_rejects_invalid_otp_and_increments_attempts(self):
         user = User.objects.create_user(

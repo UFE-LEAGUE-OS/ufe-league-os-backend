@@ -39,6 +39,16 @@ from sponsorships.serializers import (
 )
 
 
+class AuthNextStep:
+    """Frontend nvaigation hints for authentication responses."""
+
+    VERIFY_EMAIL = "VERIFY_EMAIL"
+    LOGIN = "LOG_IN"
+    DASHBOARD = "DASHBOARD"
+    RESET_PASSWORD = "RESET_PASSWORD"
+    REQUEST_NEW_OTP = "REQUEST_NEW_OTP"
+
+
 @api_view(["GET"])
 def roles_view(request):
     """Return all available user roles."""
@@ -74,6 +84,7 @@ def register_view(request):
                     "using the OTP sent to your email."
                 ),
                 "requires_email_verification": not user.is_email_verified,
+                "next_step": AuthNextStep.VERIFY_EMAIL,
                 "user": UserSerializer(user, context={"request": request}).data,
             },
             status=status.HTTP_201_CREATED,
@@ -97,6 +108,7 @@ def login_view(request):
                     "detail": "Please verify your email address before logging in.",
                     "code": "email_not_verified",
                     "requires_email_verification": True,
+                    "next_step": AuthNextStep.VERIFY_EMAIL,
                     "email": user.email,
                 },
                 status=status.HTTP_403_FORBIDDEN,
@@ -114,6 +126,7 @@ def login_view(request):
                 "frontend_dashboard_route": get_dashboard_route(user),
                 "backend_dashboard_route": get_backend_dashboard_route(user),
                 "requires_email_verification": not user.is_email_verified,
+                "next_step": AuthNextStep.DASHBOARD,
             },
             status=status.HTTP_200_OK,
         )
@@ -147,6 +160,8 @@ def verify_otp_view(request):
         return Response(
             {
                 "message": "OTP verified successfully.",
+                "requires_email_verification": False,
+                "next_step": AuthNextStep.LOGIN,
                 "user": UserSerializer(user, context={"request": request}).data,
             },
             status=status.HTTP_200_OK,
@@ -167,6 +182,7 @@ def resend_otp_view(request):
         return Response(
             {
                 "message": "A new OTP has been sent to your email address.",
+                "next_step": AuthNextStep.VERIFY_EMAIL,
             },
             status=status.HTTP_200_OK,
         )
@@ -186,6 +202,7 @@ def password_reset_request_view(request):
         return Response(
             {
                 "message": "A password reset OTP has been sent to your email address.",
+                "next_step": AuthNextStep.RESET_PASSWORD,
             },
             status=status.HTTP_200_OK,
         )
@@ -209,6 +226,7 @@ def password_reset_confirm_view(request):
         return Response(
             {
                 "message": "Password reset successful. You can now log in.",
+                "next_step": AuthNextStep.LOGIN,
             },
             status=status.HTTP_200_OK,
         )
