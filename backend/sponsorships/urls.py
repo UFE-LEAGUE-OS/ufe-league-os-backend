@@ -15,4 +15,34 @@ urlpatterns = [
         views.sponsor_account_members_view,
         name="sponsor-account-members",
     ),
+    path(
+        "packages/",
+        views.sponsor_packages_view,
+        name="sponsor-packages",
+    ),
+    path(
+        "packages/<int:package_id>/",
+        views.sponsor_package_detail_view,
+        name="sponsor-package-detail",
+    ),
+    path(
+        "packages/<int:package_id>/approve/",
+        views.sponsor_package_approve_view,
+        name="sponsor-package-approve",
+    ),
+    path(
+        "packages/<int:package_id>/reject/",
+        views.sponsor_package_reject_view,
+        name="sponsor-package-reject",
+    ),
+    path(
+        "packages/<int:package_id>/benefits/",
+        views.sponsor_package_benefits_view,
+        name="sponsor-package-benefits",
+    ),
+    path(
+        "packages/<int:package_id>/revenue-share-rules/",
+        views.sponsor_package_revenue_share_rules_view,
+        name="sponsor-package-revenue-share-rules",
+    ),
 ]

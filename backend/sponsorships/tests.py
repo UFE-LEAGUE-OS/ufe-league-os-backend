@@ -812,3 +812,311 @@ class SponsorHubCoreModelTests(TestCase):
             SponsorWorkflowEvent.EventType.AGREEMENT_SUBMITTED,
         )
         self.assertEqual(event.actor, sponsor_account.owner)
+
+
+class SponsorPackageAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.password = "StrongPass123"
+
+    def create_user(self, email, role=User.Role.FAN):
+        return User.objects.create_user(
+            email=email,
+            phone_number=None,
+            password=self.password,
+            first_name="Sponsor",
+            last_name="Tester",
+            role=role,
+        )
+
+    def authenticate(self, user):
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
+
+        login_response = self.client.post(
+            "/api/accounts/login/",
+            {
+                "identifier": user.email,
+                "password": self.password,
+            },
+            format="json",
+        )
+
+        self.assertEqual(login_response.status_code, 200)
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {login_response.data['access']}",
+        )
+
+    def package_payload(self):
+        return {
+            "name": "Elgon Cup Matchday Sponsor",
+            "description": "Sponsor visibility for a national team matchday.",
+            "owner_type": "UNION",
+            "owner_identifier": "uru",
+            "owner_name": "Uganda Rugby Union",
+            "scope_type": "EVENT",
+            "scope_identifier": "elgon-cup-2026",
+            "scope_name": "Elgon Cup 2026",
+            "sponsor_type_allowed": "BOTH",
+            "category": "BANKING",
+            "price_amount": "5000000.00",
+            "currency": "UGX",
+            "is_exclusive": True,
+            "requires_platform_fee": True,
+            "platform_fee_amount": "500000.00",
+            "activation_rule": "AFTER_PLATFORM_FEE",
+            "status": "DRAFT",
+        }
+
+    def create_package(self, created_by=None, status="DRAFT"):
+        created_by = created_by or self.create_user(
+            "package-creator@example.com",
+            User.Role.UNION_ADMIN,
+        )
+
+        return SponsorPackage.objects.create(
+            name="Elgon Cup Matchday Sponsor",
+            description="Sponsor visibility for a national team matchday.",
+            owner_type="UNION",
+            owner_identifier="uru",
+            owner_name="Uganda Rugby Union",
+            scope_type="EVENT",
+            scope_identifier="elgon-cup-2026",
+            scope_name="Elgon Cup 2026",
+            sponsor_type_allowed=SponsorPackage.SponsorTypeAllowed.BOTH,
+            category="BANKING",
+            price_amount=Decimal("5000000.00"),
+            currency="UGX",
+            is_exclusive=True,
+            requires_platform_fee=True,
+            platform_fee_amount=Decimal("500000.00"),
+            activation_rule=SponsorPackage.ActivationRule.AFTER_PLATFORM_FEE,
+            status=status,
+            created_by=created_by,
+        )
+
+    def test_sponsor_hub_admin_can_create_package(self):
+        user = self.create_user(
+            "union-admin-package@example.com",
+            User.Role.UNION_ADMIN,
+        )
+        self.authenticate(user)
+
+        response = self.client.post(
+            "/api/sponsorships/packages/",
+            self.package_payload(),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["package"]["name"], "Elgon Cup Matchday Sponsor")
+
+        sponsor_package = SponsorPackage.objects.get(name="Elgon Cup Matchday Sponsor")
+
+        self.assertEqual(sponsor_package.created_by, user)
+        self.assertEqual(sponsor_package.owner_type, "UNION")
+        self.assertTrue(
+            SponsorWorkflowEvent.objects.filter(
+                sponsor_package=sponsor_package,
+                event_type=SponsorWorkflowEvent.EventType.PACKAGE_CREATED,
+                actor=user,
+            ).exists()
+        )
+
+    def test_fan_cannot_create_sponsor_package(self):
+        user = self.create_user("normal-fan-package@example.com", User.Role.FAN)
+        self.authenticate(user)
+
+        response = self.client.post(
+            "/api/sponsorships/packages/",
+            self.package_payload(),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_non_admin_can_only_list_approved_or_active_packages(self):
+        user = self.create_user("package-list-fan@example.com", User.Role.FAN)
+
+        self.create_package(
+            created_by=self.create_user(
+                "draft-package-owner@example.com",
+                User.Role.UNION_ADMIN,
+            ),
+            status=SponsorPackage.Status.DRAFT,
+        )
+
+        approved_package = self.create_package(
+            created_by=self.create_user(
+                "approved-package-owner@example.com",
+                User.Role.UNION_ADMIN,
+            ),
+            status=SponsorPackage.Status.APPROVED,
+        )
+        approved_package.name = "Approved Elgon Cup Package"
+        approved_package.save(update_fields=["name"])
+
+        self.authenticate(user)
+
+        response = self.client.get("/api/sponsorships/packages/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(
+            response.data["results"][0]["name"],
+            "Approved Elgon Cup Package",
+        )
+
+    def test_package_owner_admin_can_approve_package(self):
+        user = self.create_user(
+            "union-admin-approve-package@example.com",
+            User.Role.UNION_ADMIN,
+        )
+        sponsor_package = self.create_package(created_by=user)
+
+        self.authenticate(user)
+
+        response = self.client.post(
+            f"/api/sponsorships/packages/{sponsor_package.id}/approve/",
+            {"note": "Package approved for Elgon Cup."},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        sponsor_package.refresh_from_db()
+
+        self.assertEqual(sponsor_package.status, SponsorPackage.Status.APPROVED)
+        self.assertEqual(sponsor_package.approved_by, user)
+        self.assertIsNotNone(sponsor_package.approved_at)
+        self.assertTrue(
+            SponsorWorkflowEvent.objects.filter(
+                sponsor_package=sponsor_package,
+                event_type=SponsorWorkflowEvent.EventType.PACKAGE_APPROVED,
+                actor=user,
+            ).exists()
+        )
+
+    def test_package_owner_admin_can_reject_package(self):
+        user = self.create_user(
+            "union-admin-reject-package@example.com",
+            User.Role.UNION_ADMIN,
+        )
+        sponsor_package = self.create_package(created_by=user)
+
+        self.authenticate(user)
+
+        response = self.client.post(
+            f"/api/sponsorships/packages/{sponsor_package.id}/reject/",
+            {"note": "Package requires commercial review."},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        sponsor_package.refresh_from_db()
+
+        self.assertEqual(sponsor_package.status, SponsorPackage.Status.REJECTED)
+        self.assertTrue(
+            SponsorWorkflowEvent.objects.filter(
+                sponsor_package=sponsor_package,
+                event_type=SponsorWorkflowEvent.EventType.PACKAGE_REJECTED,
+                actor=user,
+            ).exists()
+        )
+
+    def test_package_owner_admin_can_add_benefit(self):
+        user = self.create_user(
+            "union-admin-benefit@example.com",
+            User.Role.UNION_ADMIN,
+        )
+        sponsor_package = self.create_package(
+            created_by=user,
+            status=SponsorPackage.Status.APPROVED,
+        )
+
+        self.authenticate(user)
+
+        response = self.client.post(
+            f"/api/sponsorships/packages/{sponsor_package.id}/benefits/",
+            {
+                "benefit_type": "FAN_DASHBOARD_AD",
+                "name": "Fan Dashboard Placement",
+                "description": "Sponsor logo appears on the fan dashboard.",
+                "quantity": 1,
+                "discount_percentage": "0.00",
+                "value_amount": "0.00",
+                "requires_payment_confirmation": True,
+                "is_platform_controlled": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            SponsorBenefit.objects.filter(
+                sponsor_package=sponsor_package,
+                benefit_type=SponsorBenefit.BenefitType.FAN_DASHBOARD_AD,
+            ).exists()
+        )
+
+    def test_package_owner_admin_can_add_revenue_share_rule(self):
+        user = self.create_user(
+            "union-admin-revenue-share@example.com",
+            User.Role.UNION_ADMIN,
+        )
+        sponsor_package = self.create_package(
+            created_by=user,
+            status=SponsorPackage.Status.APPROVED,
+        )
+
+        self.authenticate(user)
+
+        response = self.client.post(
+            f"/api/sponsorships/packages/{sponsor_package.id}/revenue-share-rules/",
+            {
+                "recipient_type": "UNION",
+                "recipient_identifier": "uru",
+                "recipient_name": "Uganda Rugby Union",
+                "percentage": "85.00",
+                "fixed_amount": "0.00",
+                "is_platform_share": False,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            RevenueShareRule.objects.filter(
+                sponsor_package=sponsor_package,
+                recipient_type=RevenueShareRule.RecipientType.UNION,
+                percentage=Decimal("85.00"),
+            ).exists()
+        )
+
+    def test_fan_cannot_add_benefit_to_package(self):
+        admin_user = self.create_user(
+            "benefit-package-owner@example.com",
+            User.Role.UNION_ADMIN,
+        )
+        fan_user = self.create_user("fan-cannot-add-benefit@example.com", User.Role.FAN)
+
+        sponsor_package = self.create_package(
+            created_by=admin_user,
+            status=SponsorPackage.Status.APPROVED,
+        )
+
+        self.authenticate(fan_user)
+
+        response = self.client.post(
+            f"/api/sponsorships/packages/{sponsor_package.id}/benefits/",
+            {
+                "benefit_type": "FAN_DASHBOARD_AD",
+                "name": "Fan Dashboard Placement",
+                "quantity": 1,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
