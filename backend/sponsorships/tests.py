@@ -1,3 +1,19 @@
+from datetime import date, timedelta
+from decimal import Decimal
+
+from django.utils import timezone
+
+from .models import (
+    RevenueDistribution,
+    RevenueShareRule,
+    SponsorAgreement,
+    SponsorBenefit,
+    SponsorPackage,
+    SponsorPayment,
+    SponsorPaymentSchedule,
+    SponsorWorkflowEvent,
+)
+
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.test import TestCase
@@ -504,3 +520,295 @@ class SponsorshipAPITests(TestCase):
         response = self.client.get("/api/dashboards/sponsor/")
 
         self.assertEqual(response.status_code, 403)
+
+
+class SponsorHubCoreModelTests(TestCase):
+    def create_sponsor_owner(self, email="hub-owner@example.com"):
+        return User.objects.create_user(
+            email=email,
+            phone_number=None,
+            password="StrongPass123",
+            first_name="Hub",
+            last_name="Owner",
+        )
+
+    def create_sponsor_account(self, owner=None):
+        owner = owner or self.create_sponsor_owner()
+
+        sponsor_account = SponsorAccount.objects.create(
+            owner=owner,
+            sponsor_type=SponsorAccount.SponsorType.CORPORATE,
+            name="KCB Bank Uganda",
+            registration_country="UG",
+            brn="KCB-BRN-001",
+            tin="KCB-TIN-001",
+            status=SponsorAccount.Status.APPROVED,
+        )
+
+        SponsorAccountMember.objects.create(
+            sponsor_account=sponsor_account,
+            user=owner,
+            member_role=SponsorAccountMember.MemberRole.OWNER,
+        )
+
+        return sponsor_account
+
+    def create_package(self, created_by=None):
+        created_by = created_by or self.create_sponsor_owner(
+            "package-owner@example.com"
+        )
+
+        return SponsorPackage.objects.create(
+            name="Elgon Cup Matchday Sponsor",
+            description="Sponsor visibility for a national team matchday.",
+            owner_type="UNION",
+            owner_identifier="uru",
+            owner_name="Uganda Rugby Union",
+            scope_type="EVENT",
+            scope_identifier="elgon-cup-2026",
+            scope_name="Elgon Cup 2026",
+            sponsor_type_allowed=SponsorPackage.SponsorTypeAllowed.BOTH,
+            category="BANKING",
+            price_amount=Decimal("5000000.00"),
+            currency="UGX",
+            is_exclusive=True,
+            requires_platform_fee=True,
+            platform_fee_amount=Decimal("500000.00"),
+            activation_rule=SponsorPackage.ActivationRule.AFTER_PLATFORM_FEE,
+            status=SponsorPackage.Status.APPROVED,
+            created_by=created_by,
+        )
+
+    def test_sponsor_package_can_define_owner_scope_and_platform_fee(self):
+        sponsor_package = self.create_package()
+
+        self.assertEqual(sponsor_package.owner_type, "UNION")
+        self.assertEqual(sponsor_package.scope_type, "EVENT")
+        self.assertEqual(sponsor_package.scope_name, "Elgon Cup 2026")
+        self.assertTrue(sponsor_package.is_exclusive)
+        self.assertTrue(sponsor_package.requires_platform_fee)
+        self.assertEqual(sponsor_package.platform_fee_amount, Decimal("500000.00"))
+
+    def test_sponsor_package_can_have_platform_controlled_benefits(self):
+        sponsor_package = self.create_package()
+
+        benefit = SponsorBenefit.objects.create(
+            sponsor_package=sponsor_package,
+            benefit_type=SponsorBenefit.BenefitType.FAN_DASHBOARD_AD,
+            name="Fan Dashboard Placement",
+            description="Sponsor logo appears on the fan dashboard.",
+            quantity=1,
+            is_platform_controlled=True,
+            requires_payment_confirmation=True,
+        )
+
+        self.assertEqual(benefit.sponsor_package, sponsor_package)
+        self.assertTrue(benefit.is_platform_controlled)
+        self.assertTrue(benefit.requires_payment_confirmation)
+
+    def test_existing_off_platform_sponsorship_can_be_recorded(self):
+        sponsor_account = self.create_sponsor_account()
+        sponsor_package = self.create_package()
+
+        agreement = SponsorAgreement.objects.create(
+            sponsor_account=sponsor_account,
+            sponsor_package=sponsor_package,
+            agreement_type=SponsorAgreement.AgreementType.EXISTING_CONTRACT,
+            payment_source=SponsorAgreement.PaymentSource.EXISTING_CONTRACT,
+            payment_model=SponsorAgreement.PaymentModel.EXTERNAL,
+            total_value=Decimal("10000000.00"),
+            currency="UGX",
+            starts_at=date.today(),
+            ends_at=date.today() + timedelta(days=365),
+            status=SponsorAgreement.Status.APPROVED,
+            platform_fee_required=True,
+            platform_fee_amount=Decimal("500000.00"),
+            platform_fee_status=SponsorAgreement.PlatformFeeStatus.PENDING,
+            benefits_tier=SponsorAgreement.BenefitsTier.BASIC,
+            activation_rule=SponsorAgreement.ActivationRule.PLATFORM_FEE_CONFIRMED,
+            proof_reference="Existing URU sponsorship contract reference",
+            created_by=sponsor_account.owner,
+        )
+
+        self.assertEqual(
+            agreement.payment_source,
+            SponsorAgreement.PaymentSource.EXISTING_CONTRACT,
+        )
+        self.assertEqual(
+            agreement.payment_model,
+            SponsorAgreement.PaymentModel.EXTERNAL,
+        )
+        self.assertEqual(
+            agreement.platform_fee_status,
+            SponsorAgreement.PlatformFeeStatus.PENDING,
+        )
+
+    def test_one_time_payment_schedule_and_payment_can_be_recorded(self):
+        sponsor_account = self.create_sponsor_account()
+        sponsor_package = self.create_package()
+
+        agreement = SponsorAgreement.objects.create(
+            sponsor_account=sponsor_account,
+            sponsor_package=sponsor_package,
+            payment_model=SponsorAgreement.PaymentModel.ONE_TIME,
+            total_value=Decimal("5000000.00"),
+            currency="UGX",
+            status=SponsorAgreement.Status.PENDING_PAYMENT,
+            created_by=sponsor_account.owner,
+        )
+
+        schedule = SponsorPaymentSchedule.objects.create(
+            agreement=agreement,
+            schedule_type=SponsorPaymentSchedule.ScheduleType.ONE_TIME,
+            sequence_number=1,
+            due_date=date.today(),
+            amount_due=Decimal("5000000.00"),
+            currency="UGX",
+        )
+
+        payment = SponsorPayment.objects.create(
+            agreement=agreement,
+            payment_schedule=schedule,
+            amount_paid=Decimal("5000000.00"),
+            currency="UGX",
+            payment_method=SponsorPayment.PaymentMethod.BANK_TRANSFER,
+            transaction_reference="BANK-REF-001",
+            paid_at=timezone.now(),
+            status=SponsorPayment.Status.CONFIRMED,
+            recorded_by=sponsor_account.owner,
+            confirmed_by=sponsor_account.owner,
+            confirmed_at=timezone.now(),
+        )
+
+        self.assertEqual(payment.agreement, agreement)
+        self.assertEqual(payment.payment_schedule, schedule)
+        self.assertEqual(payment.status, SponsorPayment.Status.CONFIRMED)
+
+    def test_recurring_agreement_can_have_multiple_payment_schedules(self):
+        sponsor_account = self.create_sponsor_account()
+        sponsor_package = self.create_package()
+
+        agreement = SponsorAgreement.objects.create(
+            sponsor_account=sponsor_account,
+            sponsor_package=sponsor_package,
+            payment_model=SponsorAgreement.PaymentModel.RECURRING,
+            total_value=Decimal("1500000.00"),
+            currency="UGX",
+            status=SponsorAgreement.Status.PENDING_PAYMENT,
+            created_by=sponsor_account.owner,
+        )
+
+        today = date.today()
+
+        for index in range(1, 4):
+            SponsorPaymentSchedule.objects.create(
+                agreement=agreement,
+                schedule_type=SponsorPaymentSchedule.ScheduleType.RECURRING,
+                sequence_number=index,
+                due_date=today + timedelta(days=30 * (index - 1)),
+                period_start=today + timedelta(days=30 * (index - 1)),
+                period_end=today + timedelta(days=(30 * index) - 1),
+                amount_due=Decimal("500000.00"),
+                currency="UGX",
+            )
+
+        self.assertEqual(agreement.payment_schedules.count(), 3)
+
+    def test_revenue_share_rules_and_distributions_can_be_recorded(self):
+        sponsor_account = self.create_sponsor_account()
+        sponsor_package = self.create_package()
+
+        agreement = SponsorAgreement.objects.create(
+            sponsor_account=sponsor_account,
+            sponsor_package=sponsor_package,
+            payment_model=SponsorAgreement.PaymentModel.ONE_TIME,
+            total_value=Decimal("1000000.00"),
+            currency="UGX",
+            status=SponsorAgreement.Status.ACTIVE,
+            created_by=sponsor_account.owner,
+        )
+
+        payment = SponsorPayment.objects.create(
+            agreement=agreement,
+            amount_paid=Decimal("1000000.00"),
+            currency="UGX",
+            payment_method=SponsorPayment.PaymentMethod.MOBILE_MONEY,
+            transaction_reference="MM-001",
+            paid_at=timezone.now(),
+            status=SponsorPayment.Status.CONFIRMED,
+            recorded_by=sponsor_account.owner,
+            confirmed_by=sponsor_account.owner,
+            confirmed_at=timezone.now(),
+        )
+
+        RevenueShareRule.objects.create(
+            sponsor_package=sponsor_package,
+            recipient_type=RevenueShareRule.RecipientType.UNION,
+            recipient_identifier="uru",
+            recipient_name="Uganda Rugby Union",
+            percentage=Decimal("85.00"),
+        )
+
+        RevenueShareRule.objects.create(
+            sponsor_package=sponsor_package,
+            recipient_type=RevenueShareRule.RecipientType.PLATFORM,
+            recipient_identifier="league-os",
+            recipient_name="League OS Platform",
+            percentage=Decimal("15.00"),
+            is_platform_share=True,
+        )
+
+        RevenueDistribution.objects.create(
+            payment=payment,
+            agreement=agreement,
+            recipient_type=RevenueShareRule.RecipientType.UNION,
+            recipient_identifier="uru",
+            recipient_name="Uganda Rugby Union",
+            amount=Decimal("850000.00"),
+            currency="UGX",
+            status=RevenueDistribution.Status.ALLOCATED,
+        )
+
+        RevenueDistribution.objects.create(
+            payment=payment,
+            agreement=agreement,
+            recipient_type=RevenueShareRule.RecipientType.PLATFORM,
+            recipient_identifier="league-os",
+            recipient_name="League OS Platform",
+            amount=Decimal("150000.00"),
+            currency="UGX",
+            status=RevenueDistribution.Status.ALLOCATED,
+        )
+
+        self.assertEqual(sponsor_package.revenue_share_rules.count(), 2)
+        self.assertEqual(payment.revenue_distributions.count(), 2)
+
+    def test_sponsor_workflow_event_records_audit_trail(self):
+        sponsor_account = self.create_sponsor_account()
+        sponsor_package = self.create_package()
+
+        agreement = SponsorAgreement.objects.create(
+            sponsor_account=sponsor_account,
+            sponsor_package=sponsor_package,
+            total_value=Decimal("1000000.00"),
+            currency="UGX",
+            status=SponsorAgreement.Status.SUBMITTED,
+            created_by=sponsor_account.owner,
+        )
+
+        event = SponsorWorkflowEvent.objects.create(
+            sponsor_package=sponsor_package,
+            agreement=agreement,
+            actor=sponsor_account.owner,
+            event_type=SponsorWorkflowEvent.EventType.AGREEMENT_SUBMITTED,
+            from_status=SponsorAgreement.Status.DRAFT,
+            to_status=SponsorAgreement.Status.SUBMITTED,
+            note="Sponsor submitted agreement for approval.",
+        )
+
+        self.assertEqual(event.agreement, agreement)
+        self.assertEqual(
+            event.event_type,
+            SponsorWorkflowEvent.EventType.AGREEMENT_SUBMITTED,
+        )
+        self.assertEqual(event.actor, sponsor_account.owner)
