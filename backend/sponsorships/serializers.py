@@ -6,7 +6,18 @@ from rest_framework import serializers
 from accounts.serializers import UserSerializer, normalize_phone_number
 from accounts.services import create_email_verification_otp
 
-from .models import SponsorAccount, SponsorAccountMember
+from .models import (
+    RevenueDistribution,
+    RevenueShareRule,
+    SponsorAccount,
+    SponsorAccountMember,
+    SponsorAgreement,
+    SponsorBenefit,
+    SponsorPackage,
+    SponsorPayment,
+    SponsorPaymentSchedule,
+    SponsorWorkflowEvent,
+)
 
 User = get_user_model()
 
@@ -394,3 +405,487 @@ class AddSponsorMemberSerializer(serializers.Serializer):
             user=member_user,
             member_role=validated_data["member_role"],
         )
+
+
+class SponsorBenefitSerializer(serializers.ModelSerializer):
+    benefit_type_display = serializers.CharField(
+        source="get_benefit_type_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = SponsorBenefit
+        fields = (
+            "id",
+            "sponsor_package",
+            "benefit_type",
+            "benefit_type_display",
+            "name",
+            "description",
+            "quantity",
+            "discount_percentage",
+            "value_amount",
+            "requires_payment_confirmation",
+            "is_platform_controlled",
+            "created_at",
+        )
+        read_only_fields = ("id", "created_at")
+
+
+class RevenueShareRuleSerializer(serializers.ModelSerializer):
+    recipient_type_display = serializers.CharField(
+        source="get_recipient_type_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = RevenueShareRule
+        fields = (
+            "id",
+            "sponsor_package",
+            "agreement",
+            "recipient_type",
+            "recipient_type_display",
+            "recipient_identifier",
+            "recipient_name",
+            "percentage",
+            "fixed_amount",
+            "is_platform_share",
+            "created_at",
+        )
+        read_only_fields = ("id", "created_at")
+
+    def validate(self, attrs):
+        sponsor_package = attrs.get("sponsor_package")
+        agreement = attrs.get("agreement")
+
+        if sponsor_package and agreement:
+            raise serializers.ValidationError(
+                "A revenue share rule should be attached to either a package "
+                "or an agreement, not both."
+            )
+
+        if not sponsor_package and not agreement:
+            raise serializers.ValidationError(
+                "A revenue share rule must be attached to a package or an agreement."
+            )
+
+        percentage = attrs.get("percentage", 0)
+        fixed_amount = attrs.get("fixed_amount", 0)
+
+        if percentage == 0 and fixed_amount == 0:
+            raise serializers.ValidationError(
+                "Provide either a percentage or a fixed amount."
+            )
+
+        return attrs
+
+
+class SponsorPackageSerializer(serializers.ModelSerializer):
+    owner_type_display = serializers.CharField(
+        source="get_owner_type_display",
+        read_only=True,
+    )
+    scope_type_display = serializers.CharField(
+        source="get_scope_type_display",
+        read_only=True,
+    )
+    sponsor_type_allowed_display = serializers.CharField(
+        source="get_sponsor_type_allowed_display",
+        read_only=True,
+    )
+    category_display = serializers.CharField(
+        source="get_category_display",
+        read_only=True,
+    )
+    activation_rule_display = serializers.CharField(
+        source="get_activation_rule_display",
+        read_only=True,
+    )
+    status_display = serializers.CharField(
+        source="get_status_display",
+        read_only=True,
+    )
+    created_by_email = serializers.EmailField(
+        source="created_by.email",
+        read_only=True,
+    )
+    approved_by_email = serializers.EmailField(
+        source="approved_by.email",
+        read_only=True,
+    )
+    benefits = SponsorBenefitSerializer(many=True, read_only=True)
+    revenue_share_rules = RevenueShareRuleSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = SponsorPackage
+        fields = (
+            "id",
+            "name",
+            "description",
+            "owner_type",
+            "owner_type_display",
+            "owner_identifier",
+            "owner_name",
+            "scope_type",
+            "scope_type_display",
+            "scope_identifier",
+            "scope_name",
+            "sponsor_type_allowed",
+            "sponsor_type_allowed_display",
+            "category",
+            "category_display",
+            "price_amount",
+            "currency",
+            "is_exclusive",
+            "requires_platform_fee",
+            "platform_fee_amount",
+            "activation_rule",
+            "activation_rule_display",
+            "status",
+            "status_display",
+            "created_by",
+            "created_by_email",
+            "approved_by",
+            "approved_by_email",
+            "approved_at",
+            "benefits",
+            "revenue_share_rules",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = (
+            "id",
+            "created_by",
+            "approved_by",
+            "approved_at",
+            "created_at",
+            "updated_at",
+        )
+
+    def validate(self, attrs):
+        requires_platform_fee = attrs.get(
+            "requires_platform_fee",
+            getattr(self.instance, "requires_platform_fee", False),
+        )
+        platform_fee_amount = attrs.get(
+            "platform_fee_amount",
+            getattr(self.instance, "platform_fee_amount", 0),
+        )
+
+        if requires_platform_fee and platform_fee_amount <= 0:
+            raise serializers.ValidationError(
+                {
+                    "platform_fee_amount": (
+                        "Platform fee amount is required when the package "
+                        "requires a platform fee."
+                    )
+                }
+            )
+
+        return attrs
+
+
+class SponsorPaymentScheduleSerializer(serializers.ModelSerializer):
+    schedule_type_display = serializers.CharField(
+        source="get_schedule_type_display",
+        read_only=True,
+    )
+    status_display = serializers.CharField(
+        source="get_status_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = SponsorPaymentSchedule
+        fields = (
+            "id",
+            "agreement",
+            "schedule_type",
+            "schedule_type_display",
+            "sequence_number",
+            "due_date",
+            "period_start",
+            "period_end",
+            "amount_due",
+            "currency",
+            "status",
+            "status_display",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        period_start = attrs.get("period_start")
+        period_end = attrs.get("period_end")
+
+        if period_start and period_end and period_end < period_start:
+            raise serializers.ValidationError(
+                {"period_end": "Period end cannot be before period start."}
+            )
+
+        return attrs
+
+
+class RevenueDistributionSerializer(serializers.ModelSerializer):
+    recipient_type_display = serializers.CharField(
+        source="get_recipient_type_display",
+        read_only=True,
+    )
+    status_display = serializers.CharField(
+        source="get_status_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = RevenueDistribution
+        fields = (
+            "id",
+            "payment",
+            "agreement",
+            "recipient_type",
+            "recipient_type_display",
+            "recipient_identifier",
+            "recipient_name",
+            "amount",
+            "currency",
+            "status",
+            "status_display",
+            "created_at",
+        )
+        read_only_fields = ("id", "created_at")
+
+
+class SponsorPaymentSerializer(serializers.ModelSerializer):
+    payment_method_display = serializers.CharField(
+        source="get_payment_method_display",
+        read_only=True,
+    )
+    status_display = serializers.CharField(
+        source="get_status_display",
+        read_only=True,
+    )
+    recorded_by_email = serializers.EmailField(
+        source="recorded_by.email",
+        read_only=True,
+    )
+    confirmed_by_email = serializers.EmailField(
+        source="confirmed_by.email",
+        read_only=True,
+    )
+    revenue_distributions = RevenueDistributionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = SponsorPayment
+        fields = (
+            "id",
+            "agreement",
+            "payment_schedule",
+            "amount_paid",
+            "currency",
+            "payment_method",
+            "payment_method_display",
+            "transaction_reference",
+            "paid_at",
+            "status",
+            "status_display",
+            "proof_url",
+            "notes",
+            "recorded_by",
+            "recorded_by_email",
+            "confirmed_by",
+            "confirmed_by_email",
+            "confirmed_at",
+            "revenue_distributions",
+            "created_at",
+        )
+        read_only_fields = (
+            "id",
+            "recorded_by",
+            "confirmed_by",
+            "confirmed_at",
+            "revenue_distributions",
+            "created_at",
+        )
+
+
+class SponsorWorkflowEventSerializer(serializers.ModelSerializer):
+    event_type_display = serializers.CharField(
+        source="get_event_type_display",
+        read_only=True,
+    )
+    actor_email = serializers.EmailField(
+        source="actor.email",
+        read_only=True,
+    )
+
+    class Meta:
+        model = SponsorWorkflowEvent
+        fields = (
+            "id",
+            "sponsor_package",
+            "agreement",
+            "payment",
+            "actor",
+            "actor_email",
+            "event_type",
+            "event_type_display",
+            "from_status",
+            "to_status",
+            "note",
+            "created_at",
+        )
+        read_only_fields = ("id", "actor", "created_at")
+
+
+class SponsorAgreementSerializer(serializers.ModelSerializer):
+    sponsor_account_detail = SponsorAccountSerializer(
+        source="sponsor_account",
+        read_only=True,
+    )
+    sponsor_package_detail = SponsorPackageSerializer(
+        source="sponsor_package",
+        read_only=True,
+    )
+    agreement_type_display = serializers.CharField(
+        source="get_agreement_type_display",
+        read_only=True,
+    )
+    payment_source_display = serializers.CharField(
+        source="get_payment_source_display",
+        read_only=True,
+    )
+    payment_model_display = serializers.CharField(
+        source="get_payment_model_display",
+        read_only=True,
+    )
+    status_display = serializers.CharField(
+        source="get_status_display",
+        read_only=True,
+    )
+    platform_fee_status_display = serializers.CharField(
+        source="get_platform_fee_status_display",
+        read_only=True,
+    )
+    benefits_tier_display = serializers.CharField(
+        source="get_benefits_tier_display",
+        read_only=True,
+    )
+    activation_rule_display = serializers.CharField(
+        source="get_activation_rule_display",
+        read_only=True,
+    )
+    created_by_email = serializers.EmailField(
+        source="created_by.email",
+        read_only=True,
+    )
+    approved_by_email = serializers.EmailField(
+        source="approved_by.email",
+        read_only=True,
+    )
+    waived_by_email = serializers.EmailField(
+        source="waived_by.email",
+        read_only=True,
+    )
+    payment_schedules = SponsorPaymentScheduleSerializer(many=True, read_only=True)
+    payments = SponsorPaymentSerializer(many=True, read_only=True)
+    revenue_share_rules = RevenueShareRuleSerializer(many=True, read_only=True)
+    revenue_distributions = RevenueDistributionSerializer(many=True, read_only=True)
+    workflow_events = SponsorWorkflowEventSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = SponsorAgreement
+        fields = (
+            "id",
+            "sponsor_account",
+            "sponsor_account_detail",
+            "sponsor_package",
+            "sponsor_package_detail",
+            "reference",
+            "agreement_type",
+            "agreement_type_display",
+            "payment_source",
+            "payment_source_display",
+            "payment_model",
+            "payment_model_display",
+            "total_value",
+            "currency",
+            "starts_at",
+            "ends_at",
+            "status",
+            "status_display",
+            "platform_fee_required",
+            "platform_fee_amount",
+            "platform_fee_status",
+            "platform_fee_status_display",
+            "platform_activation_allowed",
+            "benefits_tier",
+            "benefits_tier_display",
+            "activation_rule",
+            "activation_rule_display",
+            "waiver_status",
+            "waiver_reason",
+            "waived_by",
+            "waived_by_email",
+            "waived_at",
+            "created_by",
+            "created_by_email",
+            "approved_by",
+            "approved_by_email",
+            "approved_at",
+            "proof_reference",
+            "notes",
+            "payment_schedules",
+            "payments",
+            "revenue_share_rules",
+            "revenue_distributions",
+            "workflow_events",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = (
+            "id",
+            "created_by",
+            "approved_by",
+            "approved_at",
+            "waived_by",
+            "waived_at",
+            "payment_schedules",
+            "payments",
+            "revenue_share_rules",
+            "revenue_distributions",
+            "workflow_events",
+            "created_at",
+            "updated_at",
+        )
+
+    def validate(self, attrs):
+        starts_at = attrs.get("starts_at", getattr(self.instance, "starts_at", None))
+        ends_at = attrs.get("ends_at", getattr(self.instance, "ends_at", None))
+
+        if starts_at and ends_at and ends_at < starts_at:
+            raise serializers.ValidationError(
+                {"ends_at": "Agreement end date cannot be before start date."}
+            )
+
+        platform_fee_required = attrs.get(
+            "platform_fee_required",
+            getattr(self.instance, "platform_fee_required", False),
+        )
+        platform_fee_amount = attrs.get(
+            "platform_fee_amount",
+            getattr(self.instance, "platform_fee_amount", 0),
+        )
+
+        if platform_fee_required and platform_fee_amount <= 0:
+            raise serializers.ValidationError(
+                {
+                    "platform_fee_amount": (
+                        "Platform fee amount is required when platform fee "
+                        "is required."
+                    )
+                }
+            )
+
+        return attrs
