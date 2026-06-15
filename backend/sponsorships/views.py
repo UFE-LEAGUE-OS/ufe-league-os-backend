@@ -230,9 +230,12 @@ def is_sponsor_hub_admin(user):
     if user.is_staff or user.is_superuser:
         return True
 
-    return user.has_role(User.Role.CLUB_ADMIN) or user.has_role(
-        User.Role.LEAGUE_ADMIN
-    ) or user.has_role(User.Role.UNION_ADMIN) or user.has_role(User.Role.SUPER_ADMIN)
+    return (
+        user.has_role(User.Role.CLUB_ADMIN)
+        or user.has_role(User.Role.LEAGUE_ADMIN)
+        or user.has_role(User.Role.UNION_ADMIN)
+        or user.has_role(User.Role.SUPER_ADMIN)
+    )
 
 
 def can_manage_sponsor_package(user, sponsor_package):
@@ -427,10 +430,12 @@ def sponsor_package_detail_view(request, package_id):
         create_sponsor_package_workflow_event(
             sponsor_package=sponsor_package,
             actor=request.user,
-            event_type=SponsorWorkflowEvent.EventType.PACKAGE_SUBMITTED
-            if sponsor_package.status == SponsorPackage.Status.SUBMITTED
-            and old_status != sponsor_package.status
-            else SponsorWorkflowEvent.EventType.PACKAGE_CREATED,
+            event_type=(
+                SponsorWorkflowEvent.EventType.PACKAGE_SUBMITTED
+                if sponsor_package.status == SponsorPackage.Status.SUBMITTED
+                and old_status != sponsor_package.status
+                else SponsorWorkflowEvent.EventType.PACKAGE_CREATED
+            ),
             from_status=old_status,
             to_status=sponsor_package.status,
             note="Sponsor package updated.",
