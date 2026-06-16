@@ -18,6 +18,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "accounts",
     "dashboards",
+    "governance.apps.GovernanceConfig",
 ]
 
 MIDDLEWARE = [
