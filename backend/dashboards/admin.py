@@ -29,8 +29,13 @@ class CompetitionAdmin(admin.ModelAdmin):
 @admin.register(Match)
 class MatchAdmin(admin.ModelAdmin):
     list_display = [
-        "home_club", "away_club", "competition", "status",
-        "match_date", "home_score", "away_score",
+        "home_club",
+        "away_club",
+        "competition",
+        "status",
+        "match_date",
+        "home_score",
+        "away_score",
     ]
     list_filter = ["status", "competition", "match_date"]
     search_fields = ["home_club__name", "away_club__name", "venue"]
@@ -39,7 +44,11 @@ class MatchAdmin(admin.ModelAdmin):
 @admin.register(Standing)
 class StandingAdmin(admin.ModelAdmin):
     list_display = [
-        "competition", "club", "position", "played", "points",
+        "competition",
+        "club",
+        "position",
+        "played",
+        "points",
     ]
     list_filter = ["competition"]
     search_fields = ["club__name", "competition__name"]

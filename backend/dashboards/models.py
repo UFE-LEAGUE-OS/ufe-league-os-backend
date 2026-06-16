@@ -24,9 +24,7 @@ class Union(models.Model):
 class League(models.Model):
     """Represents a league within a union (e.g., Uganda Premier League)."""
 
-    union = models.ForeignKey(
-        Union, on_delete=models.CASCADE, related_name="leagues"
-    )
+    union = models.ForeignKey(Union, on_delete=models.CASCADE, related_name="leagues")
     name = models.CharField(max_length=200, unique=True)
     slug = models.SlugField(max_length=200, unique=True)
     logo = models.ImageField(upload_to="leagues/logos/", blank=True, null=True)
@@ -91,7 +89,9 @@ class Match(models.Model):
     )
     match_date = models.DateTimeField()
     venue = models.CharField(max_length=300, blank=True)
-    round = models.CharField(max_length=100, blank=True, help_text="Matchweek, round, or group stage")
+    round = models.CharField(
+        max_length=100, blank=True, help_text="Matchweek, round, or group stage"
+    )
     home_score = models.PositiveIntegerField(blank=True, null=True)
     away_score = models.PositiveIntegerField(blank=True, null=True)
     home_halftime_score = models.PositiveIntegerField(blank=True, null=True)
@@ -142,9 +142,7 @@ class Standing(models.Model):
     goals_against = models.PositiveIntegerField(default=0)
     goal_difference = models.IntegerField(default=0)
     points = models.PositiveIntegerField(default=0)
-    form = models.CharField(
-        max_length=50, blank=True, help_text="e.g. WWDLW"
-    )
+    form = models.CharField(max_length=50, blank=True, help_text="e.g. WWDLW")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

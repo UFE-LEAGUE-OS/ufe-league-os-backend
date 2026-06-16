@@ -18,8 +18,15 @@ class UnionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Union
         fields = [
-            "id", "name", "slug", "logo", "description",
-            "website", "founded_year", "country", "created_at",
+            "id",
+            "name",
+            "slug",
+            "logo",
+            "description",
+            "website",
+            "founded_year",
+            "country",
+            "created_at",
         ]
 
 
@@ -31,8 +38,16 @@ class LeagueSerializer(serializers.ModelSerializer):
     class Meta:
         model = League
         fields = [
-            "id", "name", "slug", "logo", "description",
-            "union", "union_name", "founded_year", "is_active", "created_at",
+            "id",
+            "name",
+            "slug",
+            "logo",
+            "description",
+            "union",
+            "union_name",
+            "founded_year",
+            "is_active",
+            "created_at",
         ]
 
 
@@ -44,8 +59,16 @@ class CompetitionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Competition
         fields = [
-            "id", "name", "slug", "season", "league", "league_name",
-            "is_active", "start_date", "end_date", "created_at",
+            "id",
+            "name",
+            "slug",
+            "season",
+            "league",
+            "league_name",
+            "is_active",
+            "start_date",
+            "end_date",
+            "created_at",
         ]
 
 
@@ -62,15 +85,28 @@ class MatchListSerializer(serializers.ModelSerializer):
         model = Match
         fields = [
             "id",
-            "competition", "competition_name",
-            "home_club", "home_club_name", "home_club_slug",
-            "away_club", "away_club_name", "away_club_slug",
-            "status", "match_date", "venue", "round",
-            "home_score", "away_score",
-            "home_halftime_score", "away_halftime_score",
-            "has_extra_time", "has_penalties",
-            "home_penalty_score", "away_penalty_score",
-            "is_featured", "created_at",
+            "competition",
+            "competition_name",
+            "home_club",
+            "home_club_name",
+            "home_club_slug",
+            "away_club",
+            "away_club_name",
+            "away_club_slug",
+            "status",
+            "match_date",
+            "venue",
+            "round",
+            "home_score",
+            "away_score",
+            "home_halftime_score",
+            "away_halftime_score",
+            "has_extra_time",
+            "has_penalties",
+            "home_penalty_score",
+            "away_penalty_score",
+            "is_featured",
+            "created_at",
         ]
 
 
@@ -84,8 +120,17 @@ class StandingSerializer(serializers.ModelSerializer):
         model = Standing
         fields = [
             "id",
-            "club", "club_name", "club_slug",
-            "position", "played", "won", "drawn", "lost",
-            "goals_for", "goals_against", "goal_difference", "points",
+            "club",
+            "club_name",
+            "club_slug",
+            "position",
+            "played",
+            "won",
+            "drawn",
+            "lost",
+            "goals_for",
+            "goals_against",
+            "goal_difference",
+            "points",
             "form",
         ]

@@ -212,9 +212,7 @@ class TestPublicFixtures:
         """Fixtures can be filtered by competition ID."""
         client = APIClient()
         url = reverse("public-fixtures")
-        response = client.get(
-            url, {"competition": seeded_data["competition"].id}
-        )
+        response = client.get(url, {"competition": seeded_data["competition"].id})
 
         assert response.status_code == status.HTTP_200_OK
         assert len(response.data) >= 1
@@ -263,9 +261,7 @@ class TestPublicResults:
         """Results can be filtered by competition ID."""
         client = APIClient()
         url = reverse("public-results")
-        response = client.get(
-            url, {"competition": seeded_data["competition"].id}
-        )
+        response = client.get(url, {"competition": seeded_data["competition"].id})
 
         assert response.status_code == status.HTTP_200_OK
         assert len(response.data) >= 1
@@ -324,9 +320,7 @@ class TestPublicStandings:
         """Completely unauthenticated request should work."""
         client = APIClient()
         url = reverse("public-standings")
-        response = client.get(
-            url, {"competition": seeded_data["competition"].id}
-        )
+        response = client.get(url, {"competition": seeded_data["competition"].id})
         assert response.status_code == status.HTTP_200_OK
 
 

@@ -334,9 +334,9 @@ def public_fixtures_view(request):
     if competition_id:
         queryset = queryset.filter(competition_id=competition_id)
     if club_id:
-        queryset = queryset.filter(
-            home_club_id=club_id
-        ) | queryset.filter(away_club_id=club_id)
+        queryset = queryset.filter(home_club_id=club_id) | queryset.filter(
+            away_club_id=club_id
+        )
 
     queryset = queryset.order_by("match_date")
     serializer = MatchListSerializer(queryset, many=True)
@@ -361,9 +361,9 @@ def public_results_view(request):
     if competition_id:
         queryset = queryset.filter(competition_id=competition_id)
     if club_id:
-        queryset = queryset.filter(
-            home_club_id=club_id
-        ) | queryset.filter(away_club_id=club_id)
+        queryset = queryset.filter(home_club_id=club_id) | queryset.filter(
+            away_club_id=club_id
+        )
 
     queryset = queryset.order_by("-match_date")[: int(limit)]
     serializer = MatchListSerializer(queryset, many=True)
