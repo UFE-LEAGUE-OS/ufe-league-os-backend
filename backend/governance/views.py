@@ -4,7 +4,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from accounts.permissions import IsSuperAdmin
-from accounts.rbac import log_governance_action, log_role_change
+from accounts.rbac import log_governance_action
 
 from .models import CompetitionFormat, LeagueStandard, Rule, SportVariant
 from .serializers import (
@@ -43,7 +43,7 @@ def sport_variant_list_create_view(request):
         log_governance_action(
             actor=request.user,
             action="create_sport_variant",
-            details={"variant_name": variant.name, "variant_id": variant.id}
+            details={"variant_name": variant.name, "variant_id": variant.id},
         )
         return Response(
             SportVariantSerializer(variant).data, status=status.HTTP_201_CREATED
@@ -78,7 +78,7 @@ def sport_variant_detail_view(request, pk):
             log_governance_action(
                 actor=request.user,
                 action="update_sport_variant",
-                details={"variant_name": updated.name, "variant_id": updated.id}
+                details={"variant_name": updated.name, "variant_id": updated.id},
             )
             return Response(SportVariantSerializer(updated).data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -89,7 +89,7 @@ def sport_variant_detail_view(request, pk):
     log_governance_action(
         actor=request.user,
         action="delete_sport_variant",
-        details={"variant_name": name}
+        details={"variant_name": name},
     )
     return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -112,7 +112,7 @@ def sport_variant_verify_view(request, pk):
     log_governance_action(
         actor=request.user,
         action="verify_sport_variant",
-        details={"variant_name": variant.name, "variant_id": variant.id}
+        details={"variant_name": variant.name, "variant_id": variant.id},
     )
     return Response(
         {
@@ -145,7 +145,7 @@ def competition_format_list_create_view(request):
         log_governance_action(
             actor=request.user,
             action="create_competition_format",
-            details={"format_name": fmt.name, "format_id": fmt.id}
+            details={"format_name": fmt.name, "format_id": fmt.id},
         )
         return Response(
             CompetitionFormatSerializer(fmt).data, status=status.HTTP_201_CREATED
@@ -183,7 +183,7 @@ def competition_format_detail_view(request, pk):
             log_governance_action(
                 actor=request.user,
                 action="update_competition_format",
-                details={"format_name": updated.name, "format_id": updated.id}
+                details={"format_name": updated.name, "format_id": updated.id},
             )
             return Response(CompetitionFormatSerializer(updated).data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -193,7 +193,7 @@ def competition_format_detail_view(request, pk):
     log_governance_action(
         actor=request.user,
         action="delete_competition_format",
-        details={"format_name": name}
+        details={"format_name": name},
     )
     return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -217,7 +217,7 @@ def competition_format_verify_view(request, pk):
     log_governance_action(
         actor=request.user,
         action="verify_competition_format",
-        details={"format_name": fmt.name, "format_id": fmt.id}
+        details={"format_name": fmt.name, "format_id": fmt.id},
     )
     return Response(
         {
@@ -250,7 +250,7 @@ def rule_list_create_view(request):
         log_governance_action(
             actor=request.user,
             action="create_rule",
-            details={"rule_title": rule.title, "version": rule.version}
+            details={"rule_title": rule.title, "version": rule.version},
         )
         return Response(RuleSerializer(rule).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -281,7 +281,7 @@ def rule_detail_view(request, pk):
             log_governance_action(
                 actor=request.user,
                 action="update_rule",
-                details={"rule_title": updated.title, "version": updated.version}
+                details={"rule_title": updated.title, "version": updated.version},
             )
             return Response(RuleSerializer(updated).data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -291,7 +291,7 @@ def rule_detail_view(request, pk):
     log_governance_action(
         actor=request.user,
         action="delete_rule",
-        details={"rule_title": title}
+        details={"rule_title": title},
     )
     return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -319,7 +319,7 @@ def rule_publish_view(request, pk):
     log_governance_action(
         actor=request.user,
         action="publish_rule",
-        details={"rule_title": rule.title, "version": rule.version}
+        details={"rule_title": rule.title, "version": rule.version},
     )
     return Response(
         {
@@ -352,7 +352,7 @@ def rule_unpublish_view(request, pk):
     log_governance_action(
         actor=request.user,
         action="unpublish_rule",
-        details={"rule_title": rule.title, "version": rule.version}
+        details={"rule_title": rule.title, "version": rule.version},
     )
     return Response({"detail": f"Rule '{rule.title}' unpublished successfully."})
 
@@ -424,7 +424,7 @@ def league_standard_list_create_view(request):
     log_governance_action(
         actor=request.user,
         action="publish_standards_to_leagues",
-        details={"created_count": len(created), "leagues": league_ids}
+        details={"created_count": len(created), "leagues": league_ids},
     )
 
     return Response(

@@ -7,6 +7,7 @@ from django.db import migrations, models
 
 from django.conf import settings
 
+
 class Migration(migrations.Migration):
 
     initial = True
@@ -62,7 +63,10 @@ class Migration(migrations.Migration):
                 ("action", models.CharField(max_length=100)),
                 ("path", models.CharField(blank=True, max_length=255)),
                 ("method", models.CharField(blank=True, max_length=10)),
-                ("status_code", models.PositiveSmallIntegerField(blank=True, null=True)),
+                (
+                    "status_code",
+                    models.PositiveSmallIntegerField(blank=True, null=True),
+                ),
                 ("ip_address", models.CharField(blank=True, max_length=45)),
                 ("details", models.JSONField(blank=True, default=dict)),
                 ("created_at", models.DateTimeField(auto_now_add=True)),

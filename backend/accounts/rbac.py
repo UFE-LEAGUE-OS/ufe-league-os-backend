@@ -224,6 +224,7 @@ def log_role_change(
         },
     )
 
+
 def log_governance_action(
     actor,
     action,
