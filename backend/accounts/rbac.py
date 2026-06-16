@@ -224,6 +224,21 @@ def log_role_change(
         },
     )
 
+def log_governance_action(
+    actor,
+    action,
+    details,
+    target_user=None,
+):
+    """Log administrative actions related to league governance."""
+    return AuditLog.objects.create(
+        category=AuditLog.Category.GOVERNANCE,
+        actor=actor,
+        target_user=target_user,
+        action=action,
+        details=details,
+    )
+
 
 def log_access_violation(request, status_code, detail=None):
     user = getattr(request, "user", None)

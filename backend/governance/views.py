@@ -4,7 +4,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from accounts.permissions import IsSuperAdmin
-from accounts.rbac import log_role_change
+from accounts.rbac import log_governance_action, log_role_change
 
 from .models import CompetitionFormat, LeagueStandard, Rule, SportVariant
 from .serializers import (
@@ -40,12 +40,10 @@ def sport_variant_list_create_view(request):
     serializer = SportVariantSerializer(data=request.data)
     if serializer.is_valid():
         variant = serializer.save()
-        log_role_change(
-            target_user=request.user,
-            previous_role=None,
-            new_role=None,
+        log_governance_action(
             actor=request.user,
-            reason=f"Created sport variant: {variant.name}",
+            action="create_sport_variant",
+            details={"variant_name": variant.name, "variant_id": variant.id}
         )
         return Response(
             SportVariantSerializer(variant).data, status=status.HTTP_201_CREATED
@@ -77,12 +75,10 @@ def sport_variant_detail_view(request, pk):
         serializer = SportVariantSerializer(variant, data=request.data, partial=partial)
         if serializer.is_valid():
             updated = serializer.save()
-            log_role_change(
-                target_user=request.user,
-                previous_role=None,
-                new_role=None,
+            log_governance_action(
                 actor=request.user,
-                reason=f"Updated sport variant: {updated.name}",
+                action="update_sport_variant",
+                details={"variant_name": updated.name, "variant_id": updated.id}
             )
             return Response(SportVariantSerializer(updated).data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -90,12 +86,10 @@ def sport_variant_detail_view(request, pk):
     # DELETE
     name = variant.name
     variant.delete()
-    log_role_change(
-        target_user=request.user,
-        previous_role=None,
-        new_role=None,
+    log_governance_action(
         actor=request.user,
-        reason=f"Deleted sport variant: {name}",
+        action="delete_sport_variant",
+        details={"variant_name": name}
     )
     return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -115,12 +109,10 @@ def sport_variant_verify_view(request, pk):
 
     variant.is_verified = True
     variant.save(update_fields=["is_verified"])
-    log_role_change(
-        target_user=request.user,
-        previous_role=None,
-        new_role=None,
+    log_governance_action(
         actor=request.user,
-        reason=f"Verified sport variant: {variant.name}",
+        action="verify_sport_variant",
+        details={"variant_name": variant.name, "variant_id": variant.id}
     )
     return Response(
         {
@@ -150,12 +142,10 @@ def competition_format_list_create_view(request):
     serializer = CompetitionFormatSerializer(data=request.data)
     if serializer.is_valid():
         fmt = serializer.save()
-        log_role_change(
-            target_user=request.user,
-            previous_role=None,
-            new_role=None,
+        log_governance_action(
             actor=request.user,
-            reason=f"Created competition format: {fmt.name}",
+            action="create_competition_format",
+            details={"format_name": fmt.name, "format_id": fmt.id}
         )
         return Response(
             CompetitionFormatSerializer(fmt).data, status=status.HTTP_201_CREATED
@@ -190,24 +180,20 @@ def competition_format_detail_view(request, pk):
         )
         if serializer.is_valid():
             updated = serializer.save()
-            log_role_change(
-                target_user=request.user,
-                previous_role=None,
-                new_role=None,
+            log_governance_action(
                 actor=request.user,
-                reason=f"Updated competition format: {updated.name}",
+                action="update_competition_format",
+                details={"format_name": updated.name, "format_id": updated.id}
             )
             return Response(CompetitionFormatSerializer(updated).data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     name = fmt.name
     fmt.delete()
-    log_role_change(
-        target_user=request.user,
-        previous_role=None,
-        new_role=None,
+    log_governance_action(
         actor=request.user,
-        reason=f"Deleted competition format: {name}",
+        action="delete_competition_format",
+        details={"format_name": name}
     )
     return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -228,12 +214,10 @@ def competition_format_verify_view(request, pk):
 
     fmt.is_verified = True
     fmt.save(update_fields=["is_verified"])
-    log_role_change(
-        target_user=request.user,
-        previous_role=None,
-        new_role=None,
+    log_governance_action(
         actor=request.user,
-        reason=f"Verified competition format: {fmt.name}",
+        action="verify_competition_format",
+        details={"format_name": fmt.name, "format_id": fmt.id}
     )
     return Response(
         {
@@ -263,12 +247,10 @@ def rule_list_create_view(request):
     serializer = RuleSerializer(data=request.data)
     if serializer.is_valid():
         rule = serializer.save(created_by=request.user)
-        log_role_change(
-            target_user=request.user,
-            previous_role=None,
-            new_role=None,
+        log_governance_action(
             actor=request.user,
-            reason=f"Created rule: {rule.title} v{rule.version}",
+            action="create_rule",
+            details={"rule_title": rule.title, "version": rule.version}
         )
         return Response(RuleSerializer(rule).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -296,24 +278,20 @@ def rule_detail_view(request, pk):
         serializer = RuleSerializer(rule, data=request.data, partial=partial)
         if serializer.is_valid():
             updated = serializer.save()
-            log_role_change(
-                target_user=request.user,
-                previous_role=None,
-                new_role=None,
+            log_governance_action(
                 actor=request.user,
-                reason=f"Updated rule: {updated.title} v{updated.version}",
+                action="update_rule",
+                details={"rule_title": updated.title, "version": updated.version}
             )
             return Response(RuleSerializer(updated).data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     title = rule.title
     rule.delete()
-    log_role_change(
-        target_user=request.user,
-        previous_role=None,
-        new_role=None,
+    log_governance_action(
         actor=request.user,
-        reason=f"Deleted rule: {title}",
+        action="delete_rule",
+        details={"rule_title": title}
     )
     return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -338,12 +316,10 @@ def rule_publish_view(request, pk):
     rule.is_published = True
     rule.published_at = timezone.now()
     rule.save(update_fields=["is_published", "published_at"])
-    log_role_change(
-        target_user=request.user,
-        previous_role=None,
-        new_role=None,
+    log_governance_action(
         actor=request.user,
-        reason=f"Published rule: {rule.title} v{rule.version}",
+        action="publish_rule",
+        details={"rule_title": rule.title, "version": rule.version}
     )
     return Response(
         {
@@ -373,12 +349,10 @@ def rule_unpublish_view(request, pk):
     rule.is_published = False
     rule.published_at = None
     rule.save(update_fields=["is_published", "published_at"])
-    log_role_change(
-        target_user=request.user,
-        previous_role=None,
-        new_role=None,
+    log_governance_action(
         actor=request.user,
-        reason=f"Unpublished rule: {rule.title} v{rule.version}",
+        action="unpublish_rule",
+        details={"rule_title": rule.title, "version": rule.version}
     )
     return Response({"detail": f"Rule '{rule.title}' unpublished successfully."})
 
@@ -447,12 +421,10 @@ def league_standard_list_create_view(request):
             else:
                 already_exist.append({"rule_id": rule_id, "league_id": league_id})
 
-    log_role_change(
-        target_user=request.user,
-        previous_role=None,
-        new_role=None,
+    log_governance_action(
         actor=request.user,
-        reason=f"Published {len(created)} standard(s) to leagues",
+        action="publish_standards_to_leagues",
+        details={"created_count": len(created), "leagues": league_ids}
     )
 
     return Response(
