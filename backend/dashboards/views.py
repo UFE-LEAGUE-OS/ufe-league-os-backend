@@ -1,8 +1,10 @@
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from accounts.models import User
+from accounts.models import Club, User
 from accounts.permissions import (
     IsAuthenticatedAudit,
     IsClubAdmin,
@@ -16,6 +18,16 @@ from accounts.permissions import (
 )
 from accounts.routing import get_backend_dashboard_route, get_dashboard_route
 from accounts.serializers import UserSerializer
+
+from .models import Competition, League, Match, Standing, Union
+from .serializers import (
+    ClubListSerializer,
+    CompetitionSerializer,
+    LeagueSerializer,
+    MatchListSerializer,
+    StandingSerializer,
+    UnionSerializer,
+)
 
 # Create your views here.
 
@@ -296,3 +308,145 @@ def ticketing_officer_dashboard_view(request):
 @permission_classes([IsSponsor])
 def sponsor_dashboard_view(request):
     return build_dashboard_response(request, User.Role.SPONSOR)
+
+
+# ---------------------------------------------------------------------------
+# Public / No-Auth Endpoints
+# ---------------------------------------------------------------------------
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def public_fixtures_view(request):
+    """
+    Public endpoint: return upcoming/pending fixtures.
+    No authentication required.
+    """
+    now = timezone.now()
+    competition_id = request.query_params.get("competition")
+    club_id = request.query_params.get("club")
+
+    queryset = Match.objects.filter(
+        status__in=[Match.Status.SCHEDULED, Match.Status.POSTPONED],
+        match_date__gte=now,
+    ).select_related("competition", "home_club", "away_club")
+
+    if competition_id:
+        queryset = queryset.filter(competition_id=competition_id)
+    if club_id:
+        queryset = queryset.filter(
+            home_club_id=club_id
+        ) | queryset.filter(away_club_id=club_id)
+
+    queryset = queryset.order_by("match_date")
+    serializer = MatchListSerializer(queryset, many=True)
+    return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def public_results_view(request):
+    """
+    Public endpoint: return completed match results.
+    No authentication required.
+    """
+    competition_id = request.query_params.get("competition")
+    club_id = request.query_params.get("club")
+    limit = request.query_params.get("limit", 50)
+
+    queryset = Match.objects.filter(status=Match.Status.COMPLETED).select_related(
+        "competition", "home_club", "away_club"
+    )
+
+    if competition_id:
+        queryset = queryset.filter(competition_id=competition_id)
+    if club_id:
+        queryset = queryset.filter(
+            home_club_id=club_id
+        ) | queryset.filter(away_club_id=club_id)
+
+    queryset = queryset.order_by("-match_date")[: int(limit)]
+    serializer = MatchListSerializer(queryset, many=True)
+    return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def public_standings_view(request):
+    """
+    Public endpoint: return standings/table for a competition.
+    No authentication required.
+    """
+    competition_id = request.query_params.get("competition")
+
+    if not competition_id:
+        return Response(
+            {"detail": "The 'competition' query parameter is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    queryset = Standing.objects.filter(competition_id=competition_id).select_related(
+        "club", "competition"
+    )
+    queryset = queryset.order_by("position")
+    serializer = StandingSerializer(queryset, many=True)
+    return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def public_clubs_view(request):
+    """
+    Public endpoint: return a list of all clubs.
+    No authentication required.
+    """
+    queryset = Club.objects.all().order_by("name")
+    serializer = ClubListSerializer(queryset, many=True)
+    return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def public_unions_view(request):
+    """
+    Public endpoint: return a list of all unions/federations.
+    No authentication required.
+    """
+    queryset = Union.objects.all().order_by("name")
+    serializer = UnionSerializer(queryset, many=True)
+    return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def public_leagues_view(request):
+    """
+    Public endpoint: return a list of all leagues.
+    No authentication required.
+    """
+    union_id = request.query_params.get("union")
+    queryset = League.objects.all().select_related("union")
+    if union_id:
+        queryset = queryset.filter(union_id=union_id)
+    queryset = queryset.order_by("name")
+    serializer = LeagueSerializer(queryset, many=True)
+    return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def public_competitions_view(request):
+    """
+    Public endpoint: return a list of all competitions.
+    No authentication required.
+    """
+    league_id = request.query_params.get("league")
+    is_active = request.query_params.get("is_active")
+    queryset = Competition.objects.all().select_related("league")
+    if league_id:
+        queryset = queryset.filter(league_id=league_id)
+    if is_active is not None:
+        queryset = queryset.filter(is_active=(is_active.lower() == "true"))
+    queryset = queryset.order_by("-start_date")
+    serializer = CompetitionSerializer(queryset, many=True)
+    return Response(serializer.data)
