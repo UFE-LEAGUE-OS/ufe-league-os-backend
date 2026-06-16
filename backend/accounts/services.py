@@ -14,7 +14,7 @@ def generate_otp_code():
 
 
 def create_email_verification_otp(user):
-    """Create a new email verificaiton OTP for a user"""
+    """Create a new email verification OTP for a user"""
 
     EmailOTP.objects.filter(
         user=user,
@@ -58,7 +58,8 @@ def send_email_verification_otp(user, otp):
 
 
 def verify_email_otp(email, code):
-    """Verify a user's email OTP"""
+    """Verify a user's email OTP."""
+
     normalized_email = email.strip().lower()
     normalized_code = code.strip()
 
@@ -68,7 +69,7 @@ def verify_email_otp(email, code):
         raise ValidationError({"email": "No user exists with this email address."})
 
     if user.is_email_verified:
-        return user
+        raise ValidationError({"email": "This email address is already verified."})
 
     otp = (
         EmailOTP.objects.filter(
@@ -99,6 +100,14 @@ def verify_email_otp(email, code):
 
     if otp.code != normalized_code:
         otp.attempts += 1
+
+        if otp.attempts >= settings.OTP_MAX_ATTEMPTS:
+            otp.is_used = True
+            otp.save(update_fields=["attempts", "is_used", "updated_at"])
+            raise ValidationError(
+                {"code": "Maximum OTP attempts exceeded. Please request a new one."}
+            )
+
         otp.save(update_fields=["attempts", "updated_at"])
         raise ValidationError({"code": "Invalid OTP code."})
 
@@ -127,3 +136,120 @@ def resend_email_verification_otp(email):
         raise ValidationError({"email": "This email address is already verified."})
 
     return create_email_verification_otp(user)
+
+
+def create_password_reset_otp(user):
+    """Create a new password reset OTP for a user."""
+
+    EmailOTP.objects.filter(
+        user=user,
+        purpose=EmailOTP.Purpose.PASSWORD_RESET,
+        is_used=False,
+    ).update(is_used=True)
+
+    otp = EmailOTP.objects.create(
+        user=user,
+        code=generate_otp_code(),
+        purpose=EmailOTP.Purpose.PASSWORD_RESET,
+        expires_at=timezone.now()
+        + timezone.timedelta(minutes=settings.OTP_EXPIRY_MINUTES),
+    )
+
+    send_password_reset_otp(user, otp)
+
+    return otp
+
+
+def send_password_reset_otp(user, otp):
+    """Send password reset OTP to the user's email."""
+
+    subject = "Reset your League OS password"
+
+    message = (
+        f"Hello {user.first_name},\n\n"
+        f"Your League OS password reset code is: {otp.code}\n\n"
+        f"This code expires in {settings.OTP_EXPIRY_MINUTES} minutes.\n\n"
+        "If you did not request a password reset, please ignore this email.\n\n"
+        "League OS Team"
+    )
+
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[user.email],
+        fail_silently=False,
+    )
+
+
+def request_password_reset_otp(email):
+    """Create a password reset OTP for an existing user."""
+
+    normalized_email = email.strip().lower()
+
+    user = User.objects.filter(email__iexact=normalized_email).first()
+
+    if user is None:
+        raise ValidationError({"email": "No user exists with this email address."})
+
+    return create_password_reset_otp(user)
+
+
+def reset_password_with_otp(email, code, new_password):
+    """Reset a user's password after validating password reset OTP."""
+
+    normalized_email = email.strip().lower()
+    normalized_code = code.strip()
+
+    user = User.objects.filter(email__iexact=normalized_email).first()
+
+    if user is None:
+        raise ValidationError({"email": "No user exists with this email address."})
+
+    otp = (
+        EmailOTP.objects.filter(
+            user=user,
+            purpose=EmailOTP.Purpose.PASSWORD_RESET,
+            is_used=False,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+    if otp is None:
+        raise ValidationError(
+            {"code": "No active password reset OTP found. Please request a new one."}
+        )
+
+    if otp.is_expired:
+        otp.is_used = True
+        otp.save(update_fields=["is_used", "updated_at"])
+        raise ValidationError({"code": "OTP has expired. Please request a new one."})
+
+    if otp.attempts >= settings.OTP_MAX_ATTEMPTS:
+        otp.is_used = True
+        otp.save(update_fields=["is_used", "updated_at"])
+        raise ValidationError(
+            {"code": "Maximum OTP attempts exceeded. Please request a new one."}
+        )
+
+    if otp.code != normalized_code:
+        otp.attempts += 1
+
+        if otp.attempts >= settings.OTP_MAX_ATTEMPTS:
+            otp.is_used = True
+            otp.save(update_fields=["attempts", "is_used", "updated_at"])
+            raise ValidationError(
+                {"code": "Maximum OTP attempts exceeded. Please request a new one."}
+            )
+
+        otp.save(update_fields=["attempts", "updated_at"])
+        raise ValidationError({"code": "Invalid OTP code."})
+
+    otp.is_used = True
+    otp.save(update_fields=["is_used", "updated_at"])
+
+    user.set_password(new_password)
+    user.save(update_fields=["password"])
+
+    return user

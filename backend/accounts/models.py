@@ -71,8 +71,16 @@ class User(AbstractUser):
     @property
     def roles(self):
         roles = {self.role}
+
         if self.is_sponsor:
             roles.add(self.Role.SPONSOR)
+
+        sponsor_memberships = getattr(self, "sponsor_memberships", None)
+
+        if self.pk and sponsor_memberships is not None:
+            if sponsor_memberships.filter(is_active=True).exists():
+                roles.add(self.Role.SPONSOR)
+
         return roles
 
     def has_role(self, role):
@@ -141,6 +149,7 @@ class EmailOTP(models.Model):
 
     class Purpose(models.TextChoices):
         EMAIL_VERIFICATION = "EMAIL_VERIFICATION", "Email Verification"
+        PASSWORD_RESET = "PASSWORD_RESET", "Password Reset"
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="email_otps")
     code = models.CharField(max_length=6)

@@ -9,6 +9,16 @@ urlpatterns = [
     path("me/", views.me_view, name="me"),
     path("verify-otp/", views.verify_otp_view, name="verify-otp"),
     path("resend-otp/", views.resend_otp_view, name="resend-otp"),
+    path(
+        "password-reset/request/",
+        views.password_reset_request_view,
+        name="password-reset-request",
+    ),
+    path(
+        "password-reset/confirm/",
+        views.password_reset_confirm_view,
+        name="password-reset-confirm",
+    ),
     path("profile/", views.profile_view, name="profile"),
     path("profile/avatar/", views.remove_avatar_view, name="remove-avatar"),
     path("become-sponsor/", views.become_sponsor_view, name="become-sponsor"),
