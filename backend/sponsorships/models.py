@@ -680,6 +680,10 @@ class SponsorPaymentSchedule(models.Model):
 class SponsorPayment(models.Model):
     """
     Records actual money received for a sponsorship agreement.
+
+    Manual payments are recorded by staff/sponsor admins.
+    Flutterwave payments are initialized by League OS, then confirmed only
+    after backend verification with Flutterwave.
     """
 
     class PaymentMethod(models.TextChoices):
@@ -688,14 +692,21 @@ class SponsorPayment(models.Model):
         MOBILE_MONEY = "MOBILE_MONEY", "Mobile Money"
         CARD = "CARD", "Card"
         CHEQUE = "CHEQUE", "Cheque"
+        FLUTTERWAVE = "FLUTTERWAVE", "Flutterwave"
         OTHER = "OTHER", "Other"
 
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
         CONFIRMED = "CONFIRMED", "Confirmed"
         REJECTED = "REJECTED", "Rejected"
+        FAILED = "FAILED", "Failed"
+        CANCELLED = "CANCELLED", "Cancelled"
         REFUNDED = "REFUNDED", "Refunded"
         PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED", "Partially Refunded"
+
+    class PaymentProvider(models.TextChoices):
+        MANUAL = "MANUAL", "Manual"
+        FLUTTERWAVE = "FLUTTERWAVE", "Flutterwave"
 
     agreement = models.ForeignKey(
         SponsorAgreement,
@@ -723,6 +734,17 @@ class SponsorPayment(models.Model):
         default=PaymentMethod.BANK_TRANSFER,
     )
     transaction_reference = models.CharField(max_length=120, blank=True)
+
+    provider = models.CharField(
+        max_length=30,
+        choices=PaymentProvider.choices,
+        default=PaymentProvider.MANUAL,
+    )
+    provider_transaction_id = models.CharField(max_length=120, blank=True)
+    provider_status = models.CharField(max_length=60, blank=True)
+    provider_response = models.JSONField(default=dict, blank=True)
+    checkout_url = models.URLField(blank=True)
+    checkout_initialized_at = models.DateTimeField(blank=True, null=True)
 
     paid_at = models.DateTimeField(blank=True, null=True)
     status = models.CharField(
@@ -757,6 +779,15 @@ class SponsorPayment(models.Model):
             models.Index(fields=["agreement", "status"]),
             models.Index(fields=["payment_schedule", "status"]),
             models.Index(fields=["transaction_reference"]),
+            models.Index(fields=["provider", "provider_status"]),
+            models.Index(fields=["provider_transaction_id"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["transaction_reference"],
+                condition=~Q(transaction_reference=""),
+                name="unique_sponsor_payment_transaction_reference",
+            ),
         ]
 
     def __str__(self):

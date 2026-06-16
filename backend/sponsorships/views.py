@@ -1,8 +1,14 @@
 # Create your views here.
+import base64
+import hashlib
+import hmac
 from decimal import Decimal
+from uuid import uuid4
 
 from django.db import transaction
 from django.utils import timezone
+from django.conf import settings
+from django.views.decorators.csrf import csrf_exempt
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -24,6 +30,14 @@ from .models import (
     SponsorPaymentSchedule,
     SponsorWorkflowEvent,
 )
+
+from .flutterwave import (
+    FlutterwaveError,
+    flutterwave_is_configured,
+    initialize_flutterwave_payment,
+    verify_flutterwave_transaction,
+)
+
 from .serializers import (
     AddSponsorMemberSerializer,
     RevenueDistributionSerializer,
@@ -901,6 +915,235 @@ def generate_revenue_distributions_for_payment(payment):
     return distributions
 
 
+SUCCESSFUL_FLUTTERWAVE_STATUSES = {"successful", "succeeded"}
+
+
+def make_sponsor_payment_reference(agreement):
+    """
+    Create a unique transaction reference for Flutterwave.
+
+    This tx_ref is how League OS links its local SponsorPayment to
+    the external Flutterwave transaction.
+    """
+
+    return f"LOS-SPONSOR-{agreement.id}-{uuid4().hex[:16]}"
+
+
+def get_pending_payment_schedule_for_agreement(agreement, payment_schedule_id=None):
+    schedules = SponsorPaymentSchedule.objects.filter(
+        agreement=agreement,
+        status__in=[
+            SponsorPaymentSchedule.Status.PENDING,
+            SponsorPaymentSchedule.Status.PARTIALLY_PAID,
+        ],
+    ).order_by("sequence_number", "due_date")
+
+    if payment_schedule_id:
+        return schedules.filter(id=payment_schedule_id).first()
+
+    return schedules.first()
+
+
+def get_flutterwave_status(value):
+    return str(value or "").strip().lower()
+
+
+def validate_flutterwave_transaction(payment, flutterwave_response):
+    """
+    Never confirm payment unless these checks pass:
+
+    1. Flutterwave says the transaction succeeded.
+    2. Flutterwave returns the same tx_ref we created.
+    3. Flutterwave returns the same currency.
+    4. Flutterwave returns an amount that is not less than expected.
+    """
+
+    data = flutterwave_response.get("data", {})
+    provider_status = get_flutterwave_status(data.get("status"))
+
+    if provider_status not in SUCCESSFUL_FLUTTERWAVE_STATUSES:
+        return False, "Flutterwave transaction was not successful."
+
+    returned_reference = data.get("tx_ref") or data.get("reference")
+    if returned_reference != payment.transaction_reference:
+        return False, "Flutterwave transaction reference does not match payment record."
+
+    if data.get("currency") != payment.currency:
+        return False, "Flutterwave transaction currency does not match payment record."
+
+    amount = Decimal(str(data.get("amount", "0")))
+    if amount < payment.amount_paid:
+        return False, "Flutterwave transaction amount is less than expected."
+
+    return True, ""
+
+
+def confirm_sponsor_payment_from_gateway(payment, flutterwave_response):
+    """
+    Confirm a SponsorPayment after Flutterwave verification succeeds.
+
+    This function is intentionally separate because it is used by both:
+    - redirect verification endpoint
+    - webhook endpoint
+    """
+
+    data = flutterwave_response.get("data", {})
+
+    with transaction.atomic():
+        payment = SponsorPayment.objects.select_for_update().get(id=payment.id)
+
+        if payment.status == SponsorPayment.Status.CONFIRMED:
+            return payment, list(payment.revenue_distributions.all())
+
+        old_payment_status = payment.status
+        payment.status = SponsorPayment.Status.CONFIRMED
+        payment.provider_status = data.get("status", "successful")
+        payment.provider_transaction_id = str(data.get("id", ""))
+        payment.provider_response = flutterwave_response
+        payment.confirmed_at = timezone.now()
+
+        if payment.paid_at is None:
+            payment.paid_at = timezone.now()
+
+        payment.save(
+            update_fields=[
+                "status",
+                "provider_status",
+                "provider_transaction_id",
+                "provider_response",
+                "confirmed_at",
+                "paid_at",
+            ]
+        )
+
+        update_payment_schedule_after_confirmation(payment.payment_schedule)
+        distributions = generate_revenue_distributions_for_payment(payment)
+
+        agreement = payment.agreement
+        old_agreement_status = agreement.status
+
+        if agreement.status == SponsorAgreement.Status.APPROVED:
+            agreement.status = SponsorAgreement.Status.PENDING_PAYMENT
+
+        if (
+            agreement.activation_rule
+            == SponsorAgreement.ActivationRule.PAYMENT_CONFIRMED
+            and agreement_platform_fee_is_clear(agreement)
+        ):
+            agreement.status = SponsorAgreement.Status.ACTIVE
+            agreement.platform_activation_allowed = True
+
+        agreement.save(
+            update_fields=[
+                "status",
+                "platform_activation_allowed",
+                "updated_at",
+            ]
+        )
+
+        create_sponsor_workflow_event(
+            sponsor_package=agreement.sponsor_package,
+            agreement=agreement,
+            payment=payment,
+            actor=None,
+            event_type=SponsorWorkflowEvent.EventType.PAYMENT_CONFIRMED,
+            from_status=old_payment_status,
+            to_status=payment.status,
+            note="Flutterwave payment verified and confirmed.",
+        )
+
+        if (
+            old_agreement_status != agreement.status
+            and agreement.status == SponsorAgreement.Status.ACTIVE
+        ):
+            create_sponsor_workflow_event(
+                sponsor_package=agreement.sponsor_package,
+                agreement=agreement,
+                payment=payment,
+                actor=None,
+                event_type=SponsorWorkflowEvent.EventType.AGREEMENT_ACTIVATED,
+                from_status=old_agreement_status,
+                to_status=agreement.status,
+                note="Agreement activated after Flutterwave payment confirmation.",
+            )
+
+    return payment, distributions
+
+
+def mark_flutterwave_payment_failed(payment, flutterwave_response, status_value):
+    old_status = payment.status
+    normalized_status = get_flutterwave_status(status_value)
+
+    if normalized_status == "cancelled":
+        payment.status = SponsorPayment.Status.CANCELLED
+    else:
+        payment.status = SponsorPayment.Status.FAILED
+
+    payment.provider_status = status_value
+    payment.provider_response = flutterwave_response
+    payment.save(update_fields=["status", "provider_status", "provider_response"])
+
+    create_sponsor_workflow_event(
+        sponsor_package=payment.agreement.sponsor_package,
+        agreement=payment.agreement,
+        payment=payment,
+        actor=None,
+        event_type=SponsorWorkflowEvent.EventType.PAYMENT_REJECTED,
+        from_status=old_status,
+        to_status=payment.status,
+        note="Flutterwave payment failed or was cancelled.",
+    )
+
+
+def flutterwave_webhook_signature_is_valid(request):
+    """
+    Supports Flutterwave webhook signature styles.
+
+    Some Flutterwave docs reference 'verif-hash'.
+    Newer docs also mention 'flutterwave-signature' using HMAC-SHA256.
+    We support both so the integration is safer during documentation/version changes.
+    """
+
+    secret_hash = settings.FLUTTERWAVE_SECRET_HASH
+
+    if not secret_hash:
+        return True
+
+    legacy_signature = (
+        request.headers.get("verif-hash")
+        or request.headers.get("verifi-hash")
+        or request.headers.get("verify-hash")
+    )
+
+    if legacy_signature and hmac.compare_digest(legacy_signature, secret_hash):
+        return True
+
+    flutterwave_signature = request.headers.get("flutterwave-signature")
+    if not flutterwave_signature:
+        return False
+
+    expected_signature = base64.b64encode(
+        hmac.new(
+            secret_hash.encode("utf-8"),
+            request.body,
+            hashlib.sha256,
+        ).digest()
+    ).decode("utf-8")
+
+    return hmac.compare_digest(expected_signature, flutterwave_signature)
+
+
+def extract_flutterwave_tx_ref(payload):
+    data = payload.get("data", payload)
+
+    return (
+        data.get("tx_ref")
+        or data.get("reference")
+        or payload.get("tx_ref")
+        or payload.get("reference")
+    )
+
+
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def sponsor_agreements_view(request):
@@ -1710,6 +1953,282 @@ def sponsor_payment_revenue_distributions_view(request, payment_id):
                 distributions,
                 many=True,
                 context={"request": request},
+            ).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def sponsor_agreement_flutterwave_initialize_view(request, agreement_id):
+    """
+    Create a pending SponsorPayment and ask Flutterwave for a checkout link.
+    """
+
+    agreement = get_sponsor_agreement_for_request(agreement_id)
+
+    if agreement is None:
+        return Response(
+            {"detail": "Sponsorship agreement not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not can_manage_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have permission to pay for this agreement."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if not flutterwave_is_configured():
+        return Response(
+            {"detail": "Flutterwave is not configured for this environment."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    if agreement.payment_source != SponsorAgreement.PaymentSource.PLATFORM:
+        return Response(
+            {"detail": "Only platform-paid agreements can use Flutterwave checkout."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if agreement.status not in [
+        SponsorAgreement.Status.APPROVED,
+        SponsorAgreement.Status.PENDING_PAYMENT,
+    ]:
+        return Response(
+            {"detail": "Only approved or pending payment agreements can be paid."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    payment_schedule = get_pending_payment_schedule_for_agreement(
+        agreement,
+        request.data.get("payment_schedule"),
+    )
+
+    amount = request.data.get("amount_paid") or agreement.total_value
+    if payment_schedule is not None:
+        amount = request.data.get("amount_paid") or payment_schedule.amount_due
+
+    amount = Decimal(str(amount))
+    if amount <= 0:
+        return Response(
+            {"amount_paid": "Payment amount must be greater than zero."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    payment = SponsorPayment.objects.create(
+        agreement=agreement,
+        payment_schedule=payment_schedule,
+        amount_paid=amount,
+        currency=agreement.currency,
+        payment_method=SponsorPayment.PaymentMethod.FLUTTERWAVE,
+        provider=SponsorPayment.PaymentProvider.FLUTTERWAVE,
+        transaction_reference=make_sponsor_payment_reference(agreement),
+        recorded_by=request.user,
+    )
+
+    try:
+        flutterwave_response = initialize_flutterwave_payment(payment, request=request)
+    except FlutterwaveError as exc:
+        payment.provider_status = "INITIALIZATION_FAILED"
+        payment.provider_response = {"error": str(exc)}
+        payment.save(update_fields=["provider_status", "provider_response"])
+
+        return Response(
+            {
+                "detail": "Could not initialize Flutterwave payment.",
+                "error": str(exc),
+            },
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    checkout_url = flutterwave_response.get("data", {}).get("link", "")
+
+    payment.checkout_url = checkout_url
+    payment.checkout_initialized_at = timezone.now()
+    payment.provider_status = flutterwave_response.get("status", "")
+    payment.provider_response = flutterwave_response
+    payment.save(
+        update_fields=[
+            "checkout_url",
+            "checkout_initialized_at",
+            "provider_status",
+            "provider_response",
+        ]
+    )
+
+    create_sponsor_workflow_event(
+        sponsor_package=agreement.sponsor_package,
+        agreement=agreement,
+        payment=payment,
+        actor=request.user,
+        event_type=SponsorWorkflowEvent.EventType.PAYMENT_REGISTERED,
+        to_status=payment.status,
+        note="Flutterwave checkout initialized.",
+    )
+
+    return Response(
+        {
+            "message": "Flutterwave payment initialized successfully.",
+            "checkout_url": checkout_url,
+            "tx_ref": payment.transaction_reference,
+            "payment": SponsorPaymentSerializer(
+                payment,
+                context={"request": request},
+            ).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["GET"])
+def flutterwave_verify_view(request):
+    """
+    Verify payment after Flutterwave redirects the user back to League OS.
+
+    This endpoint is public because Flutterwave redirects to it.
+    It does not trust the redirect alone. It verifies with Flutterwave first.
+    """
+
+    tx_ref = request.query_params.get("tx_ref")
+
+    if not tx_ref:
+        return Response(
+            {"tx_ref": "Transaction reference is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    payment = SponsorPayment.objects.filter(
+        transaction_reference=tx_ref,
+        provider=SponsorPayment.PaymentProvider.FLUTTERWAVE,
+    ).first()
+
+    if payment is None:
+        return Response(
+            {"detail": "Sponsor payment not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    try:
+        flutterwave_response = verify_flutterwave_transaction(tx_ref)
+    except FlutterwaveError as exc:
+        return Response(
+            {"detail": str(exc)},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    is_valid, error_message = validate_flutterwave_transaction(
+        payment,
+        flutterwave_response,
+    )
+
+    if not is_valid:
+        status_value = flutterwave_response.get("data", {}).get("status", "failed")
+        mark_flutterwave_payment_failed(payment, flutterwave_response, status_value)
+
+        return Response(
+            {
+                "detail": error_message,
+                "payment": SponsorPaymentSerializer(
+                    payment,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    payment, distributions = confirm_sponsor_payment_from_gateway(
+        payment,
+        flutterwave_response,
+    )
+
+    return Response(
+        {
+            "message": "Flutterwave payment verified successfully.",
+            "payment": SponsorPaymentSerializer(
+                payment,
+                context={"request": request},
+            ).data,
+            "revenue_distributions": RevenueDistributionSerializer(
+                distributions,
+                many=True,
+                context={"request": request},
+            ).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@csrf_exempt
+@api_view(["POST"])
+def flutterwave_webhook_view(request):
+    """
+    Receive Flutterwave webhook events.
+
+    Webhooks are server-to-server notifications. They are important because
+    users can close the browser before redirecting back to your app.
+    """
+
+    if not flutterwave_webhook_signature_is_valid(request):
+        return Response(
+            {"detail": "Invalid Flutterwave webhook signature."},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    tx_ref = extract_flutterwave_tx_ref(request.data)
+
+    if not tx_ref:
+        return Response(
+            {"tx_ref": "Transaction reference is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    payment = SponsorPayment.objects.filter(
+        transaction_reference=tx_ref,
+        provider=SponsorPayment.PaymentProvider.FLUTTERWAVE,
+    ).first()
+
+    if payment is None:
+        return Response(
+            {"detail": "Sponsor payment not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    try:
+        flutterwave_response = verify_flutterwave_transaction(tx_ref)
+    except FlutterwaveError as exc:
+        return Response(
+            {"detail": str(exc)},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    is_valid, error_message = validate_flutterwave_transaction(
+        payment,
+        flutterwave_response,
+    )
+
+    if not is_valid:
+        status_value = flutterwave_response.get("data", {}).get("status", "failed")
+        mark_flutterwave_payment_failed(payment, flutterwave_response, status_value)
+
+        return Response(
+            {"detail": error_message},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    payment, distributions = confirm_sponsor_payment_from_gateway(
+        payment,
+        flutterwave_response,
+    )
+
+    return Response(
+        {
+            "message": "Flutterwave webhook processed successfully.",
+            "payment": SponsorPaymentSerializer(payment).data,
+            "revenue_distributions": RevenueDistributionSerializer(
+                distributions,
+                many=True,
             ).data,
         },
         status=status.HTTP_200_OK,

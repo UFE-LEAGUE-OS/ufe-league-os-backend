@@ -105,4 +105,19 @@ urlpatterns = [
         views.sponsor_payment_revenue_distributions_view,
         name="sponsor-payment-revenue-distributions",
     ),
+    path(
+        "agreements/<int:agreement_id>/flutterwave/initialize/",
+        views.sponsor_agreement_flutterwave_initialize_view,
+        name="sponsor-agreement-flutterwave-initialize",
+    ),
+    path(
+        "flutterwave/verify/",
+        views.flutterwave_verify_view,
+        name="flutterwave-verify",
+    ),
+    path(
+        "flutterwave/webhook/",
+        views.flutterwave_webhook_view,
+        name="flutterwave-webhook",
+    ),
 ]
