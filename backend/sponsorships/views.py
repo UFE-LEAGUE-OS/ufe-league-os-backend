@@ -1,4 +1,7 @@
 # Create your views here.
+from decimal import Decimal
+
+from django.db import transaction
 from django.utils import timezone
 
 from rest_framework import status
@@ -10,21 +13,29 @@ from accounts.models import User
 from accounts.serializers import UserSerializer
 
 from .models import (
+    RevenueDistribution,
     RevenueShareRule,
     SponsorAccount,
     SponsorAccountMember,
+    SponsorAgreement,
     SponsorBenefit,
     SponsorPackage,
+    SponsorPayment,
+    SponsorPaymentSchedule,
     SponsorWorkflowEvent,
 )
 from .serializers import (
     AddSponsorMemberSerializer,
+    RevenueDistributionSerializer,
     RevenueShareRuleSerializer,
     SponsorAccountCreateSerializer,
     SponsorAccountMemberSerializer,
     SponsorAccountSerializer,
+    SponsorAgreementSerializer,
     SponsorBenefitSerializer,
     SponsorPackageSerializer,
+    SponsorPaymentScheduleSerializer,
+    SponsorPaymentSerializer,
     SponsorRegistrationSerializer,
 )
 
@@ -660,3 +671,1046 @@ def sponsor_package_revenue_share_rules_view(request, package_id):
         )
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+def create_sponsor_workflow_event(
+    *,
+    actor,
+    event_type,
+    sponsor_package=None,
+    agreement=None,
+    payment=None,
+    from_status="",
+    to_status="",
+    note="",
+):
+    return SponsorWorkflowEvent.objects.create(
+        sponsor_package=sponsor_package,
+        agreement=agreement,
+        payment=payment,
+        actor=actor,
+        event_type=event_type,
+        from_status=from_status,
+        to_status=to_status,
+        note=note,
+    )
+
+
+def get_sponsor_agreement_for_request(agreement_id):
+    return (
+        SponsorAgreement.objects.select_related(
+            "sponsor_account",
+            "sponsor_package",
+            "created_by",
+            "approved_by",
+            "waived_by",
+        )
+        .prefetch_related(
+            "payment_schedules",
+            "payments__revenue_distributions",
+            "revenue_share_rules",
+            "revenue_distributions",
+            "workflow_events",
+        )
+        .filter(id=agreement_id)
+        .first()
+    )
+
+
+def get_sponsor_payment_for_request(payment_id):
+    return (
+        SponsorPayment.objects.select_related(
+            "agreement",
+            "agreement__sponsor_account",
+            "agreement__sponsor_package",
+            "payment_schedule",
+            "recorded_by",
+            "confirmed_by",
+        )
+        .prefetch_related("revenue_distributions")
+        .filter(id=payment_id)
+        .first()
+    )
+
+
+def has_sponsor_account_access(user, sponsor_account):
+    if user.is_staff or user.is_superuser or user.has_role(User.Role.SUPER_ADMIN):
+        return True
+
+    return get_user_sponsor_membership(user, sponsor_account) is not None
+
+
+def can_manage_sponsor_account_finance(user, sponsor_account):
+    if user.is_staff or user.is_superuser or user.has_role(User.Role.SUPER_ADMIN):
+        return True
+
+    membership = get_user_sponsor_membership(user, sponsor_account)
+
+    if membership is None:
+        return False
+
+    return membership.member_role in [
+        SponsorAccountMember.MemberRole.OWNER,
+        SponsorAccountMember.MemberRole.ADMIN,
+        SponsorAccountMember.MemberRole.FINANCE,
+    ]
+
+
+def can_access_sponsor_agreement(user, agreement):
+    return has_sponsor_account_access(
+        user,
+        agreement.sponsor_account,
+    ) or can_manage_sponsor_package(
+        user,
+        agreement.sponsor_package,
+    )
+
+
+def can_manage_sponsor_agreement(user, agreement):
+    return can_manage_sponsor_account_finance(
+        user,
+        agreement.sponsor_account,
+    ) or can_manage_sponsor_package(
+        user,
+        agreement.sponsor_package,
+    )
+
+
+def can_approve_sponsor_agreement(user, agreement):
+    return can_manage_sponsor_package(user, agreement.sponsor_package)
+
+
+def package_allows_sponsor_account(sponsor_package, sponsor_account):
+    allowed = sponsor_package.sponsor_type_allowed
+
+    return (
+        allowed == SponsorPackage.SponsorTypeAllowed.BOTH
+        or allowed == sponsor_account.sponsor_type
+    )
+
+
+def agreement_has_confirmed_payment(agreement):
+    return agreement.payments.filter(status=SponsorPayment.Status.CONFIRMED).exists()
+
+
+def agreement_platform_fee_is_clear(agreement):
+    if not agreement.platform_fee_required:
+        return True
+
+    return agreement.platform_fee_status in [
+        SponsorAgreement.PlatformFeeStatus.PAID,
+        SponsorAgreement.PlatformFeeStatus.WAIVED,
+    ]
+
+
+def agreement_can_activate(agreement):
+    if agreement.activation_rule == SponsorAgreement.ActivationRule.WAIVED:
+        return True
+
+    if agreement.activation_rule == SponsorAgreement.ActivationRule.ADMIN_APPROVAL:
+        return True
+
+    if agreement.activation_rule == SponsorAgreement.ActivationRule.PAYMENT_CONFIRMED:
+        return agreement_has_confirmed_payment(agreement)
+
+    if (
+        agreement.activation_rule
+        == SponsorAgreement.ActivationRule.PLATFORM_FEE_CONFIRMED
+    ):
+        return agreement_platform_fee_is_clear(agreement)
+
+    return False
+
+
+def get_activation_blocking_reason(agreement):
+    if agreement.activation_rule == SponsorAgreement.ActivationRule.PAYMENT_CONFIRMED:
+        if not agreement_has_confirmed_payment(agreement):
+            return "At least one sponsorship payment must be confirmed first."
+
+    if (
+        agreement.activation_rule
+        == SponsorAgreement.ActivationRule.PLATFORM_FEE_CONFIRMED
+    ):
+        if not agreement_platform_fee_is_clear(agreement):
+            return "The platform fee must be paid or waived before activation."
+
+    if agreement.platform_fee_required and not agreement_platform_fee_is_clear(
+        agreement
+    ):
+        return "The platform fee must be paid or waived before activation."
+
+    return ""
+
+
+def update_payment_schedule_after_confirmation(payment_schedule):
+    if payment_schedule is None:
+        return
+
+    confirmed_total = sum(
+        payment.amount_paid
+        for payment in payment_schedule.payments.filter(
+            status=SponsorPayment.Status.CONFIRMED,
+        )
+    )
+
+    if confirmed_total >= payment_schedule.amount_due:
+        payment_schedule.status = SponsorPaymentSchedule.Status.PAID
+    elif confirmed_total > 0:
+        payment_schedule.status = SponsorPaymentSchedule.Status.PARTIALLY_PAID
+    else:
+        payment_schedule.status = SponsorPaymentSchedule.Status.PENDING
+
+    payment_schedule.save(update_fields=["status", "updated_at"])
+
+
+def get_revenue_share_rules_for_agreement(agreement):
+    agreement_rules = RevenueShareRule.objects.filter(agreement=agreement)
+
+    if agreement_rules.exists():
+        return agreement_rules
+
+    return RevenueShareRule.objects.filter(sponsor_package=agreement.sponsor_package)
+
+
+def generate_revenue_distributions_for_payment(payment):
+    rules = get_revenue_share_rules_for_agreement(payment.agreement)
+    distributions = []
+
+    for rule in rules:
+        amount = rule.fixed_amount
+
+        if amount == 0 and rule.percentage > 0:
+            amount = (payment.amount_paid * rule.percentage) / Decimal("100")
+
+        if amount <= 0:
+            continue
+
+        distributions.append(
+            RevenueDistribution.objects.create(
+                payment=payment,
+                agreement=payment.agreement,
+                recipient_type=rule.recipient_type,
+                recipient_identifier=rule.recipient_identifier,
+                recipient_name=rule.recipient_name,
+                amount=amount,
+                currency=payment.currency,
+                status=RevenueDistribution.Status.ALLOCATED,
+            )
+        )
+
+    return distributions
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def sponsor_agreements_view(request):
+    """
+    List sponsorship agreements or create a sponsorship agreement.
+
+    Sponsors see agreements for their own sponsor accounts.
+    Sponsor hub admins can see all agreements during the MVP.
+    """
+
+    if request.method == "GET":
+        agreements = SponsorAgreement.objects.select_related(
+            "sponsor_account",
+            "sponsor_package",
+            "created_by",
+            "approved_by",
+        ).prefetch_related(
+            "payment_schedules",
+            "payments",
+            "revenue_share_rules",
+            "revenue_distributions",
+            "workflow_events",
+        )
+
+        if not is_sponsor_hub_admin(request.user):
+            agreements = agreements.filter(
+                sponsor_account__members__user=request.user,
+                sponsor_account__members__is_active=True,
+            ).distinct()
+
+        sponsor_account_id = request.query_params.get("sponsor_account")
+        sponsor_package_id = request.query_params.get("sponsor_package")
+        status_filter = request.query_params.get("status")
+        payment_source = request.query_params.get("payment_source")
+
+        if sponsor_account_id:
+            agreements = agreements.filter(sponsor_account_id=sponsor_account_id)
+
+        if sponsor_package_id:
+            agreements = agreements.filter(sponsor_package_id=sponsor_package_id)
+
+        if status_filter:
+            agreements = agreements.filter(status=status_filter.upper())
+
+        if payment_source:
+            agreements = agreements.filter(payment_source=payment_source.upper())
+
+        return Response(
+            {
+                "count": agreements.count(),
+                "results": SponsorAgreementSerializer(
+                    agreements,
+                    many=True,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    sponsor_account = SponsorAccount.objects.filter(
+        id=request.data.get("sponsor_account"),
+    ).first()
+
+    if sponsor_account is None:
+        return Response(
+            {"sponsor_account": "Sponsor account not found."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not can_manage_sponsor_account_finance(request.user, sponsor_account):
+        return Response(
+            {"detail": "You do not have permission to create this agreement."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    sponsor_package = SponsorPackage.objects.filter(
+        id=request.data.get("sponsor_package"),
+    ).first()
+
+    if sponsor_package is None:
+        return Response(
+            {"sponsor_package": "Sponsor package not found."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if sponsor_package.status not in [
+        SponsorPackage.Status.APPROVED,
+        SponsorPackage.Status.ACTIVE,
+    ]:
+        return Response(
+            {"sponsor_package": "Only approved or active packages can be sponsored."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not package_allows_sponsor_account(sponsor_package, sponsor_account):
+        return Response(
+            {
+                "sponsor_account": (
+                    "This sponsor account type is not allowed for this package."
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    data = request.data.copy()
+    data.setdefault("total_value", sponsor_package.price_amount)
+    data.setdefault("currency", sponsor_package.currency)
+    data.setdefault("platform_fee_required", sponsor_package.requires_platform_fee)
+    data.setdefault("platform_fee_amount", sponsor_package.platform_fee_amount)
+
+    if sponsor_package.requires_platform_fee:
+        data.setdefault(
+            "platform_fee_status",
+            SponsorAgreement.PlatformFeeStatus.PENDING,
+        )
+
+    serializer = SponsorAgreementSerializer(data=data)
+
+    if serializer.is_valid():
+        agreement = serializer.save(created_by=request.user)
+
+        create_sponsor_workflow_event(
+            sponsor_package=agreement.sponsor_package,
+            agreement=agreement,
+            actor=request.user,
+            event_type=SponsorWorkflowEvent.EventType.AGREEMENT_CREATED,
+            to_status=agreement.status,
+            note="Sponsorship agreement created.",
+        )
+
+        return Response(
+            {
+                "message": "Sponsorship agreement created successfully.",
+                "agreement": SponsorAgreementSerializer(
+                    agreement,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def sponsor_agreement_detail_view(request, agreement_id):
+    agreement = get_sponsor_agreement_for_request(agreement_id)
+
+    if agreement is None:
+        return Response(
+            {"detail": "Sponsorship agreement not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not can_access_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have access to this sponsorship agreement."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if request.method == "GET":
+        return Response(
+            SponsorAgreementSerializer(
+                agreement,
+                context={"request": request},
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+    if not can_manage_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have permission to update this agreement."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    old_status = agreement.status
+    serializer = SponsorAgreementSerializer(
+        agreement,
+        data=request.data,
+        partial=True,
+    )
+
+    if serializer.is_valid():
+        agreement = serializer.save()
+
+        event_type = SponsorWorkflowEvent.EventType.AGREEMENT_CREATED
+        if (
+            agreement.status == SponsorAgreement.Status.SUBMITTED
+            and old_status != agreement.status
+        ):
+            event_type = SponsorWorkflowEvent.EventType.AGREEMENT_SUBMITTED
+
+        create_sponsor_workflow_event(
+            sponsor_package=agreement.sponsor_package,
+            agreement=agreement,
+            actor=request.user,
+            event_type=event_type,
+            from_status=old_status,
+            to_status=agreement.status,
+            note="Sponsorship agreement updated.",
+        )
+
+        return Response(
+            {
+                "message": "Sponsorship agreement updated successfully.",
+                "agreement": SponsorAgreementSerializer(
+                    agreement,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def sponsor_agreement_approve_view(request, agreement_id):
+    agreement = get_sponsor_agreement_for_request(agreement_id)
+
+    if agreement is None:
+        return Response(
+            {"detail": "Sponsorship agreement not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not can_approve_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have permission to approve this agreement."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    old_status = agreement.status
+    agreement.status = SponsorAgreement.Status.APPROVED
+    agreement.approved_by = request.user
+    agreement.approved_at = timezone.now()
+    agreement.save(
+        update_fields=[
+            "status",
+            "approved_by",
+            "approved_at",
+            "updated_at",
+        ]
+    )
+
+    create_sponsor_workflow_event(
+        sponsor_package=agreement.sponsor_package,
+        agreement=agreement,
+        actor=request.user,
+        event_type=SponsorWorkflowEvent.EventType.AGREEMENT_APPROVED,
+        from_status=old_status,
+        to_status=agreement.status,
+        note=request.data.get("note", "Sponsorship agreement approved."),
+    )
+
+    return Response(
+        {
+            "message": "Sponsorship agreement approved successfully.",
+            "agreement": SponsorAgreementSerializer(
+                agreement,
+                context={"request": request},
+            ).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def sponsor_agreement_reject_view(request, agreement_id):
+    agreement = get_sponsor_agreement_for_request(agreement_id)
+
+    if agreement is None:
+        return Response(
+            {"detail": "Sponsorship agreement not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not can_approve_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have permission to reject this agreement."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    old_status = agreement.status
+    agreement.status = SponsorAgreement.Status.REJECTED
+    agreement.save(update_fields=["status", "updated_at"])
+
+    create_sponsor_workflow_event(
+        sponsor_package=agreement.sponsor_package,
+        agreement=agreement,
+        actor=request.user,
+        event_type=SponsorWorkflowEvent.EventType.AGREEMENT_REJECTED,
+        from_status=old_status,
+        to_status=agreement.status,
+        note=request.data.get("note", "Sponsorship agreement rejected."),
+    )
+
+    return Response(
+        {
+            "message": "Sponsorship agreement rejected successfully.",
+            "agreement": SponsorAgreementSerializer(
+                agreement,
+                context={"request": request},
+            ).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def sponsor_agreement_activate_view(request, agreement_id):
+    agreement = get_sponsor_agreement_for_request(agreement_id)
+
+    if agreement is None:
+        return Response(
+            {"detail": "Sponsorship agreement not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not can_approve_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have permission to activate this agreement."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if agreement.status == SponsorAgreement.Status.ACTIVE:
+        return Response(
+            {"detail": "This sponsorship agreement is already active."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if agreement.status not in [
+        SponsorAgreement.Status.APPROVED,
+        SponsorAgreement.Status.PENDING_PAYMENT,
+    ]:
+        return Response(
+            {"detail": "Only approved or pending payment agreements can be activated."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    blocking_reason = get_activation_blocking_reason(agreement)
+    if blocking_reason or not agreement_can_activate(agreement):
+        return Response(
+            {
+                "detail": (
+                    blocking_reason or "Agreement activation requirements are not met."
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    old_status = agreement.status
+    agreement.status = SponsorAgreement.Status.ACTIVE
+    agreement.platform_activation_allowed = True
+    agreement.save(
+        update_fields=[
+            "status",
+            "platform_activation_allowed",
+            "updated_at",
+        ]
+    )
+
+    create_sponsor_workflow_event(
+        sponsor_package=agreement.sponsor_package,
+        agreement=agreement,
+        actor=request.user,
+        event_type=SponsorWorkflowEvent.EventType.AGREEMENT_ACTIVATED,
+        from_status=old_status,
+        to_status=agreement.status,
+        note=request.data.get("note", "Sponsorship agreement activated."),
+    )
+
+    return Response(
+        {
+            "message": "Sponsorship agreement activated successfully.",
+            "agreement": SponsorAgreementSerializer(
+                agreement,
+                context={"request": request},
+            ).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def sponsor_agreement_payment_schedules_view(request, agreement_id):
+    agreement = get_sponsor_agreement_for_request(agreement_id)
+
+    if agreement is None:
+        return Response(
+            {"detail": "Sponsorship agreement not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not can_access_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have access to this sponsorship agreement."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if request.method == "GET":
+        schedules = SponsorPaymentSchedule.objects.filter(agreement=agreement)
+
+        return Response(
+            {
+                "count": schedules.count(),
+                "results": SponsorPaymentScheduleSerializer(
+                    schedules,
+                    many=True,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if not can_approve_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have permission to add payment schedules."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    data = request.data.copy()
+    data["agreement"] = agreement.id
+    serializer = SponsorPaymentScheduleSerializer(data=data)
+
+    if serializer.is_valid():
+        payment_schedule = serializer.save()
+
+        return Response(
+            {
+                "message": "Sponsor payment schedule created successfully.",
+                "payment_schedule": SponsorPaymentScheduleSerializer(
+                    payment_schedule,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def sponsor_agreement_payments_view(request, agreement_id):
+    agreement = get_sponsor_agreement_for_request(agreement_id)
+
+    if agreement is None:
+        return Response(
+            {"detail": "Sponsorship agreement not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not can_access_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have access to this sponsorship agreement."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if request.method == "GET":
+        payments = SponsorPayment.objects.filter(agreement=agreement)
+
+        return Response(
+            {
+                "count": payments.count(),
+                "results": SponsorPaymentSerializer(
+                    payments,
+                    many=True,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if not can_manage_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have permission to record this payment."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    data = request.data.copy()
+    data["agreement"] = agreement.id
+    serializer = SponsorPaymentSerializer(data=data)
+
+    if serializer.is_valid():
+        payment_schedule = serializer.validated_data.get("payment_schedule")
+        if payment_schedule and payment_schedule.agreement_id != agreement.id:
+            return Response(
+                {
+                    "payment_schedule": (
+                        "Payment schedule does not belong to this agreement."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payment = serializer.save(recorded_by=request.user)
+
+        create_sponsor_workflow_event(
+            sponsor_package=agreement.sponsor_package,
+            agreement=agreement,
+            payment=payment,
+            actor=request.user,
+            event_type=SponsorWorkflowEvent.EventType.PAYMENT_REGISTERED,
+            to_status=payment.status,
+            note="Sponsor payment recorded.",
+        )
+
+        return Response(
+            {
+                "message": "Sponsor payment recorded successfully.",
+                "payment": SponsorPaymentSerializer(
+                    payment,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def sponsor_payment_confirm_view(request, payment_id):
+    payment = get_sponsor_payment_for_request(payment_id)
+
+    if payment is None:
+        return Response(
+            {"detail": "Sponsor payment not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    agreement = payment.agreement
+
+    if not can_approve_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have permission to confirm this payment."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if payment.status != SponsorPayment.Status.PENDING:
+        return Response(
+            {"detail": "Only pending payments can be confirmed."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    with transaction.atomic():
+        old_payment_status = payment.status
+        payment.status = SponsorPayment.Status.CONFIRMED
+        payment.confirmed_by = request.user
+        payment.confirmed_at = timezone.now()
+
+        if payment.paid_at is None:
+            payment.paid_at = timezone.now()
+
+        payment.save(
+            update_fields=[
+                "status",
+                "confirmed_by",
+                "confirmed_at",
+                "paid_at",
+            ]
+        )
+
+        update_payment_schedule_after_confirmation(payment.payment_schedule)
+        distributions = generate_revenue_distributions_for_payment(payment)
+
+        old_agreement_status = agreement.status
+
+        if agreement.status == SponsorAgreement.Status.APPROVED:
+            agreement.status = SponsorAgreement.Status.PENDING_PAYMENT
+
+        if (
+            agreement.activation_rule
+            == SponsorAgreement.ActivationRule.PAYMENT_CONFIRMED
+            and agreement_platform_fee_is_clear(agreement)
+        ):
+            agreement.status = SponsorAgreement.Status.ACTIVE
+            agreement.platform_activation_allowed = True
+
+        agreement.save(
+            update_fields=[
+                "status",
+                "platform_activation_allowed",
+                "updated_at",
+            ]
+        )
+
+        create_sponsor_workflow_event(
+            sponsor_package=agreement.sponsor_package,
+            agreement=agreement,
+            payment=payment,
+            actor=request.user,
+            event_type=SponsorWorkflowEvent.EventType.PAYMENT_CONFIRMED,
+            from_status=old_payment_status,
+            to_status=payment.status,
+            note=request.data.get("note", "Sponsor payment confirmed."),
+        )
+
+        if (
+            old_agreement_status != agreement.status
+            and agreement.status == SponsorAgreement.Status.ACTIVE
+        ):
+            create_sponsor_workflow_event(
+                sponsor_package=agreement.sponsor_package,
+                agreement=agreement,
+                payment=payment,
+                actor=request.user,
+                event_type=SponsorWorkflowEvent.EventType.AGREEMENT_ACTIVATED,
+                from_status=old_agreement_status,
+                to_status=agreement.status,
+                note="Agreement activated after payment confirmation.",
+            )
+
+    return Response(
+        {
+            "message": "Sponsor payment confirmed successfully.",
+            "payment": SponsorPaymentSerializer(
+                payment,
+                context={"request": request},
+            ).data,
+            "revenue_distributions": RevenueDistributionSerializer(
+                distributions,
+                many=True,
+                context={"request": request},
+            ).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def sponsor_payment_reject_view(request, payment_id):
+    payment = get_sponsor_payment_for_request(payment_id)
+
+    if payment is None:
+        return Response(
+            {"detail": "Sponsor payment not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    agreement = payment.agreement
+
+    if not can_approve_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have permission to reject this payment."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if payment.status != SponsorPayment.Status.PENDING:
+        return Response(
+            {"detail": "Only pending payments can be rejected."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    old_status = payment.status
+    payment.status = SponsorPayment.Status.REJECTED
+    payment.confirmed_by = request.user
+    payment.confirmed_at = timezone.now()
+    payment.save(update_fields=["status", "confirmed_by", "confirmed_at"])
+
+    create_sponsor_workflow_event(
+        sponsor_package=agreement.sponsor_package,
+        agreement=agreement,
+        payment=payment,
+        actor=request.user,
+        event_type=SponsorWorkflowEvent.EventType.PAYMENT_REJECTED,
+        from_status=old_status,
+        to_status=payment.status,
+        note=request.data.get("note", "Sponsor payment rejected."),
+    )
+
+    return Response(
+        {
+            "message": "Sponsor payment rejected successfully.",
+            "payment": SponsorPaymentSerializer(
+                payment,
+                context={"request": request},
+            ).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def sponsor_agreement_revenue_share_rules_view(request, agreement_id):
+    agreement = get_sponsor_agreement_for_request(agreement_id)
+
+    if agreement is None:
+        return Response(
+            {"detail": "Sponsorship agreement not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not can_access_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have access to this sponsorship agreement."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if request.method == "GET":
+        rules = RevenueShareRule.objects.filter(agreement=agreement)
+
+        return Response(
+            {
+                "count": rules.count(),
+                "results": RevenueShareRuleSerializer(
+                    rules,
+                    many=True,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if not can_approve_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have permission to add agreement revenue rules."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    data = request.data.copy()
+    data["agreement"] = agreement.id
+    data.pop("sponsor_package", None)
+    serializer = RevenueShareRuleSerializer(data=data)
+
+    if serializer.is_valid():
+        rule = serializer.save()
+
+        return Response(
+            {
+                "message": "Agreement revenue share rule added successfully.",
+                "revenue_share_rule": RevenueShareRuleSerializer(
+                    rule,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def sponsor_agreement_revenue_distributions_view(request, agreement_id):
+    agreement = get_sponsor_agreement_for_request(agreement_id)
+
+    if agreement is None:
+        return Response(
+            {"detail": "Sponsorship agreement not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not can_access_sponsor_agreement(request.user, agreement):
+        return Response(
+            {"detail": "You do not have access to this sponsorship agreement."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    distributions = RevenueDistribution.objects.filter(agreement=agreement)
+
+    return Response(
+        {
+            "count": distributions.count(),
+            "results": RevenueDistributionSerializer(
+                distributions,
+                many=True,
+                context={"request": request},
+            ).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def sponsor_payment_revenue_distributions_view(request, payment_id):
+    payment = get_sponsor_payment_for_request(payment_id)
+
+    if payment is None:
+        return Response(
+            {"detail": "Sponsor payment not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not can_access_sponsor_agreement(request.user, payment.agreement):
+        return Response(
+            {"detail": "You do not have access to this sponsor payment."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    distributions = RevenueDistribution.objects.filter(payment=payment)
+
+    return Response(
+        {
+            "count": distributions.count(),
+            "results": RevenueDistributionSerializer(
+                distributions,
+                many=True,
+                context={"request": request},
+            ).data,
+        },
+        status=status.HTTP_200_OK,
+    )
