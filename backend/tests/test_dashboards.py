@@ -88,7 +88,6 @@ class TestDashboardAuthentication:
 @pytest.fixture
 def seeded_data(db):
     """Create seed data for public endpoint tests."""
-    User = get_user_model()
     # Create a couple of clubs
     club_a = Club.objects.create(name="Kampala City FC", slug="kampala-city-fc")
     club_b = Club.objects.create(name="Vipers SC", slug="vipers-sc")
