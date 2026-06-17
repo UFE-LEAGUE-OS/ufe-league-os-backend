@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     # Third-party apps
     "corsheaders",
     "rest_framework",
+    "channels",
     # Local apps
     "accounts",
     "dashboards",
@@ -267,3 +268,14 @@ FLUTTERWAVE_TIMEOUT_SECONDS = config(
     default=30,
     cast=int,
 )
+
+# Channels / WebSocket configuration
+# ---------------------------------------------------------------------------
+
+ASGI_APPLICATION = "config.asgi.application"
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+    },
+}
