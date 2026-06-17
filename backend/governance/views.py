@@ -46,7 +46,8 @@ def sport_variant_list_create_view(request):
             details={"variant_name": variant.name, "variant_id": variant.id},
         )
         return Response(
-            SportVariantSerializer(variant).data, status=status.HTTP_201_CREATED
+            SportVariantSerializer(variant).data,
+            status=status.HTTP_201_CREATED,
         )
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -118,7 +119,7 @@ def sport_variant_verify_view(request, pk):
         {
             "detail": f"Sport variant '{variant.name}' verified successfully.",
             "variant": SportVariantSerializer(variant).data,
-        }
+        },
     )
 
 
@@ -148,7 +149,8 @@ def competition_format_list_create_view(request):
             details={"format_name": fmt.name, "format_id": fmt.id},
         )
         return Response(
-            CompetitionFormatSerializer(fmt).data, status=status.HTTP_201_CREATED
+            CompetitionFormatSerializer(fmt).data,
+            status=status.HTTP_201_CREATED,
         )
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -223,7 +225,7 @@ def competition_format_verify_view(request, pk):
         {
             "detail": f"Competition format '{fmt.name}' verified successfully.",
             "format": CompetitionFormatSerializer(fmt).data,
-        }
+        },
     )
 
 
@@ -325,7 +327,7 @@ def rule_publish_view(request, pk):
         {
             "detail": f"Rule '{rule.title}' published successfully.",
             "rule": RuleSerializer(rule).data,
-        }
+        },
     )
 
 
