@@ -1,3 +1,4 @@
+from unittest.mock import patch
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -16,7 +17,8 @@ from .models import (
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.test import TestCase, override_settings
+from rest_framework import status
 from rest_framework.test import APIClient
 
 from .models import SponsorAccount, SponsorAccountMember
@@ -1120,3 +1122,540 @@ class SponsorPackageAPITests(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+
+
+class SponsorAgreementPaymentAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.password = "StrongPass123"
+
+    def create_user(self, email, role=User.Role.FAN):
+        return User.objects.create_user(
+            email=email,
+            phone_number=None,
+            password=self.password,
+            first_name="Test",
+            last_name="User",
+            role=role,
+        )
+
+    def authenticate(self, user):
+        self.client.force_authenticate(user=user)
+
+    def create_sponsor_account(self, owner=None):
+        owner = owner or self.create_user("phase13-sponsor@example.com")
+        sponsor_account = SponsorAccount.objects.create(
+            owner=owner,
+            sponsor_type=SponsorAccount.SponsorType.CORPORATE,
+            name="Phase 13 Sponsor",
+            registration_country="UG",
+            brn="BRN-PHASE13",
+            tin="1234567899",
+            status=SponsorAccount.Status.APPROVED,
+        )
+        SponsorAccountMember.objects.create(
+            sponsor_account=sponsor_account,
+            user=owner,
+            member_role=SponsorAccountMember.MemberRole.OWNER,
+        )
+        return sponsor_account
+
+    def create_sponsor_package(self, created_by=None):
+        created_by = created_by or self.create_user(
+            "phase13-union@example.com",
+            role=User.Role.UNION_ADMIN,
+        )
+        return SponsorPackage.objects.create(
+            name="Phase 13 Matchday Sponsorship",
+            description="Matchday sponsorship package for API tests.",
+            owner_type="UNION",
+            owner_identifier="URU",
+            owner_name="Uganda Rugby Union",
+            scope_type="EVENT",
+            scope_identifier="ELGON-2026",
+            scope_name="Elgon Cup 2026",
+            sponsor_type_allowed=SponsorPackage.SponsorTypeAllowed.BOTH,
+            category="BEVERAGE",
+            price_amount=Decimal("3000000.00"),
+            currency="UGX",
+            status=SponsorPackage.Status.APPROVED,
+            created_by=created_by,
+        )
+
+    def create_approved_agreement(self, sponsor_account=None, sponsor_package=None):
+        sponsor_account = sponsor_account or self.create_sponsor_account()
+        sponsor_package = sponsor_package or self.create_sponsor_package()
+        return SponsorAgreement.objects.create(
+            sponsor_account=sponsor_account,
+            sponsor_package=sponsor_package,
+            agreement_type=SponsorAgreement.AgreementType.CASH,
+            payment_source=SponsorAgreement.PaymentSource.PLATFORM,
+            payment_model=SponsorAgreement.PaymentModel.ONE_TIME,
+            total_value=Decimal("3000000.00"),
+            currency="UGX",
+            status=SponsorAgreement.Status.APPROVED,
+            activation_rule=SponsorAgreement.ActivationRule.PAYMENT_CONFIRMED,
+        )
+
+    def test_sponsor_owner_can_create_agreement_for_approved_package(self):
+        sponsor_owner = self.create_user("agreement-owner@example.com")
+        sponsor_account = self.create_sponsor_account(owner=sponsor_owner)
+        sponsor_package = self.create_sponsor_package()
+        self.authenticate(sponsor_owner)
+
+        response = self.client.post(
+            "/api/sponsorships/agreements/",
+            {
+                "sponsor_account": sponsor_account.id,
+                "sponsor_package": sponsor_package.id,
+                "agreement_type": SponsorAgreement.AgreementType.CASH,
+                "payment_source": SponsorAgreement.PaymentSource.PLATFORM,
+                "payment_model": SponsorAgreement.PaymentModel.ONE_TIME,
+                "total_value": "3000000.00",
+                "currency": "UGX",
+                "activation_rule": SponsorAgreement.ActivationRule.PAYMENT_CONFIRMED,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(SponsorAgreement.objects.count(), 1)
+        self.assertTrue(
+            SponsorWorkflowEvent.objects.filter(
+                event_type=SponsorWorkflowEvent.EventType.AGREEMENT_CREATED,
+            ).exists()
+        )
+
+    def test_unrelated_fan_cannot_create_agreement_for_sponsor_account(self):
+        sponsor_account = self.create_sponsor_account()
+        sponsor_package = self.create_sponsor_package()
+        unrelated_fan = self.create_user("unrelated-fan@example.com")
+        self.authenticate(unrelated_fan)
+
+        response = self.client.post(
+            "/api/sponsorships/agreements/",
+            {
+                "sponsor_account": sponsor_account.id,
+                "sponsor_package": sponsor_package.id,
+                "total_value": "3000000.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_union_admin_can_approve_agreement(self):
+        union_admin = self.create_user(
+            "approve-agreement@example.com",
+            role=User.Role.UNION_ADMIN,
+        )
+        sponsor_package = self.create_sponsor_package(created_by=union_admin)
+        agreement = self.create_approved_agreement(sponsor_package=sponsor_package)
+        agreement.status = SponsorAgreement.Status.SUBMITTED
+        agreement.save(update_fields=["status"])
+        self.authenticate(union_admin)
+
+        response = self.client.post(
+            f"/api/sponsorships/agreements/{agreement.id}/approve/",
+            {"note": "Approved for Phase 13 test."},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        agreement.refresh_from_db()
+        self.assertEqual(agreement.status, SponsorAgreement.Status.APPROVED)
+        self.assertEqual(agreement.approved_by, union_admin)
+
+    def test_payment_confirmation_creates_revenue_distribution_and_activates_agreement(
+        self,
+    ):
+        sponsor_owner = self.create_user("payment-sponsor@example.com")
+        union_admin = self.create_user(
+            "payment-union@example.com",
+            role=User.Role.UNION_ADMIN,
+        )
+        sponsor_account = self.create_sponsor_account(owner=sponsor_owner)
+        sponsor_package = self.create_sponsor_package(created_by=union_admin)
+        agreement = self.create_approved_agreement(
+            sponsor_account=sponsor_account,
+            sponsor_package=sponsor_package,
+        )
+        RevenueShareRule.objects.create(
+            sponsor_package=sponsor_package,
+            recipient_type=RevenueShareRule.RecipientType.UNION,
+            recipient_identifier="URU",
+            recipient_name="Uganda Rugby Union",
+            percentage=Decimal("10.00"),
+        )
+        payment_schedule = SponsorPaymentSchedule.objects.create(
+            agreement=agreement,
+            schedule_type=SponsorPaymentSchedule.ScheduleType.ONE_TIME,
+            sequence_number=1,
+            due_date=date.today(),
+            amount_due=Decimal("3000000.00"),
+            currency="UGX",
+        )
+
+        self.authenticate(sponsor_owner)
+        payment_response = self.client.post(
+            f"/api/sponsorships/agreements/{agreement.id}/payments/",
+            {
+                "payment_schedule": payment_schedule.id,
+                "amount_paid": "3000000.00",
+                "currency": "UGX",
+                "payment_method": SponsorPayment.PaymentMethod.BANK_TRANSFER,
+                "transaction_reference": "TXN-PHASE13-001",
+            },
+            format="json",
+        )
+
+        self.assertEqual(payment_response.status_code, status.HTTP_201_CREATED)
+        payment_id = payment_response.data["payment"]["id"]
+
+        self.authenticate(union_admin)
+        confirm_response = self.client.post(
+            f"/api/sponsorships/payments/{payment_id}/confirm/",
+            {"note": "Payment received."},
+            format="json",
+        )
+
+        self.assertEqual(confirm_response.status_code, status.HTTP_200_OK)
+        payment = SponsorPayment.objects.get(id=payment_id)
+        agreement.refresh_from_db()
+        payment_schedule.refresh_from_db()
+
+        self.assertEqual(payment.status, SponsorPayment.Status.CONFIRMED)
+        self.assertEqual(payment.confirmed_by, union_admin)
+        self.assertEqual(payment_schedule.status, SponsorPaymentSchedule.Status.PAID)
+        self.assertEqual(agreement.status, SponsorAgreement.Status.ACTIVE)
+        self.assertTrue(
+            RevenueDistribution.objects.filter(
+                payment=payment,
+                agreement=agreement,
+                recipient_name="Uganda Rugby Union",
+                amount=Decimal("300000.00"),
+            ).exists()
+        )
+
+
+@override_settings(
+    FLUTTERWAVE_SECRET_KEY="FLWSECK_TEST-test-key",
+    FLUTTERWAVE_SECRET_HASH="test-webhook-secret",
+    FLUTTERWAVE_REDIRECT_URL="http://localhost:8000/api/sponsorships/flutterwave/verify/",
+)
+class FlutterwaveSponsorPaymentAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.password = "StrongPass123"
+
+    def create_user(self, email, role=User.Role.FAN):
+        return User.objects.create_user(
+            email=email,
+            phone_number=None,
+            password=self.password,
+            first_name="Flutterwave",
+            last_name="Tester",
+            role=role,
+        )
+
+    def authenticate(self, user):
+        self.client.force_authenticate(user=user)
+
+    def create_sponsor_account(self, owner=None):
+        owner = owner or self.create_user("flutterwave-sponsor@example.com")
+
+        sponsor_account = SponsorAccount.objects.create(
+            owner=owner,
+            sponsor_type=SponsorAccount.SponsorType.CORPORATE,
+            name="Flutterwave Test Sponsor",
+            registration_country="UG",
+            brn="BRN-FLW-001",
+            tin="1234567890",
+            status=SponsorAccount.Status.APPROVED,
+        )
+
+        SponsorAccountMember.objects.create(
+            sponsor_account=sponsor_account,
+            user=owner,
+            member_role=SponsorAccountMember.MemberRole.OWNER,
+        )
+
+        return sponsor_account
+
+    def create_sponsor_package(self, created_by=None):
+        created_by = created_by or self.create_user(
+            "flutterwave-union@example.com",
+            role=User.Role.UNION_ADMIN,
+        )
+
+        sponsor_package = SponsorPackage.objects.create(
+            name="Flutterwave Matchday Sponsorship",
+            description="Flutterwave checkout test sponsorship package.",
+            owner_type="UNION",
+            owner_identifier="URU",
+            owner_name="Uganda Rugby Union",
+            scope_type="EVENT",
+            scope_identifier="ELGON-2026",
+            scope_name="Elgon Cup 2026",
+            sponsor_type_allowed=SponsorPackage.SponsorTypeAllowed.BOTH,
+            category="BANKING",
+            price_amount=Decimal("3000000.00"),
+            currency="UGX",
+            status=SponsorPackage.Status.APPROVED,
+            created_by=created_by,
+        )
+
+        RevenueShareRule.objects.create(
+            sponsor_package=sponsor_package,
+            recipient_type=RevenueShareRule.RecipientType.UNION,
+            recipient_identifier="URU",
+            recipient_name="Uganda Rugby Union",
+            percentage=Decimal("10.00"),
+        )
+
+        return sponsor_package
+
+    def create_approved_agreement(self):
+        sponsor_owner = self.create_user("flutterwave-owner@example.com")
+        sponsor_account = self.create_sponsor_account(owner=sponsor_owner)
+        sponsor_package = self.create_sponsor_package()
+
+        agreement = SponsorAgreement.objects.create(
+            sponsor_account=sponsor_account,
+            sponsor_package=sponsor_package,
+            agreement_type=SponsorAgreement.AgreementType.CASH,
+            payment_source=SponsorAgreement.PaymentSource.PLATFORM,
+            payment_model=SponsorAgreement.PaymentModel.ONE_TIME,
+            total_value=Decimal("3000000.00"),
+            currency="UGX",
+            status=SponsorAgreement.Status.APPROVED,
+            activation_rule=SponsorAgreement.ActivationRule.PAYMENT_CONFIRMED,
+            created_by=sponsor_owner,
+        )
+
+        payment_schedule = SponsorPaymentSchedule.objects.create(
+            agreement=agreement,
+            schedule_type=SponsorPaymentSchedule.ScheduleType.ONE_TIME,
+            sequence_number=1,
+            due_date=date.today(),
+            amount_due=Decimal("3000000.00"),
+            currency="UGX",
+        )
+
+        return sponsor_owner, agreement, payment_schedule
+
+    @patch("sponsorships.views.initialize_flutterwave_payment")
+    def test_sponsor_owner_can_initialize_flutterwave_payment(
+        self,
+        mock_initialize_flutterwave_payment,
+    ):
+        sponsor_owner, agreement, payment_schedule = self.create_approved_agreement()
+        self.authenticate(sponsor_owner)
+
+        mock_initialize_flutterwave_payment.return_value = {
+            "status": "success",
+            "message": "Hosted Link",
+            "data": {
+                "link": "https://checkout.flutterwave.com/v3/hosted/pay/test-link"
+            },
+        }
+
+        response = self.client.post(
+            f"/api/sponsorships/agreements/{agreement.id}/flutterwave/initialize/",
+            {"payment_schedule": payment_schedule.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn("checkout_url", response.data)
+        self.assertIn("tx_ref", response.data)
+
+        payment = SponsorPayment.objects.get(id=response.data["payment"]["id"])
+
+        self.assertEqual(payment.provider, SponsorPayment.PaymentProvider.FLUTTERWAVE)
+        self.assertEqual(
+            payment.payment_method, SponsorPayment.PaymentMethod.FLUTTERWAVE
+        )
+        self.assertEqual(payment.status, SponsorPayment.Status.PENDING)
+        self.assertEqual(
+            payment.checkout_url,
+            "https://checkout.flutterwave.com/v3/hosted/pay/test-link",
+        )
+        self.assertTrue(payment.transaction_reference.startswith("LOS-SPONSOR-"))
+
+    @override_settings(FLUTTERWAVE_SECRET_KEY="")
+    def test_initialize_flutterwave_payment_requires_configuration(self):
+        sponsor_owner, agreement, payment_schedule = self.create_approved_agreement()
+        self.authenticate(sponsor_owner)
+
+        response = self.client.post(
+            f"/api/sponsorships/agreements/{agreement.id}/flutterwave/initialize/",
+            {"payment_schedule": payment_schedule.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    @patch("sponsorships.views.verify_flutterwave_transaction")
+    def test_verify_flutterwave_payment_confirms_payment_and_activates_agreement(
+        self,
+        mock_verify_flutterwave_transaction,
+    ):
+        sponsor_owner, agreement, payment_schedule = self.create_approved_agreement()
+
+        payment = SponsorPayment.objects.create(
+            agreement=agreement,
+            payment_schedule=payment_schedule,
+            amount_paid=Decimal("3000000.00"),
+            currency="UGX",
+            payment_method=SponsorPayment.PaymentMethod.FLUTTERWAVE,
+            provider=SponsorPayment.PaymentProvider.FLUTTERWAVE,
+            transaction_reference="LOS-SPONSOR-VERIFY-001",
+            recorded_by=sponsor_owner,
+        )
+
+        mock_verify_flutterwave_transaction.return_value = {
+            "status": "success",
+            "message": "Transaction fetched successfully",
+            "data": {
+                "id": 123456789,
+                "status": "successful",
+                "tx_ref": payment.transaction_reference,
+                "amount": 3000000,
+                "currency": "UGX",
+            },
+        }
+
+        response = self.client.get(
+            "/api/sponsorships/flutterwave/verify/",
+            {"tx_ref": payment.transaction_reference},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        payment.refresh_from_db()
+        agreement.refresh_from_db()
+        payment_schedule.refresh_from_db()
+
+        self.assertEqual(payment.status, SponsorPayment.Status.CONFIRMED)
+        self.assertEqual(payment.provider_status, "successful")
+        self.assertEqual(payment.provider_transaction_id, "123456789")
+        self.assertEqual(agreement.status, SponsorAgreement.Status.ACTIVE)
+        self.assertEqual(payment_schedule.status, SponsorPaymentSchedule.Status.PAID)
+        self.assertTrue(
+            RevenueDistribution.objects.filter(
+                payment=payment,
+                agreement=agreement,
+                recipient_name="Uganda Rugby Union",
+                amount=Decimal("300000.00"),
+            ).exists()
+        )
+
+    @patch("sponsorships.views.verify_flutterwave_transaction")
+    def test_verify_flutterwave_payment_marks_invalid_payment_as_failed(
+        self,
+        mock_verify_flutterwave_transaction,
+    ):
+        sponsor_owner, agreement, payment_schedule = self.create_approved_agreement()
+
+        payment = SponsorPayment.objects.create(
+            agreement=agreement,
+            payment_schedule=payment_schedule,
+            amount_paid=Decimal("3000000.00"),
+            currency="UGX",
+            payment_method=SponsorPayment.PaymentMethod.FLUTTERWAVE,
+            provider=SponsorPayment.PaymentProvider.FLUTTERWAVE,
+            transaction_reference="LOS-SPONSOR-VERIFY-FAILED",
+            recorded_by=sponsor_owner,
+        )
+
+        mock_verify_flutterwave_transaction.return_value = {
+            "status": "success",
+            "message": "Transaction fetched successfully",
+            "data": {
+                "id": 123456789,
+                "status": "failed",
+                "tx_ref": payment.transaction_reference,
+                "amount": 3000000,
+                "currency": "UGX",
+            },
+        }
+
+        response = self.client.get(
+            "/api/sponsorships/flutterwave/verify/",
+            {"tx_ref": payment.transaction_reference},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        payment.refresh_from_db()
+        agreement.refresh_from_db()
+
+        self.assertEqual(payment.status, SponsorPayment.Status.FAILED)
+        self.assertNotEqual(agreement.status, SponsorAgreement.Status.ACTIVE)
+
+    def test_flutterwave_webhook_rejects_invalid_signature(self):
+        response = self.client.post(
+            "/api/sponsorships/flutterwave/webhook/",
+            {
+                "data": {
+                    "tx_ref": "LOS-SPONSOR-WEBHOOK-001",
+                    "status": "successful",
+                }
+            },
+            format="json",
+            HTTP_VERIF_HASH="wrong-secret",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    @patch("sponsorships.views.verify_flutterwave_transaction")
+    def test_flutterwave_webhook_confirms_payment_with_valid_signature(
+        self,
+        mock_verify_flutterwave_transaction,
+    ):
+        sponsor_owner, agreement, payment_schedule = self.create_approved_agreement()
+
+        payment = SponsorPayment.objects.create(
+            agreement=agreement,
+            payment_schedule=payment_schedule,
+            amount_paid=Decimal("3000000.00"),
+            currency="UGX",
+            payment_method=SponsorPayment.PaymentMethod.FLUTTERWAVE,
+            provider=SponsorPayment.PaymentProvider.FLUTTERWAVE,
+            transaction_reference="LOS-SPONSOR-WEBHOOK-001",
+            recorded_by=sponsor_owner,
+        )
+
+        mock_verify_flutterwave_transaction.return_value = {
+            "status": "success",
+            "message": "Transaction fetched successfully",
+            "data": {
+                "id": 987654321,
+                "status": "successful",
+                "tx_ref": payment.transaction_reference,
+                "amount": 3000000,
+                "currency": "UGX",
+            },
+        }
+
+        response = self.client.post(
+            "/api/sponsorships/flutterwave/webhook/",
+            {
+                "event": "charge.completed",
+                "data": {
+                    "tx_ref": payment.transaction_reference,
+                    "status": "successful",
+                },
+            },
+            format="json",
+            HTTP_VERIF_HASH="test-webhook-secret",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        payment.refresh_from_db()
+        agreement.refresh_from_db()
+
+        self.assertEqual(payment.status, SponsorPayment.Status.CONFIRMED)
+        self.assertEqual(agreement.status, SponsorAgreement.Status.ACTIVE)

@@ -231,3 +231,39 @@ OTP_MAX_ATTEMPTS = config("OTP_MAX_ATTEMPTS", default=5, cast=int)
 
 # Custom User Model
 AUTH_USER_MODEL = "accounts.User"
+
+# Flutterwave Payment Settings
+# In development, use Flutterwave TEST keys.
+# In production, the client must provide LIVE keys from their own Flutterwave account.
+
+FLUTTERWAVE_MODE = config("FLUTTERWAVE_MODE", default="test")
+
+FLUTTERWAVE_BASE_URL = config(
+    "FLUTTERWAVE_BASE_URL",
+    default="https://api.flutterwave.com/v3",
+)
+
+FLUTTERWAVE_PUBLIC_KEY = config("FLUTTERWAVE_PUBLIC_KEY", default="")
+FLUTTERWAVE_SECRET_KEY = config("FLUTTERWAVE_SECRET_KEY", default="")
+FLUTTERWAVE_SECRET_HASH = config("FLUTTERWAVE_SECRET_HASH", default="")
+
+FLUTTERWAVE_REDIRECT_URL = config(
+    "FLUTTERWAVE_REDIRECT_URL",
+    default="http://localhost:8000/api/sponsorships/flutterwave/verify/",
+)
+
+FLUTTERWAVE_PAYMENT_TITLE = config(
+    "FLUTTERWAVE_PAYMENT_TITLE",
+    default="League OS Sponsorship Payment",
+)
+
+FLUTTERWAVE_PAYMENT_LOGO_URL = config(
+    "FLUTTERWAVE_PAYMENT_LOGO_URL",
+    default="",
+)
+
+FLUTTERWAVE_TIMEOUT_SECONDS = config(
+    "FLUTTERWAVE_TIMEOUT_SECONDS",
+    default=30,
+    cast=int,
+)
