@@ -9,20 +9,7 @@ from ..models import (
 )
 from .revenue import generate_revenue_distributions_for_payment
 from .workflow import create_sponsor_workflow_event
-
-
-def agreement_has_confirmed_payment(agreement):
-    return agreement.payments.filter(status=SponsorPayment.Status.CONFIRMED).exists()
-
-
-def agreement_platform_fee_is_clear(agreement):
-    if not agreement.platform_fee_required:
-        return True
-
-    return agreement.platform_fee_status in [
-        SponsorAgreement.PlatformFeeStatus.PAID,
-        SponsorAgreement.PlatformFeeStatus.WAIVED,
-    ]
+from .activation import agreement_platform_fee_is_clear
 
 
 def update_payment_schedule_after_confirmation(payment_schedule):
