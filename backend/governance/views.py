@@ -390,9 +390,9 @@ def league_standard_list_create_view(request):
     notes = serializer.validated_data.get("notes", "")
 
     # Ensure rules are published
-    unpublished = Rule.objects.filter(
-        id__in=rule_ids, is_published=False
-    ).values_list("title", flat=True)
+    unpublished = Rule.objects.filter(id__in=rule_ids, is_published=False).values_list(
+        "title", flat=True
+    )
     if unpublished:
         return Response(
             {
