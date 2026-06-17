@@ -13,7 +13,10 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 
-import dj_database_url
+try:
+    import dj_database_url
+except ImportError:
+    dj_database_url = None
 from decouple import Csv, config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -24,7 +27,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config("DJANGO_SECRET_KEY", default="change-me-in-development")
+SECRET_KEY = config(
+    "DJANGO_SECRET_KEY",
+    default="django-insecure-dev-key-at-least-32-characters-long-for-signing",
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config("DJANGO_DEBUG", default=True, cast=bool)
@@ -51,6 +57,7 @@ INSTALLED_APPS = [
     # Local apps
     "accounts",
     "dashboards",
+    "governance",
     "sponsorships",
 ]
 
@@ -90,13 +97,13 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 DATABASE_URL = config("DATABASE_URL", default=None)
 
-if DATABASE_URL:
+if DATABASE_URL and dj_database_url:
     DATABASES = {
         "default": dj_database_url.parse(
             DATABASE_URL,
             conn_max_age=600,
             ssl_require=True,
-        )
+        ),
     }
 else:
     DATABASES = {

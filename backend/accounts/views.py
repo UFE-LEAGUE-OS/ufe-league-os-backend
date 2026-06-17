@@ -24,7 +24,12 @@ from .serializers import (
     PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer,
 )
-from .rbac import get_dashboard_routes, log_role_change
+from .rbac import (
+    get_backend_dashboard_route,
+    get_dashboard_route,
+    get_dashboard_routes,
+    log_role_change,
+)
 from .services import (
     create_email_verification_otp,
     resend_email_verification_otp,
@@ -32,7 +37,6 @@ from .services import (
     request_password_reset_otp,
     reset_password_with_otp,
 )
-from .routing import get_backend_dashboard_route, get_dashboard_route
 from sponsorships.serializers import (
     SponsorAccountCreateSerializer,
     SponsorAccountSerializer,
