@@ -5,7 +5,6 @@ import hmac
 from decimal import Decimal
 from uuid import uuid4
 
-from django.db import transaction
 from django.utils import timezone
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
@@ -36,6 +35,12 @@ from .flutterwave import (
     flutterwave_is_configured,
     initialize_flutterwave_payment,
     verify_flutterwave_transaction,
+)
+
+from .services.payments import (
+    confirm_sponsor_payment,
+    mark_gateway_payment_failed,
+    reject_sponsor_payment,
 )
 
 from .serializers import (
@@ -982,115 +987,32 @@ def confirm_sponsor_payment_from_gateway(payment, flutterwave_response):
     """
     Confirm a SponsorPayment after Flutterwave verification succeeds.
 
-    This function is intentionally separate because it is used by both:
-    - redirect verification endpoint
-    - webhook endpoint
+    The business rules now live in sponsorships/services/payments.py.
+    This wrapper keeps the existing Flutterwave view code simple.
     """
 
-    data = flutterwave_response.get("data", {})
-
-    with transaction.atomic():
-        payment = SponsorPayment.objects.select_for_update().get(id=payment.id)
-
-        if payment.status == SponsorPayment.Status.CONFIRMED:
-            return payment, list(payment.revenue_distributions.all())
-
-        old_payment_status = payment.status
-        payment.status = SponsorPayment.Status.CONFIRMED
-        payment.provider_status = data.get("status", "successful")
-        payment.provider_transaction_id = str(data.get("id", ""))
-        payment.provider_response = flutterwave_response
-        payment.confirmed_at = timezone.now()
-
-        if payment.paid_at is None:
-            payment.paid_at = timezone.now()
-
-        payment.save(
-            update_fields=[
-                "status",
-                "provider_status",
-                "provider_transaction_id",
-                "provider_response",
-                "confirmed_at",
-                "paid_at",
-            ]
-        )
-
-        update_payment_schedule_after_confirmation(payment.payment_schedule)
-        distributions = generate_revenue_distributions_for_payment(payment)
-
-        agreement = payment.agreement
-        old_agreement_status = agreement.status
-
-        if agreement.status == SponsorAgreement.Status.APPROVED:
-            agreement.status = SponsorAgreement.Status.PENDING_PAYMENT
-
-        if (
-            agreement.activation_rule
-            == SponsorAgreement.ActivationRule.PAYMENT_CONFIRMED
-            and agreement_platform_fee_is_clear(agreement)
-        ):
-            agreement.status = SponsorAgreement.Status.ACTIVE
-            agreement.platform_activation_allowed = True
-
-        agreement.save(
-            update_fields=[
-                "status",
-                "platform_activation_allowed",
-                "updated_at",
-            ]
-        )
-
-        create_sponsor_workflow_event(
-            sponsor_package=agreement.sponsor_package,
-            agreement=agreement,
-            payment=payment,
-            actor=None,
-            event_type=SponsorWorkflowEvent.EventType.PAYMENT_CONFIRMED,
-            from_status=old_payment_status,
-            to_status=payment.status,
-            note="Flutterwave payment verified and confirmed.",
-        )
-
-        if (
-            old_agreement_status != agreement.status
-            and agreement.status == SponsorAgreement.Status.ACTIVE
-        ):
-            create_sponsor_workflow_event(
-                sponsor_package=agreement.sponsor_package,
-                agreement=agreement,
-                payment=payment,
-                actor=None,
-                event_type=SponsorWorkflowEvent.EventType.AGREEMENT_ACTIVATED,
-                from_status=old_agreement_status,
-                to_status=agreement.status,
-                note="Agreement activated after Flutterwave payment confirmation.",
-            )
-
-    return payment, distributions
+    return confirm_sponsor_payment(
+        payment,
+        actor=None,
+        provider_response=flutterwave_response,
+        note="Flutterwave payment verified and confirmed.",
+        activation_note="Agreement activated after Flutterwave payment confirmation.",
+    )
 
 
 def mark_flutterwave_payment_failed(payment, flutterwave_response, status_value):
-    old_status = payment.status
     normalized_status = get_flutterwave_status(status_value)
 
     if normalized_status == "cancelled":
-        payment.status = SponsorPayment.Status.CANCELLED
+        failed_status = SponsorPayment.Status.CANCELLED
     else:
-        payment.status = SponsorPayment.Status.FAILED
+        failed_status = SponsorPayment.Status.FAILED
 
-    payment.provider_status = status_value
-    payment.provider_response = flutterwave_response
-    payment.save(update_fields=["status", "provider_status", "provider_response"])
-
-    create_sponsor_workflow_event(
-        sponsor_package=payment.agreement.sponsor_package,
-        agreement=payment.agreement,
-        payment=payment,
-        actor=None,
-        event_type=SponsorWorkflowEvent.EventType.PAYMENT_REJECTED,
-        from_status=old_status,
-        to_status=payment.status,
+    return mark_gateway_payment_failed(
+        payment,
+        provider_response=flutterwave_response,
+        provider_status=status_value,
+        failed_status=failed_status,
         note="Flutterwave payment failed or was cancelled.",
     )
 
@@ -1696,73 +1618,12 @@ def sponsor_payment_confirm_view(request, payment_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    with transaction.atomic():
-        old_payment_status = payment.status
-        payment.status = SponsorPayment.Status.CONFIRMED
-        payment.confirmed_by = request.user
-        payment.confirmed_at = timezone.now()
-
-        if payment.paid_at is None:
-            payment.paid_at = timezone.now()
-
-        payment.save(
-            update_fields=[
-                "status",
-                "confirmed_by",
-                "confirmed_at",
-                "paid_at",
-            ]
-        )
-
-        update_payment_schedule_after_confirmation(payment.payment_schedule)
-        distributions = generate_revenue_distributions_for_payment(payment)
-
-        old_agreement_status = agreement.status
-
-        if agreement.status == SponsorAgreement.Status.APPROVED:
-            agreement.status = SponsorAgreement.Status.PENDING_PAYMENT
-
-        if (
-            agreement.activation_rule
-            == SponsorAgreement.ActivationRule.PAYMENT_CONFIRMED
-            and agreement_platform_fee_is_clear(agreement)
-        ):
-            agreement.status = SponsorAgreement.Status.ACTIVE
-            agreement.platform_activation_allowed = True
-
-        agreement.save(
-            update_fields=[
-                "status",
-                "platform_activation_allowed",
-                "updated_at",
-            ]
-        )
-
-        create_sponsor_workflow_event(
-            sponsor_package=agreement.sponsor_package,
-            agreement=agreement,
-            payment=payment,
-            actor=request.user,
-            event_type=SponsorWorkflowEvent.EventType.PAYMENT_CONFIRMED,
-            from_status=old_payment_status,
-            to_status=payment.status,
-            note=request.data.get("note", "Sponsor payment confirmed."),
-        )
-
-        if (
-            old_agreement_status != agreement.status
-            and agreement.status == SponsorAgreement.Status.ACTIVE
-        ):
-            create_sponsor_workflow_event(
-                sponsor_package=agreement.sponsor_package,
-                agreement=agreement,
-                payment=payment,
-                actor=request.user,
-                event_type=SponsorWorkflowEvent.EventType.AGREEMENT_ACTIVATED,
-                from_status=old_agreement_status,
-                to_status=agreement.status,
-                note="Agreement activated after payment confirmation.",
-            )
+    payment, distributions = confirm_sponsor_payment(
+        payment,
+        actor=request.user,
+        note=request.data.get("note", "Sponsor payment confirmed."),
+        activation_note="Agreement activated after payment confirmation.",
+    )
 
     return Response(
         {
@@ -1806,20 +1667,9 @@ def sponsor_payment_reject_view(request, payment_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    old_status = payment.status
-    payment.status = SponsorPayment.Status.REJECTED
-    payment.confirmed_by = request.user
-    payment.confirmed_at = timezone.now()
-    payment.save(update_fields=["status", "confirmed_by", "confirmed_at"])
-
-    create_sponsor_workflow_event(
-        sponsor_package=agreement.sponsor_package,
-        agreement=agreement,
-        payment=payment,
+    payment = reject_sponsor_payment(
+        payment,
         actor=request.user,
-        event_type=SponsorWorkflowEvent.EventType.PAYMENT_REJECTED,
-        from_status=old_status,
-        to_status=payment.status,
         note=request.data.get("note", "Sponsor payment rejected."),
     )
 
