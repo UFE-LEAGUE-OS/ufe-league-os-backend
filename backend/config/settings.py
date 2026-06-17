@@ -13,6 +13,10 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 
+try:
+    import dj_database_url
+except ImportError:
+    dj_database_url = None
 from decouple import Csv, config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -23,7 +27,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config("DJANGO_SECRET_KEY", default="change-me-in-development")
+SECRET_KEY = config(
+    "DJANGO_SECRET_KEY",
+    default="django-insecure-dev-key-at-least-32-characters-long-for-signing",
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config("DJANGO_DEBUG", default=True, cast=bool)
@@ -50,6 +57,7 @@ INSTALLED_APPS = [
     # Local apps
     "accounts",
     "dashboards",
+    "governance",
     "sponsorships",
 ]
 
@@ -87,16 +95,27 @@ WSGI_APPLICATION = "config.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": config("DB_NAME", default="league_os"),
-        "USER": config("DB_USER", default="league_os_user"),
-        "PASSWORD": config("DB_PASSWORD", default="league_os_password"),
-        "HOST": config("DB_HOST", default="db"),
-        "PORT": config("DB_PORT", default="5432"),
+DATABASE_URL = config("DATABASE_URL", default=None)
+
+if DATABASE_URL and dj_database_url:
+    DATABASES = {
+        "default": dj_database_url.parse(
+            DATABASE_URL,
+            conn_max_age=600,
+            ssl_require=True,
+        ),
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": config("DB_NAME", default="league_os"),
+            "USER": config("DB_USER", default="league_os_user"),
+            "PASSWORD": config("DB_PASSWORD", default="league_os_password"),
+            "HOST": config("DB_HOST", default="db"),
+            "PORT": config("DB_PORT", default="5432"),
+        }
+    }
 
 
 # Password validation
@@ -133,10 +152,10 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-MEDIA_URL = "media/"
+MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # Default primary key field type
@@ -181,6 +200,20 @@ CSRF_TRUSTED_ORIGINS = config(
     cast=Csv(),
 )
 
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+SESSION_COOKIE_SECURE = config(
+    "SESSION_COOKIE_SECURE",
+    default=not DEBUG,
+    cast=bool,
+)
+
+CSRF_COOKIE_SECURE = config(
+    "CSRF_COOKIE_SECURE",
+    default=not DEBUG,
+    cast=bool,
+)
+
 # Email / OTP Development Settings
 EMAIL_BACKEND = config(
     "EMAIL_BACKEND",
@@ -198,3 +231,39 @@ OTP_MAX_ATTEMPTS = config("OTP_MAX_ATTEMPTS", default=5, cast=int)
 
 # Custom User Model
 AUTH_USER_MODEL = "accounts.User"
+
+# Flutterwave Payment Settings
+# In development, use Flutterwave TEST keys.
+# In production, the client must provide LIVE keys from their own Flutterwave account.
+
+FLUTTERWAVE_MODE = config("FLUTTERWAVE_MODE", default="test")
+
+FLUTTERWAVE_BASE_URL = config(
+    "FLUTTERWAVE_BASE_URL",
+    default="https://api.flutterwave.com/v3",
+)
+
+FLUTTERWAVE_PUBLIC_KEY = config("FLUTTERWAVE_PUBLIC_KEY", default="")
+FLUTTERWAVE_SECRET_KEY = config("FLUTTERWAVE_SECRET_KEY", default="")
+FLUTTERWAVE_SECRET_HASH = config("FLUTTERWAVE_SECRET_HASH", default="")
+
+FLUTTERWAVE_REDIRECT_URL = config(
+    "FLUTTERWAVE_REDIRECT_URL",
+    default="http://localhost:8000/api/sponsorships/flutterwave/verify/",
+)
+
+FLUTTERWAVE_PAYMENT_TITLE = config(
+    "FLUTTERWAVE_PAYMENT_TITLE",
+    default="League OS Sponsorship Payment",
+)
+
+FLUTTERWAVE_PAYMENT_LOGO_URL = config(
+    "FLUTTERWAVE_PAYMENT_LOGO_URL",
+    default="",
+)
+
+FLUTTERWAVE_TIMEOUT_SECONDS = config(
+    "FLUTTERWAVE_TIMEOUT_SECONDS",
+    default=30,
+    cast=int,
+)

@@ -360,6 +360,12 @@ For example:
 
 ---
 
+## API Testing Documentation
+
+Authentication and Postman testing guide:
+
+- [Authentication API Testing Guide](docs/auth_api_testing_postman.md)
+
 ## Testing with Postman
 
 Recommended Postman flow:

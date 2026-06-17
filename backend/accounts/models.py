@@ -112,6 +112,7 @@ class AuditLog(models.Model):
     class Category(models.TextChoices):
         ACCESS_VIOLATION = "ACCESS_VIOLATION", "Access Violation"
         ROLE_CHANGE = "ROLE_CHANGE", "Role Change"
+        GOVERNANCE = "GOVERNANCE", "Governance & Compliance"
 
     category = models.CharField(max_length=50, choices=Category.choices)
     actor = models.ForeignKey(
