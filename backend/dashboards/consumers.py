@@ -57,11 +57,15 @@ class MatchUpdateConsumer(AsyncWebsocketConsumer):
         try:
             match = await self._get_match_data(self.match_id)
             if match:
-                await self.send(text_data=json.dumps({
-                    "type": "match_update",
-                    "action": "initial",
-                    "data": match,
-                }))
+                await self.send(
+                    text_data=json.dumps(
+                        {
+                            "type": "match_update",
+                            "action": "initial",
+                            "data": match,
+                        }
+                    )
+                )
         except Exception as e:
             logger.error(f"Error sending initial match data: {e}")
 
@@ -91,11 +95,15 @@ class MatchUpdateConsumer(AsyncWebsocketConsumer):
         Receive a match update from the channel layer and forward to WebSocket.
         Called by channel_layer.group_send from external code (e.g., views).
         """
-        await self.send(text_data=json.dumps({
-            "type": "match_update",
-            "action": event.get("action", "update"),
-            "data": event.get("data", {}),
-        }))
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "match_update",
+                    "action": event.get("action", "update"),
+                    "data": event.get("data", {}),
+                }
+            )
+        )
 
     async def _get_match_data(self, match_id):
         """
@@ -111,6 +119,7 @@ class MatchUpdateConsumer(AsyncWebsocketConsumer):
                     "competition", "home_club", "away_club"
                 ).get(id=match_id)
                 from .serializers import MatchDetailSerializer
+
                 return MatchDetailSerializer(match).data
             except Match.DoesNotExist:
                 return None

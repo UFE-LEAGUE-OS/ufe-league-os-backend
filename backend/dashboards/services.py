@@ -31,9 +31,9 @@ def recalculate_standings(competition_id):
     )
 
     # Collect all clubs that have played in this competition
-    club_ids = set(
-        matches.values_list("home_club_id", flat=True)
-    ) | set(matches.values_list("away_club_id", flat=True))
+    club_ids = set(matches.values_list("home_club_id", flat=True)) | set(
+        matches.values_list("away_club_id", flat=True)
+    )
 
     standings_data = []
     for club_id in club_ids:
@@ -72,8 +72,9 @@ def recalculate_standings(competition_id):
 
         # Form: last 5 matches in chronological order (most recent first)
         club_matches = list(
-            matches.filter(Q(home_club_id=club_id) | Q(away_club_id=club_id))
-            .order_by("-match_date")[:5]
+            matches.filter(Q(home_club_id=club_id) | Q(away_club_id=club_id)).order_by(
+                "-match_date"
+            )[:5]
         )
         # Reverse to get chronological order for form string
         form_parts = []

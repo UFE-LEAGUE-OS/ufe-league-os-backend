@@ -605,9 +605,7 @@ class TestStandingsCalculation:
         assert response.status_code == status.HTTP_200_OK
         assert len(response.data["entries"]) >= 1
 
-    def test_standings_calculation_handles_draws_and_multi_results(
-        self, seeded_data
-    ):
+    def test_standings_calculation_handles_draws_and_multi_results(self, seeded_data):
         """Correctly computes standings with multiple matches including draws."""
         # Add an additional completed match: club_b vs club_c ending in draw
         client = APIClient()

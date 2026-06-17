@@ -31,7 +31,6 @@ from .serializers import (
     MatchDetailSerializer,
     MatchListSerializer,
     StandingSerializer,
-    StandingTableSerializer,
     UnionSerializer,
 )
 from .services import recalculate_standings
