@@ -177,9 +177,7 @@ def competition_format_detail_view(request, pk):
 
     if request.method in ("PUT", "PATCH"):
         partial = request.method == "PATCH"
-        serializer = CompetitionFormatSerializer(
-            fmt, data=request.data, partial=partial,
-        )
+        serializer = CompetitionFormatSerializer(fmt, data=request.data, partial=partial)
         if serializer.is_valid():
             updated = serializer.save()
             log_governance_action(

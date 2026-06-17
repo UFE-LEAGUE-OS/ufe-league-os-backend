@@ -38,16 +38,12 @@ def create_user(User, email, role):
 
 @pytest.fixture
 def super_admin_user(user_model):
-    return create_user(
-        user_model, "superadmin@example.com", user_model.Role.SUPER_ADMIN
-    )
+    return create_user(user_model, "superadmin@example.com", user_model.Role.SUPER_ADMIN)
 
 
 @pytest.fixture
 def league_admin_user(user_model):
-    return create_user(
-        user_model, "leagueadmin@example.com", user_model.Role.LEAGUE_ADMIN
-    )
+    return create_user(user_model, "leagueadmin@example.com", user_model.Role.LEAGUE_ADMIN)
 
 
 @pytest.fixture
@@ -193,9 +189,7 @@ class TestSportVariantAuthentication:
 
     def test_create_requires_authentication(self, db, unauthenticated_client):
         url = reverse("sport-variant-list-create")
-        response = unauthenticated_client.post(
-            url, {"name": "Futsal", "slug": "futsal"}
-        )
+        response = unauthenticated_client.post(url, {"name": "Futsal", "slug": "futsal"})
         assert response.status_code in (
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
