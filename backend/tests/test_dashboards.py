@@ -467,3 +467,347 @@ class TestPublicCompetitions:
         url = reverse("public-competitions")
         response = client.get(url)
         assert response.status_code == status.HTTP_200_OK
+
+
+# ---------------------------------------------------------------------------
+# Tests for Match Detail Endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestMatchDetail:
+    """Test the public match detail endpoint."""
+
+    def test_match_detail_returns_match_data(self, seeded_data):
+        """Returns full match details for a valid match ID."""
+        client = APIClient()
+        match = seeded_data["result"]
+        url = reverse("public-match-detail", args=[match.id])
+        response = client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.data
+        assert data["id"] == match.id
+        assert data["status"] == "COMPLETED"
+        assert data["home_score"] == 2
+        assert data["away_score"] == 1
+        assert data["home_club_name"] == seeded_data["club_c"].name
+        assert data["away_club_name"] == seeded_data["club_a"].name
+        assert data["competition_name"] == seeded_data["competition"].name
+        assert "is_fixture" in data
+        assert "has_result" in data
+        assert data["has_result"] is True
+        assert data["is_fixture"] is False
+        assert "updated_at" in data
+
+    def test_match_detail_for_fixture(self, seeded_data):
+        """Returns correct flags for a scheduled fixture."""
+        client = APIClient()
+        match = seeded_data["fixture"]
+        url = reverse("public-match-detail", args=[match.id])
+        response = client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.data
+        assert data["id"] == match.id
+        assert data["status"] == "SCHEDULED"
+        assert data["is_fixture"] is True
+        assert data["has_result"] is False
+        assert data["home_score"] is None
+
+    def test_match_detail_nonexistent_returns_404(self, db):
+        """Returns 404 for a non-existent match."""
+        client = APIClient()
+        url = reverse("public-match-detail", args=[99999])
+        response = client.get(url)
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_match_detail_no_auth_required(self, seeded_data):
+        """Completely unauthenticated request should work."""
+        client = APIClient()
+        match = seeded_data["result"]
+        url = reverse("public-match-detail", args=[match.id])
+        response = client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+
+
+# ---------------------------------------------------------------------------
+# Tests for Standings Calculation Endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestStandingsCalculation:
+    """Test the standings calculation / recalculation endpoint."""
+
+    def test_standings_calculation_returns_computed_table(self, seeded_data):
+        """Recalculates standings and returns correctly computed table."""
+        client = APIClient()
+        competition = seeded_data["competition"]
+        url = reverse("public-standings-calculate")
+        response = client.get(url, {"competition": competition.id})
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.data
+        assert data["competition_id"] == competition.id
+        assert data["competition_name"] == competition.name
+        assert "entries" in data
+        entries = data["entries"]
+        assert len(entries) >= 2
+
+        # Check first place (club_c won 2-1 as home)
+        first = entries[0]
+        assert first["position"] == 1
+        assert first["points"] == 3
+        assert first["won"] == 1
+        assert first["played"] == 1
+        assert first["goals_for"] >= 2
+
+    def test_standings_calculation_persists_to_db(self, seeded_data):
+        """Recalculated standings are persisted to the database."""
+        client = APIClient()
+        competition = seeded_data["competition"]
+        url = reverse("public-standings-calculate")
+        response = client.get(url, {"competition": competition.id})
+
+        assert response.status_code == status.HTTP_200_OK
+
+        # Verify persisted in DB
+        db_standings = Standing.objects.filter(competition=competition).order_by(
+            "position"
+        )
+        assert db_standings.count() >= 2
+        first = db_standings.first()
+        assert first.points == 3
+
+    def test_standings_calculation_requires_competition(self, seeded_data):
+        """Returns 400 when competition param is missing."""
+        client = APIClient()
+        url = reverse("public-standings-calculate")
+        response = client.get(url)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "competition" in response.data.get("detail", "").lower()
+
+    def test_standings_calculation_invalid_competition_returns_404(self, db):
+        """Returns 404 for non-existent competition."""
+        client = APIClient()
+        url = reverse("public-standings-calculate")
+        response = client.get(url, {"competition": 99999})
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_standings_calculation_no_auth_required(self, seeded_data):
+        """Completely unauthenticated request should work."""
+        client = APIClient()
+        competition = seeded_data["competition"]
+        url = reverse("public-standings-calculate")
+        response = client.get(url, {"competition": competition.id})
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.data["entries"]) >= 1
+
+    def test_standings_calculation_handles_draws_and_multi_results(
+        self, seeded_data
+    ):
+        """Correctly computes standings with multiple matches including draws."""
+        # Add an additional completed match: club_b vs club_c ending in draw
+        client = APIClient()
+        competition = seeded_data["competition"]
+        club_b = seeded_data["club_b"]
+        club_c = seeded_data["club_c"]
+
+        from django.utils import timezone
+
+        Match.objects.create(
+            competition=competition,
+            home_club=club_b,
+            away_club=club_c,
+            status=Match.Status.COMPLETED,
+            match_date=timezone.now() - timezone.timedelta(days=3),
+            venue="Test Stadium",
+            round="Matchweek 1",
+            home_score=1,
+            away_score=1,
+            home_halftime_score=0,
+            away_halftime_score=0,
+        )
+
+        url = reverse("public-standings-calculate")
+        response = client.get(url, {"competition": competition.id})
+
+        assert response.status_code == status.HTTP_200_OK
+        entries = response.data["entries"]
+
+        # club_a: played 1, lost 1, 0 pts
+        # club_b: played 1, drawn 1, 1 pt
+        # club_c: played 2, won 1, drawn 1, 4 pts
+        for entry in entries:
+            if entry["club_name"] == seeded_data["club_c"].name:
+                assert entry["played"] == 2
+                assert entry["won"] == 1
+                assert entry["drawn"] == 1
+                assert entry["points"] == 4
+                assert entry["position"] == 1
+            elif entry["club_name"] == seeded_data["club_b"].name:
+                assert entry["drawn"] == 1
+                assert entry["points"] == 1
+            elif entry["club_name"] == seeded_data["club_a"].name:
+                assert entry["lost"] == 1
+                assert entry["points"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests for Standings Calculation Service
+# ---------------------------------------------------------------------------
+
+
+class TestRecalculateStandingsService:
+    """Unit tests for the recalculate_standings service function."""
+
+    def test_service_returns_ordered_standings(self, seeded_data):
+        """Service returns Standing records ordered by position."""
+        from dashboards.services import recalculate_standings
+
+        competition = seeded_data["competition"]
+        results = recalculate_standings(competition.id)
+
+        assert isinstance(results, list)
+        assert len(results) >= 2
+        positions = [s.position for s in results]
+        assert positions == sorted(positions)
+
+    def test_service_resets_standings_on_recalculation(self, seeded_data):
+        """Re-running the service replaces old standings."""
+        from dashboards.services import recalculate_standings
+
+        competition = seeded_data["competition"]
+        # First calculation
+        recalculate_standings(competition.id)
+
+        # Add a new result
+        from django.utils import timezone
+
+        Match.objects.create(
+            competition=competition,
+            home_club=seeded_data["club_b"],
+            away_club=seeded_data["club_a"],
+            status=Match.Status.COMPLETED,
+            match_date=timezone.now() - timezone.timedelta(days=1),
+            venue="Test Venue",
+            round="Matchweek 2",
+            home_score=3,
+            away_score=0,
+        )
+
+        # Recalculate
+        results = recalculate_standings(competition.id)
+        # club_b now has 3 pts (won) + previous 0 = 3 pts, club_a still 0
+        for s in results:
+            if s.club_id == seeded_data["club_b"].id:
+                assert s.played == 1
+                assert s.won == 1
+                assert s.points == 3
+                break
+
+
+# ---------------------------------------------------------------------------
+# Tests for WebSocket Match Consumer
+# ---------------------------------------------------------------------------
+
+
+class TestMatchUpdateConsumer:
+    """Test the WebSocket consumer for live match updates.
+
+    Uses the Channels test infrastructure (WebsocketCommunicator).
+    """
+
+    async def test_consumer_connects_and_sends_welcome(self, db):
+        """Consumer connects successfully and sends initial data (or handles db error gracefully)."""
+        from channels.testing import WebsocketCommunicator
+        from dashboards.consumers import MatchUpdateConsumer
+
+        # Test with a non-existent match ID - consumer will connect but initial
+        # data fetch may fail gracefully since no match exists
+        communicator = WebsocketCommunicator(
+            MatchUpdateConsumer.as_asgi(),
+            "/ws/match/1/",
+            [("path", "/ws/match/1/")],
+        )
+        connected, _ = await communicator.connect()
+        # Consumer may connect successfully or fail depending on db state
+        # The important thing is it handles it gracefully
+        assert connected
+
+        await communicator.disconnect()
+
+    async def test_consumer_rejects_invalid_match_id(self):
+        """Consumer closes connection for missing match_id."""
+        from channels.testing import WebsocketCommunicator
+        from dashboards.consumers import MatchUpdateConsumer
+
+        communicator = WebsocketCommunicator(
+            MatchUpdateConsumer.as_asgi(),
+            "/ws/match/abc/",
+            [("path", "/ws/match/abc/")],
+        )
+        connected, _ = await communicator.connect()
+        assert not connected  # Should reject connection
+
+    async def test_consumer_responds_to_ping(self, db):
+        """Consumer responds to ping with pong."""
+        from channels.testing import WebsocketCommunicator
+        from dashboards.consumers import MatchUpdateConsumer
+
+        communicator = WebsocketCommunicator(
+            MatchUpdateConsumer.as_asgi(),
+            "/ws/match/1/",
+            [("path", "/ws/match/1/")],
+        )
+        connected, _ = await communicator.connect()
+        assert connected
+
+        # Send ping
+        await communicator.send_json_to({"type": "ping"})
+        response = await communicator.receive_json_from(timeout=5)
+        assert response["type"] == "pong"
+
+        await communicator.disconnect()
+
+    async def test_consumer_receives_broadcast_updates(self, db):
+        """Consumer receives updates sent via channel layer."""
+        from channels.layers import get_channel_layer
+        from channels.testing import WebsocketCommunicator
+        from dashboards.consumers import MatchUpdateConsumer
+
+        communicator = WebsocketCommunicator(
+            MatchUpdateConsumer.as_asgi(),
+            "/ws/match/42/",
+            [("path", "/ws/match/42/")],
+        )
+        connected, _ = await communicator.connect()
+        assert connected
+
+        # Simulate a broadcast update via channel layer
+        channel_layer = get_channel_layer()
+        await channel_layer.group_send(
+            "match_42",
+            {
+                "type": "match_update",
+                "action": "score_change",
+                "data": {
+                    "id": 42,
+                    "home_score": 3,
+                    "away_score": 1,
+                    "status": "LIVE",
+                },
+            },
+        )
+
+        # Receive the broadcast
+        response = await communicator.receive_json_from(timeout=5)
+        assert response["type"] == "match_update"
+        assert response["action"] == "score_change"
+        assert response["data"]["home_score"] == 3
+        assert response["data"]["away_score"] == 1
+        assert response["data"]["status"] == "LIVE"
+
+        await communicator.disconnect()

@@ -110,6 +110,51 @@ class MatchListSerializer(serializers.ModelSerializer):
         ]
 
 
+class MatchDetailSerializer(serializers.ModelSerializer):
+    """Detailed serializer for a single match, including computed properties."""
+
+    competition_name = serializers.CharField(source="competition.name", read_only=True)
+    competition_slug = serializers.SlugField(source="competition.slug", read_only=True)
+    home_club_name = serializers.CharField(source="home_club.name", read_only=True)
+    home_club_slug = serializers.SlugField(source="home_club.slug", read_only=True)
+    away_club_name = serializers.CharField(source="away_club.name", read_only=True)
+    away_club_slug = serializers.SlugField(source="away_club.slug", read_only=True)
+    is_fixture = serializers.BooleanField(read_only=True)
+    has_result = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = Match
+        fields = [
+            "id",
+            "competition",
+            "competition_name",
+            "competition_slug",
+            "home_club",
+            "home_club_name",
+            "home_club_slug",
+            "away_club",
+            "away_club_name",
+            "away_club_slug",
+            "status",
+            "match_date",
+            "venue",
+            "round",
+            "home_score",
+            "away_score",
+            "home_halftime_score",
+            "away_halftime_score",
+            "has_extra_time",
+            "has_penalties",
+            "home_penalty_score",
+            "away_penalty_score",
+            "is_featured",
+            "is_fixture",
+            "has_result",
+            "created_at",
+            "updated_at",
+        ]
+
+
 class StandingSerializer(serializers.ModelSerializer):
     """Serializer for public standings listing."""
 
@@ -134,3 +179,11 @@ class StandingSerializer(serializers.ModelSerializer):
             "points",
             "form",
         ]
+
+
+class StandingTableSerializer(serializers.Serializer):
+    """Serializer for the calculated standings table response."""
+
+    competition_name = serializers.CharField(read_only=True)
+    competition_id = serializers.IntegerField(read_only=True)
+    entries = serializers.ListField(child=StandingSerializer(), read_only=True)

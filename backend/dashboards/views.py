@@ -28,10 +28,13 @@ from .serializers import (
     ClubListSerializer,
     CompetitionSerializer,
     LeagueSerializer,
+    MatchDetailSerializer,
     MatchListSerializer,
     StandingSerializer,
+    StandingTableSerializer,
     UnionSerializer,
 )
+from .services import recalculate_standings
 
 # Create your views here.
 
@@ -491,3 +494,73 @@ def public_competitions_view(request):
     queryset = queryset.order_by("-start_date")
     serializer = CompetitionSerializer(queryset, many=True)
     return Response(serializer.data)
+
+
+# ---------------------------------------------------------------------------
+# Match Detail Endpoint
+# ---------------------------------------------------------------------------
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def public_match_detail_view(request, match_id):
+    """
+    Public endpoint: return detailed info about a single match.
+    No authentication required.
+    """
+    try:
+        match = Match.objects.select_related(
+            "competition", "home_club", "away_club"
+        ).get(id=match_id)
+    except Match.DoesNotExist:
+        return Response(
+            {"detail": "Match not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    serializer = MatchDetailSerializer(match)
+    return Response(serializer.data)
+
+
+# ---------------------------------------------------------------------------
+# Standings Calculation Endpoint
+# ---------------------------------------------------------------------------
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def public_standings_calculation_view(request):
+    """
+    Public endpoint: trigger recalculation of standings for a competition
+    and return the computed table. No authentication required.
+
+    Query params:
+        competition (required) -- ID of the competition to recalculate.
+    """
+    competition_id = request.query_params.get("competition")
+
+    if not competition_id:
+        return Response(
+            {"detail": "The 'competition' query parameter is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        competition = Competition.objects.get(id=competition_id)
+    except Competition.DoesNotExist:
+        return Response(
+            {"detail": "Competition not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    updated_standings = recalculate_standings(competition_id)
+    serializer = StandingSerializer(
+        sorted(updated_standings, key=lambda s: s.position), many=True
+    )
+    return Response(
+        {
+            "competition_id": competition.id,
+            "competition_name": competition.name,
+            "entries": serializer.data,
+        }
+    )

@@ -60,4 +60,16 @@ urlpatterns = [
         views.public_competitions_view,
         name="public-competitions",
     ),
+    # Match detail endpoint
+    path(
+        "public/matches/<int:match_id>/",
+        views.public_match_detail_view,
+        name="public-match-detail",
+    ),
+    # Standings calculation / recomputation endpoint
+    path(
+        "public/standings/calculate/",
+        views.public_standings_calculation_view,
+        name="public-standings-calculate",
+    ),
 ]
