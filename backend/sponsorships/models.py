@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
@@ -291,7 +293,7 @@ class SponsorPackage(models.Model):
         max_digits=14,
         decimal_places=2,
         default=0,
-        validators=[MinValueValidator(0)],
+        validators=[MinValueValidator(Decimal("0"))],
     )
     currency = models.CharField(max_length=3, default="UGX")
 
@@ -301,7 +303,7 @@ class SponsorPackage(models.Model):
         max_digits=14,
         decimal_places=2,
         default=0,
-        validators=[MinValueValidator(0)],
+        validators=[MinValueValidator(Decimal("0"))],
     )
 
     activation_rule = models.CharField(
@@ -395,13 +397,13 @@ class SponsorBenefit(models.Model):
         max_digits=5,
         decimal_places=2,
         default=0,
-        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        validators=[MinValueValidator(Decimal("0")), MaxValueValidator(Decimal("100"))],
     )
     value_amount = models.DecimalField(
         max_digits=14,
         decimal_places=2,
         default=0,
-        validators=[MinValueValidator(0)],
+        validators=[MinValueValidator(Decimal("0"))],
     )
 
     requires_payment_confirmation = models.BooleanField(default=True)
@@ -517,7 +519,7 @@ class SponsorAgreement(models.Model):
         max_digits=14,
         decimal_places=2,
         default=0,
-        validators=[MinValueValidator(0)],
+        validators=[MinValueValidator(Decimal("0"))],
     )
     currency = models.CharField(max_length=3, default="UGX")
 
@@ -535,7 +537,7 @@ class SponsorAgreement(models.Model):
         max_digits=14,
         decimal_places=2,
         default=0,
-        validators=[MinValueValidator(0)],
+        validators=[MinValueValidator(Decimal("0"))],
     )
     platform_fee_status = models.CharField(
         max_length=30,
@@ -643,7 +645,7 @@ class SponsorPaymentSchedule(models.Model):
     amount_due = models.DecimalField(
         max_digits=14,
         decimal_places=2,
-        validators=[MinValueValidator(0)],
+        validators=[MinValueValidator(Decimal("0"))],
     )
     currency = models.CharField(max_length=3, default="UGX")
 
@@ -724,7 +726,7 @@ class SponsorPayment(models.Model):
     amount_paid = models.DecimalField(
         max_digits=14,
         decimal_places=2,
-        validators=[MinValueValidator(0)],
+        validators=[MinValueValidator(Decimal("0"))],
     )
     currency = models.CharField(max_length=3, default="UGX")
 
@@ -837,13 +839,13 @@ class RevenueShareRule(models.Model):
         max_digits=5,
         decimal_places=2,
         default=0,
-        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        validators=[MinValueValidator(Decimal("0")), MaxValueValidator(Decimal("100"))],
     )
     fixed_amount = models.DecimalField(
         max_digits=14,
         decimal_places=2,
         default=0,
-        validators=[MinValueValidator(0)],
+        validators=[MinValueValidator(Decimal("0"))],
     )
 
     is_platform_share = models.BooleanField(default=False)
@@ -893,7 +895,7 @@ class RevenueDistribution(models.Model):
     amount = models.DecimalField(
         max_digits=14,
         decimal_places=2,
-        validators=[MinValueValidator(0)],
+        validators=[MinValueValidator(Decimal("0"))],
     )
     currency = models.CharField(max_length=3, default="UGX")
 
