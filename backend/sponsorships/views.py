@@ -14,14 +14,12 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from accounts.models import User
 from accounts.serializers import UserSerializer
 
 from .models import (
     RevenueDistribution,
     RevenueShareRule,
     SponsorAccount,
-    SponsorAccountMember,
     SponsorAgreement,
     SponsorBenefit,
     SponsorPackage,
@@ -48,6 +46,25 @@ from .services.workflow import (
     create_sponsor_workflow_event,
 )
 
+from .services.permissions import (
+    can_access_sponsor_agreement,
+    can_approve_sponsor_agreement,
+    can_manage_sponsor_account_finance,
+    can_manage_sponsor_agreement,
+    can_manage_sponsor_members,
+    can_manage_sponsor_package,
+    get_user_sponsor_membership,
+    is_sponsor_hub_admin,
+    package_allows_sponsor_account,
+)
+
+from .services.queries import (
+    get_pending_payment_schedule_for_agreement,
+    get_sponsor_agreement_for_request,
+    get_sponsor_package_for_request,
+    get_sponsor_payment_for_request,
+)
+
 from .serializers import (
     AddSponsorMemberSerializer,
     RevenueDistributionSerializer,
@@ -62,26 +79,6 @@ from .serializers import (
     SponsorPaymentSerializer,
     SponsorRegistrationSerializer,
 )
-
-
-def get_user_sponsor_membership(user, sponsor_account):
-    return SponsorAccountMember.objects.filter(
-        sponsor_account=sponsor_account,
-        user=user,
-        is_active=True,
-    ).first()
-
-
-def can_manage_sponsor_members(user, sponsor_account):
-    membership = get_user_sponsor_membership(user, sponsor_account)
-
-    if membership is None:
-        return False
-
-    return membership.member_role in [
-        SponsorAccountMember.MemberRole.OWNER,
-        SponsorAccountMember.MemberRole.ADMIN,
-    ]
 
 
 @api_view(["POST"])
@@ -252,60 +249,6 @@ def sponsor_account_members_view(request, account_id):
         )
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-def is_sponsor_hub_admin(user):
-    """
-    MVP permission helper for sponsor package management.
-
-    Club admins, league admins, union admins and super admins can create
-    packages. Superusers/staff are also allowed.
-    """
-
-    if user.is_staff or user.is_superuser:
-        return True
-
-    return (
-        user.has_role(User.Role.CLUB_ADMIN)
-        or user.has_role(User.Role.LEAGUE_ADMIN)
-        or user.has_role(User.Role.UNION_ADMIN)
-        or user.has_role(User.Role.SUPER_ADMIN)
-    )
-
-
-def can_manage_sponsor_package(user, sponsor_package):
-    """
-    MVP ownership permission for package management.
-
-    Later, this should check the exact club, league, union or platform owner
-    once those modules are fully linked by foreign keys.
-    """
-
-    if user.is_staff or user.is_superuser or user.has_role(User.Role.SUPER_ADMIN):
-        return True
-
-    if sponsor_package.owner_type == "CLUB":
-        return user.has_role(User.Role.CLUB_ADMIN)
-
-    if sponsor_package.owner_type == "LEAGUE":
-        return user.has_role(User.Role.LEAGUE_ADMIN)
-
-    if sponsor_package.owner_type in ["UNION", "SPORT"]:
-        return user.has_role(User.Role.UNION_ADMIN)
-
-    if sponsor_package.owner_type == "PLATFORM":
-        return user.has_role(User.Role.SUPER_ADMIN)
-
-    return False
-
-
-def get_sponsor_package_for_request(package_id):
-    return (
-        SponsorPackage.objects.select_related("created_by", "approved_by")
-        .prefetch_related("benefits", "revenue_share_rules")
-        .filter(id=package_id)
-        .first()
-    )
 
 
 @api_view(["GET", "POST"])
@@ -678,99 +621,6 @@ def sponsor_package_revenue_share_rules_view(request, package_id):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-def get_sponsor_agreement_for_request(agreement_id):
-    return (
-        SponsorAgreement.objects.select_related(
-            "sponsor_account",
-            "sponsor_package",
-            "created_by",
-            "approved_by",
-            "waived_by",
-        )
-        .prefetch_related(
-            "payment_schedules",
-            "payments__revenue_distributions",
-            "revenue_share_rules",
-            "revenue_distributions",
-            "workflow_events",
-        )
-        .filter(id=agreement_id)
-        .first()
-    )
-
-
-def get_sponsor_payment_for_request(payment_id):
-    return (
-        SponsorPayment.objects.select_related(
-            "agreement",
-            "agreement__sponsor_account",
-            "agreement__sponsor_package",
-            "payment_schedule",
-            "recorded_by",
-            "confirmed_by",
-        )
-        .prefetch_related("revenue_distributions")
-        .filter(id=payment_id)
-        .first()
-    )
-
-
-def has_sponsor_account_access(user, sponsor_account):
-    if user.is_staff or user.is_superuser or user.has_role(User.Role.SUPER_ADMIN):
-        return True
-
-    return get_user_sponsor_membership(user, sponsor_account) is not None
-
-
-def can_manage_sponsor_account_finance(user, sponsor_account):
-    if user.is_staff or user.is_superuser or user.has_role(User.Role.SUPER_ADMIN):
-        return True
-
-    membership = get_user_sponsor_membership(user, sponsor_account)
-
-    if membership is None:
-        return False
-
-    return membership.member_role in [
-        SponsorAccountMember.MemberRole.OWNER,
-        SponsorAccountMember.MemberRole.ADMIN,
-        SponsorAccountMember.MemberRole.FINANCE,
-    ]
-
-
-def can_access_sponsor_agreement(user, agreement):
-    return has_sponsor_account_access(
-        user,
-        agreement.sponsor_account,
-    ) or can_manage_sponsor_package(
-        user,
-        agreement.sponsor_package,
-    )
-
-
-def can_manage_sponsor_agreement(user, agreement):
-    return can_manage_sponsor_account_finance(
-        user,
-        agreement.sponsor_account,
-    ) or can_manage_sponsor_package(
-        user,
-        agreement.sponsor_package,
-    )
-
-
-def can_approve_sponsor_agreement(user, agreement):
-    return can_manage_sponsor_package(user, agreement.sponsor_package)
-
-
-def package_allows_sponsor_account(sponsor_package, sponsor_account):
-    allowed = sponsor_package.sponsor_type_allowed
-
-    return (
-        allowed == SponsorPackage.SponsorTypeAllowed.BOTH
-        or allowed == sponsor_account.sponsor_type
-    )
-
-
 def agreement_has_confirmed_payment(agreement):
     return agreement.payments.filter(status=SponsorPayment.Status.CONFIRMED).exists()
 
@@ -836,21 +686,6 @@ def make_sponsor_payment_reference(agreement):
     """
 
     return f"LOS-SPONSOR-{agreement.id}-{uuid4().hex[:16]}"
-
-
-def get_pending_payment_schedule_for_agreement(agreement, payment_schedule_id=None):
-    schedules = SponsorPaymentSchedule.objects.filter(
-        agreement=agreement,
-        status__in=[
-            SponsorPaymentSchedule.Status.PENDING,
-            SponsorPaymentSchedule.Status.PARTIALLY_PAID,
-        ],
-    ).order_by("sequence_number", "due_date")
-
-    if payment_schedule_id:
-        return schedules.filter(id=payment_schedule_id).first()
-
-    return schedules.first()
 
 
 def get_flutterwave_status(value):
