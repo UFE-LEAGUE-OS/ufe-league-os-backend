@@ -178,7 +178,7 @@ def competition_format_detail_view(request, pk):
     if request.method in ("PUT", "PATCH"):
         partial = request.method == "PATCH"
         serializer = CompetitionFormatSerializer(
-            fmt, data=request.data, partial=partial
+            fmt, data=request.data, partial=partial,
         )
         if serializer.is_valid():
             updated = serializer.save()
@@ -397,7 +397,7 @@ def league_standard_list_create_view(request):
         return Response(
             {
                 "detail": (
-                    f"The following rules must be published first before "
+                    "The following rules must be published first before "
                     f"assigning to leagues: {', '.join(unpublished)}"
                 ),
                 "unpublished_rules": list(unpublished),
