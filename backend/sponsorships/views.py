@@ -43,6 +43,11 @@ from .services.payments import (
     reject_sponsor_payment,
 )
 
+from .services.workflow import (
+    create_sponsor_package_workflow_event,
+    create_sponsor_workflow_event,
+)
+
 from .serializers import (
     AddSponsorMemberSerializer,
     RevenueDistributionSerializer,
@@ -292,25 +297,6 @@ def can_manage_sponsor_package(user, sponsor_package):
         return user.has_role(User.Role.SUPER_ADMIN)
 
     return False
-
-
-def create_sponsor_package_workflow_event(
-    *,
-    sponsor_package,
-    actor,
-    event_type,
-    from_status="",
-    to_status="",
-    note="",
-):
-    return SponsorWorkflowEvent.objects.create(
-        sponsor_package=sponsor_package,
-        actor=actor,
-        event_type=event_type,
-        from_status=from_status,
-        to_status=to_status,
-        note=note,
-    )
 
 
 def get_sponsor_package_for_request(package_id):
@@ -692,29 +678,6 @@ def sponsor_package_revenue_share_rules_view(request, package_id):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-def create_sponsor_workflow_event(
-    *,
-    actor,
-    event_type,
-    sponsor_package=None,
-    agreement=None,
-    payment=None,
-    from_status="",
-    to_status="",
-    note="",
-):
-    return SponsorWorkflowEvent.objects.create(
-        sponsor_package=sponsor_package,
-        agreement=agreement,
-        payment=payment,
-        actor=actor,
-        event_type=event_type,
-        from_status=from_status,
-        to_status=to_status,
-        note=note,
-    )
-
-
 def get_sponsor_agreement_for_request(agreement_id):
     return (
         SponsorAgreement.objects.select_related(
@@ -859,65 +822,6 @@ def get_activation_blocking_reason(agreement):
         return "The platform fee must be paid or waived before activation."
 
     return ""
-
-
-def update_payment_schedule_after_confirmation(payment_schedule):
-    if payment_schedule is None:
-        return
-
-    confirmed_total = sum(
-        payment.amount_paid
-        for payment in payment_schedule.payments.filter(
-            status=SponsorPayment.Status.CONFIRMED,
-        )
-    )
-
-    if confirmed_total >= payment_schedule.amount_due:
-        payment_schedule.status = SponsorPaymentSchedule.Status.PAID
-    elif confirmed_total > 0:
-        payment_schedule.status = SponsorPaymentSchedule.Status.PARTIALLY_PAID
-    else:
-        payment_schedule.status = SponsorPaymentSchedule.Status.PENDING
-
-    payment_schedule.save(update_fields=["status", "updated_at"])
-
-
-def get_revenue_share_rules_for_agreement(agreement):
-    agreement_rules = RevenueShareRule.objects.filter(agreement=agreement)
-
-    if agreement_rules.exists():
-        return agreement_rules
-
-    return RevenueShareRule.objects.filter(sponsor_package=agreement.sponsor_package)
-
-
-def generate_revenue_distributions_for_payment(payment):
-    rules = get_revenue_share_rules_for_agreement(payment.agreement)
-    distributions = []
-
-    for rule in rules:
-        amount = rule.fixed_amount
-
-        if amount == 0 and rule.percentage > 0:
-            amount = (payment.amount_paid * rule.percentage) / Decimal("100")
-
-        if amount <= 0:
-            continue
-
-        distributions.append(
-            RevenueDistribution.objects.create(
-                payment=payment,
-                agreement=payment.agreement,
-                recipient_type=rule.recipient_type,
-                recipient_identifier=rule.recipient_identifier,
-                recipient_name=rule.recipient_name,
-                amount=amount,
-                currency=payment.currency,
-                status=RevenueDistribution.Status.ALLOCATED,
-            )
-        )
-
-    return distributions
 
 
 SUCCESSFUL_FLUTTERWAVE_STATUSES = {"successful", "succeeded"}

@@ -1,39 +1,14 @@
-from decimal import Decimal
-
 from django.db import transaction
 from django.utils import timezone
 
 from ..models import (
-    RevenueDistribution,
-    RevenueShareRule,
     SponsorAgreement,
     SponsorPayment,
     SponsorPaymentSchedule,
     SponsorWorkflowEvent,
 )
-
-
-def create_sponsor_workflow_event(
-    *,
-    actor,
-    event_type,
-    sponsor_package=None,
-    agreement=None,
-    payment=None,
-    from_status="",
-    to_status="",
-    note="",
-):
-    return SponsorWorkflowEvent.objects.create(
-        sponsor_package=sponsor_package,
-        agreement=agreement,
-        payment=payment,
-        actor=actor,
-        event_type=event_type,
-        from_status=from_status,
-        to_status=to_status,
-        note=note,
-    )
+from .revenue import generate_revenue_distributions_for_payment
+from .workflow import create_sponsor_workflow_event
 
 
 def agreement_has_confirmed_payment(agreement):
@@ -69,44 +44,6 @@ def update_payment_schedule_after_confirmation(payment_schedule):
         payment_schedule.status = SponsorPaymentSchedule.Status.PENDING
 
     payment_schedule.save(update_fields=["status", "updated_at"])
-
-
-def get_revenue_share_rules_for_agreement(agreement):
-    agreement_rules = RevenueShareRule.objects.filter(agreement=agreement)
-
-    if agreement_rules.exists():
-        return agreement_rules
-
-    return RevenueShareRule.objects.filter(sponsor_package=agreement.sponsor_package)
-
-
-def generate_revenue_distributions_for_payment(payment):
-    rules = get_revenue_share_rules_for_agreement(payment.agreement)
-    distributions = []
-
-    for rule in rules:
-        amount = rule.fixed_amount
-
-        if amount == 0 and rule.percentage > 0:
-            amount = (payment.amount_paid * rule.percentage) / Decimal("100")
-
-        if amount <= 0:
-            continue
-
-        distributions.append(
-            RevenueDistribution.objects.create(
-                payment=payment,
-                agreement=payment.agreement,
-                recipient_type=rule.recipient_type,
-                recipient_identifier=rule.recipient_identifier,
-                recipient_name=rule.recipient_name,
-                amount=amount,
-                currency=payment.currency,
-                status=RevenueDistribution.Status.ALLOCATED,
-            )
-        )
-
-    return distributions
 
 
 def confirm_sponsor_payment(
