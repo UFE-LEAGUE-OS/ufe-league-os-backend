@@ -118,10 +118,8 @@ def seeded_rule(db, super_admin_user):
         rule_number="COMP-001",
         category=Rule.Category.COMPETITION,
         priority=Rule.Priority.MANDATORY,
-        description=(
-            "All clubs must have a stadium with minimum capacity of 5,000 seated "
-            "spectators."
-        ),
+        description="All clubs must have a stadium with minimum capacity of 5,000 "
+        "seated spectators.",
         summary="Stadium capacity minimum 5,000.",
         version="1.0",
         effective_date="2025-01-01",
@@ -152,9 +150,8 @@ def seeded_published_rule(db, super_admin_user):
         rule_number="REG-001",
         category=Rule.Category.REGISTRATION,
         priority=Rule.Priority.MANDATORY,
-        description=(
-            "All players must be registered at least 48 hours before match " "kickoff."
-        ),
+        description="All players must be registered at least 48 hours before match "
+        "kickoff.",
         summary="Register players 48h before match.",
         version="1.0",
         is_published=True,
