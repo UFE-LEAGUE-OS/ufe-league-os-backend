@@ -29,7 +29,7 @@ def recalculate_standings(competition_id):
         home_score__isnull=False,
         away_score__isnull=False,
     )
-    
+
     # Optimization: If the Competition model had a M2M to Club, we would use that.
     # For now, we fetch all unique club IDs that appear in any match (not just completed)
     # to ensure teams with 0 games played are eventually supported.
@@ -51,15 +51,21 @@ def recalculate_standings(competition_id):
         played_away = len(c_away)
         played = played_home + played_away
 
-        won = sum(1 for m in c_home if m.home_score > m.away_score) + \
-              sum(1 for m in c_away if m.away_score > m.home_score)
-        
-        drawn = sum(1 for m in c_home if m.home_score == m.away_score) + \
-                sum(1 for m in c_away if m.away_score == m.home_score)
-        
+        won = sum(1 for m in c_home if m.home_score > m.away_score) + sum(
+            1 for m in c_away if m.away_score > m.home_score
+        )
+
+        drawn = sum(1 for m in c_home if m.home_score == m.away_score) + sum(
+            1 for m in c_away if m.away_score == m.home_score
+        )
+
         lost = played - won - drawn
-        goals_for = sum(m.home_score for m in c_home) + sum(m.away_score for m in c_away)
-        goals_against = sum(m.away_score for m in c_home) + sum(m.home_score for m in c_away)
+        goals_for = sum(m.home_score for m in c_home) + sum(
+            m.away_score for m in c_away
+        )
+        goals_against = sum(m.away_score for m in c_home) + sum(
+            m.home_score for m in c_away
+        )
 
         goal_difference = goals_for - goals_against
         points = (won * 3) + drawn

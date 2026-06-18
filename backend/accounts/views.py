@@ -164,7 +164,6 @@ def verify_otp_view(request):
         except (ValueError, User.DoesNotExist) as e:
             return Response({"code": [str(e)]}, status=status.HTTP_400_BAD_REQUEST)
 
-
         return Response(
             {
                 "message": "OTP verified successfully.",
@@ -227,7 +226,6 @@ def password_reset_request_view(request):
 @api_view(["POST"])
 def password_reset_confirm_view(request):
     """Reset password using a valid password reset OTP."""
-
 
     serializer = PasswordResetConfirmSerializer(data=request.data)
 
