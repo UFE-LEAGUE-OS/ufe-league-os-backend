@@ -4,7 +4,7 @@ Services for the dashboards app.
 Provides standings calculation logic and live match update broadcasting.
 """
 
-from django.db.models import F, Q, Sum
+from django.db.models import Q
 
 from .models import Competition, Match, Standing
 
