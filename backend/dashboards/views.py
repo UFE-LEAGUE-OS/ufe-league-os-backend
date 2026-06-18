@@ -395,7 +395,11 @@ def public_results_view(request):
     """
     competition_id = request.query_params.get("competition")
     club_id = request.query_params.get("club")
-    limit = request.query_params.get("limit", 50)
+    limit_param = request.query_params.get("limit", 50)
+    try:
+        limit = int(limit_param)
+    except (ValueError, TypeError):
+        limit = 50
 
     queryset = Match.objects.filter(status=Match.Status.COMPLETED).select_related(
         "competition", "home_club", "away_club"
@@ -408,7 +412,7 @@ def public_results_view(request):
             away_club_id=club_id
         )
 
-    queryset = queryset.order_by("-match_date")[: int(limit)]
+    queryset = queryset.order_by("-match_date")[:limit]
     serializer = MatchListSerializer(queryset, many=True)
     return Response(serializer.data)
 

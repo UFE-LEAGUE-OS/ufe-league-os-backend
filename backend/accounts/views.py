@@ -156,10 +156,14 @@ def verify_otp_view(request):
     serializer = VerifyOTPSerializer(data=request.data)
 
     if serializer.is_valid():
-        user = verify_email_otp(
-            email=serializer.validated_data["email"],
-            code=serializer.validated_data["code"],
-        )
+        try:
+            user = verify_email_otp(
+                email=serializer.validated_data["email"],
+                code=serializer.validated_data["code"],
+            )
+        except (ValueError, User.DoesNotExist) as e:
+            return Response({"code": [str(e)]}, status=status.HTTP_400_BAD_REQUEST)
+
 
         return Response(
             {
@@ -181,7 +185,10 @@ def resend_otp_view(request):
     serializer = ResendOTPSerializer(data=request.data)
 
     if serializer.is_valid():
-        resend_email_verification_otp(email=serializer.validated_data["email"])
+        try:
+            resend_email_verification_otp(email=serializer.validated_data["email"])
+        except (ValueError, User.DoesNotExist) as e:
+            return Response({"email": [str(e)]}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(
             {
@@ -201,7 +208,10 @@ def password_reset_request_view(request):
     serializer = PasswordResetRequestSerializer(data=request.data)
 
     if serializer.is_valid():
-        request_password_reset_otp(email=serializer.validated_data["email"])
+        try:
+            request_password_reset_otp(email=serializer.validated_data["email"])
+        except (ValueError, User.DoesNotExist) as e:
+            return Response({"email": [str(e)]}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(
             {
@@ -218,14 +228,18 @@ def password_reset_request_view(request):
 def password_reset_confirm_view(request):
     """Reset password using a valid password reset OTP."""
 
+
     serializer = PasswordResetConfirmSerializer(data=request.data)
 
     if serializer.is_valid():
-        reset_password_with_otp(
-            email=serializer.validated_data["email"],
-            code=serializer.validated_data["code"],
-            new_password=serializer.validated_data["password"],
-        )
+        try:
+            reset_password_with_otp(
+                email=serializer.validated_data["email"],
+                code=serializer.validated_data["code"],
+                new_password=serializer.validated_data["password"],
+            )
+        except (ValueError, User.DoesNotExist) as e:
+            return Response({"email": [str(e)]}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(
             {

@@ -29,43 +29,37 @@ def recalculate_standings(competition_id):
         home_score__isnull=False,
         away_score__isnull=False,
     )
-
-    # Collect all clubs that have played in this competition
-    club_ids = set(matches.values_list("home_club_id", flat=True)) | set(
-        matches.values_list("away_club_id", flat=True)
+    
+    # Optimization: If the Competition model had a M2M to Club, we would use that.
+    # For now, we fetch all unique club IDs that appear in any match (not just completed)
+    # to ensure teams with 0 games played are eventually supported.
+    all_match_clubs = Match.objects.filter(competition=competition).values_list(
+        "home_club_id", "away_club_id"
     )
+    club_ids = set()
+    for h_id, a_id in all_match_clubs:
+        club_ids.add(h_id)
+        club_ids.add(a_id)
 
     standings_data = []
     for club_id in club_ids:
-        # Matches where this club is home
-        home_matches = matches.filter(home_club_id=club_id)
-        # Matches where this club is away
-        away_matches = matches.filter(away_club_id=club_id)
+        # Calculate stats from pre-fetched matches to avoid N+1 query patterns
+        c_home = [m for m in matches if m.home_club_id == club_id]
+        c_away = [m for m in matches if m.away_club_id == club_id]
 
-        played_home = home_matches.count()
-        played_away = away_matches.count()
+        played_home = len(c_home)
+        played_away = len(c_away)
         played = played_home + played_away
 
-        # Wins: home goals > away goals when club is home, and vice versa when away
-        home_wins = home_matches.filter(home_score__gt=F("away_score")).count()
-        away_wins = away_matches.filter(away_score__gt=F("home_score")).count()
-        won = home_wins + away_wins
-
-        # Draws: scores equal in any match
-        home_draws = home_matches.filter(home_score=F("away_score")).count()
-        away_draws = away_matches.filter(away_score=F("home_score")).count()
-        drawn = home_draws + away_draws
-
+        won = sum(1 for m in c_home if m.home_score > m.away_score) + \
+              sum(1 for m in c_away if m.away_score > m.home_score)
+        
+        drawn = sum(1 for m in c_home if m.home_score == m.away_score) + \
+                sum(1 for m in c_away if m.away_score == m.home_score)
+        
         lost = played - won - drawn
-
-        # Goals
-        home_gf = home_matches.aggregate(total=Sum("home_score"))["total"] or 0
-        away_gf = away_matches.aggregate(total=Sum("away_score"))["total"] or 0
-        goals_for = home_gf + away_gf
-
-        home_ga = home_matches.aggregate(total=Sum("away_score"))["total"] or 0
-        away_ga = away_matches.aggregate(total=Sum("home_score"))["total"] or 0
-        goals_against = home_ga + away_ga
+        goals_for = sum(m.home_score for m in c_home) + sum(m.away_score for m in c_away)
+        goals_against = sum(m.away_score for m in c_home) + sum(m.home_score for m in c_away)
 
         goal_difference = goals_for - goals_against
         points = (won * 3) + drawn
