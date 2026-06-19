@@ -1,3 +1,8 @@
+import logging
+from smtplib import SMTPException
+
+from django.core.mail import BadHeaderError
+from django.db import transaction
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -42,6 +47,8 @@ from sponsorships.serializers import (
     SponsorAccountSerializer,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class AuthNextStep:
     """Frontend nvaigation hints for authentication responses."""
@@ -73,13 +80,28 @@ def build_token_response(user):
 
 @api_view(["POST"])
 def register_view(request):
-    """Register a new user and send an email verification OTP"""
+    """Register a new user and send an email verification OTP."""
 
     serializer = RegisterSerializer(data=request.data)
 
     if serializer.is_valid():
-        user = serializer.save()
-        create_email_verification_otp(user)
+        try:
+            with transaction.atomic():
+                user = serializer.save()
+                create_email_verification_otp(user)
+        except (SMTPException, OSError, BadHeaderError) as exc:
+            logger.exception("Registration OTP email delivery failed: %s", exc)
+            return Response(
+                {
+                    "detail": (
+                        "Registration could not be completed because the "
+                        "verification email could not be sent. Please try again."
+                    ),
+                    "code": "verification_email_failed",
+                    "next_step": AuthNextStep.REQUEST_NEW_OTP,
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         return Response(
             {
