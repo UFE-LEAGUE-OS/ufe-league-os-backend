@@ -237,7 +237,7 @@ def password_reset_confirm_view(request):
                 new_password=serializer.validated_data["password"],
             )
         except (ValueError, User.DoesNotExist) as e:
-            return Response({"email": [str(e)]}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"code": [str(e)]}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(
             {
