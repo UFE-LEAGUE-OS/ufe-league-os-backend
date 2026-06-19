@@ -2,7 +2,15 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import Club
+from .models import (
+    Club,
+    Follow,
+    NotificationPreference,
+    InterestPreference,
+    Wallet,
+    PaymentHistory,
+    FeedItem,
+)
 
 User = get_user_model()
 
@@ -537,3 +545,173 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
         instance.save()
 
         return instance
+
+
+# ---------------------------------------------------------------------------
+# Follow / Unfollow Serializers
+# ---------------------------------------------------------------------------
+
+
+class FollowActionSerializer(serializers.Serializer):
+    """Serializer for creating or deleting a follow relationship."""
+
+    content_type = serializers.ChoiceField(
+        choices=["CLUB", "LEAGUE", "UNION", "COMPETITION"]
+    )
+    object_id = serializers.IntegerField()
+
+
+class FollowResponseSerializer(serializers.ModelSerializer):
+    """Serializer for follow response data."""
+
+    object_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Follow
+        fields = ["id", "content_type", "object_id", "object_name", "created_at"]
+
+    def get_object_name(self, obj):
+        followed = obj.followed_object
+        if followed:
+            return str(followed)
+        return f"{obj.content_type}#{obj.object_id}"
+
+
+class FollowListSerializer(serializers.Serializer):
+    """Serializer for listing a user's follows grouped by content type."""
+
+    club_count = serializers.IntegerField(read_only=True)
+    league_count = serializers.IntegerField(read_only=True)
+    union_count = serializers.IntegerField(read_only=True)
+    competition_count = serializers.IntegerField(read_only=True)
+    clubs = FollowResponseSerializer(many=True, read_only=True)
+    leagues = FollowResponseSerializer(many=True, read_only=True)
+    unions = FollowResponseSerializer(many=True, read_only=True)
+    competitions = FollowResponseSerializer(many=True, read_only=True)
+
+
+# ---------------------------------------------------------------------------
+# Notification Preference Serializers
+# ---------------------------------------------------------------------------
+
+
+class NotificationPreferenceSerializer(serializers.ModelSerializer):
+    """Serializer for notification preferences."""
+
+    class Meta:
+        model = NotificationPreference
+        fields = [
+            "id",
+            "user",
+            "event_type",
+            "email_enabled",
+            "push_enabled",
+            "sms_enabled",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "user", "created_at", "updated_at"]
+
+
+class BulkNotificationPreferenceSerializer(serializers.Serializer):
+    """Serializer for updating multiple notification preferences at once."""
+
+    preferences = NotificationPreferenceSerializer(many=True)
+
+
+# ---------------------------------------------------------------------------
+# Interest & Privacy Preference Serializers
+# ---------------------------------------------------------------------------
+
+
+class InterestPreferenceSerializer(serializers.ModelSerializer):
+    """Serializer for interest and privacy preferences."""
+
+    class Meta:
+        model = InterestPreference
+        exclude = []
+        read_only_fields = ["id", "user", "created_at", "updated_at"]
+
+
+# ---------------------------------------------------------------------------
+# Wallet & Payment History Serializers
+# ---------------------------------------------------------------------------
+
+
+class WalletSerializer(serializers.ModelSerializer):
+    """Serializer for user's wallet."""
+
+    class Meta:
+        model = Wallet
+        fields = [
+            "id",
+            "user",
+            "balance",
+            "currency",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "user", "balance", "created_at", "updated_at"]
+
+
+class PaymentHistorySerializer(serializers.ModelSerializer):
+    """Serializer for payment history records."""
+
+    class Meta:
+        model = PaymentHistory
+        fields = [
+            "id",
+            "user",
+            "payment_type",
+            "amount",
+            "currency",
+            "status",
+            "reference",
+            "description",
+            "metadata",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "user", "created_at", "updated_at"]
+
+
+# ---------------------------------------------------------------------------
+# Feed Item Serializers
+# ---------------------------------------------------------------------------
+
+
+class FeedItemSerializer(serializers.ModelSerializer):
+    """Serializer for personalized feed items."""
+
+    class Meta:
+        model = FeedItem
+        fields = [
+            "id",
+            "user",
+            "item_type",
+            "title",
+            "description",
+            "source_content_type",
+            "source_object_id",
+            "source_name",
+            "relevance_score",
+            "is_read",
+            "link",
+            "metadata",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "user",
+            "item_type",
+            "title",
+            "description",
+            "source_content_type",
+            "source_object_id",
+            "source_name",
+            "relevance_score",
+            "link",
+            "metadata",
+            "created_at",
+        ]

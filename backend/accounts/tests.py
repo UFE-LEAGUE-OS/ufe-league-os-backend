@@ -816,7 +816,7 @@ class AuthAPITests(TestCase):
         self.assertTrue(user.is_email_verified)
         self.assertTrue(otp.is_used)
         self.assertEqual(second_response.status_code, 400)
-        self.assertIn("email", second_response.data)
+        self.assertIn("code", second_response.data)
 
     @override_settings(OTP_MAX_ATTEMPTS=2)
     def test_email_verification_otp_locks_after_max_attempts(self):

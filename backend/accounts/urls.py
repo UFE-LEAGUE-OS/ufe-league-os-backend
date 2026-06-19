@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import views
+from . import views_extra
 
 urlpatterns = [
     path("roles/", views.roles_view, name="roles"),
@@ -42,5 +43,45 @@ urlpatterns = [
         "club-admin/create-user/",
         views.club_admin_create_user_view,
         name="club-admin-create-user",
+    ),
+    # Follow / Unfollow
+    path("follow/", views_extra.follow_view, name="follow"),
+    path(
+        "follow/check/<str:content_type>/<int:object_id>/",
+        views_extra.check_follow_view,
+        name="follow-check",
+    ),
+    # Notification preferences
+    path(
+        "notifications/",
+        views_extra.notification_preferences_view,
+        name="notification-preferences",
+    ),
+    # Interest & privacy preferences
+    path(
+        "interests/",
+        views_extra.interest_preferences_view,
+        name="interest-preferences",
+    ),
+    # Wallet
+    path("wallet/", views_extra.wallet_view, name="wallet"),
+    # Payment history
+    path("payments/", views_extra.payment_history_view, name="payment-history"),
+    # Personalized feed
+    path("feed/", views_extra.feed_view, name="feed"),
+    path(
+        "feed/mark-read/<int:feed_item_id>/",
+        views_extra.feed_mark_read_view,
+        name="feed-mark-read",
+    ),
+    path(
+        "feed/mark-all-read/",
+        views_extra.feed_mark_all_read_view,
+        name="feed-mark-all-read",
+    ),
+    path(
+        "feed/unread-count/",
+        views_extra.feed_unread_count_view,
+        name="feed-unread-count",
     ),
 ]
