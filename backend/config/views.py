@@ -1,5 +1,7 @@
+from smtplib import SMTPException
+
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import send_mail, BadHeaderError
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.decorators import api_view
@@ -98,16 +100,28 @@ def email_debug_send_view(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    result = send_mail(
-        subject="League OS Render Brevo SMTP Probe",
-        message=(
-            "This is a live Render SMTP delivery test from League OS.\n\n"
-            "If you received this email, Brevo SMTP is working from Render."
-        ),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[recipient],
-        fail_silently=False,
-    )
+    try:
+        result = send_mail(
+            subject="League OS Render Brevo SMTP Probe",
+            message=(
+                "This is a live Render SMTP delivery test from League OS.\n\n"
+                "If you received this email, Brevo SMTP is working from Render."
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[recipient],
+            fail_silently=False,
+        )
+    except (SMTPException, OSError, BadHeaderError) as exc:
+        return Response(
+            {
+                "sent": 0,
+                "error_type": exc.__class__.__name__,
+                "error": str(exc),
+                "from_email": settings.DEFAULT_FROM_EMAIL,
+                "recipient": recipient,
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
     return Response(
         {
