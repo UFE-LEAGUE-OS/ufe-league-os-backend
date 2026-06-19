@@ -252,6 +252,8 @@ DEFAULT_FROM_EMAIL = config(
 )
 SERVER_EMAIL = config("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
 
+EMAIL_DEBUG_TOKEN = config("EMAIL_DEBUG_TOKEN", default="")
+
 OTP_EXPIRY_MINUTES = config("OTP_EXPIRY_MINUTES", default=10, cast=int)
 
 OTP_MAX_ATTEMPTS = config("OTP_MAX_ATTEMPTS", default=5, cast=int)
