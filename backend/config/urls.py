@@ -9,11 +9,7 @@ from django.http import JsonResponse
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
-from config.views import (
-    api_landing_view,
-    email_debug_send_view,
-    email_debug_status_view,
-)
+from config.views import api_landing_view
 
 
 def health_check_view(request):
@@ -36,8 +32,6 @@ urlpatterns = [
         SpectacularSwaggerView.as_view(url_name="schema"),
         name="swagger-ui",
     ),
-    path("api/email-debug/status/", email_debug_status_view, name="email-debug-status"),
-    path("api/email-debug/send/", email_debug_send_view, name="email-debug-send"),
     path("api/accounts/", include("accounts.urls")),
     path("api/dashboards/", include("dashboards.urls")),
     path("api/governance/", include("governance.urls")),

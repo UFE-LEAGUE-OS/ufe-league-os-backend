@@ -172,7 +172,11 @@ def reset_password_with_otp(email, code, new_password):
 
 
 def _print_otp_to_console(user, code, purpose):
-    """Print OTP to console for development/testing."""
+    """Optionally print OTPs for local development only."""
+
+    if not getattr(settings, "PRINT_DEV_OTPS", False):
+        return
+
     print("=" * 60)
     print(f"DEV OTP for {user.email}: {code} ({purpose})")
     print("=" * 60)
