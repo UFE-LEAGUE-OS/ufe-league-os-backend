@@ -3,6 +3,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
+from .google_auth import verify_google_id_token, InvalidGoogleTokenError
 from .models import (
     Club,
     Follow,
@@ -729,3 +730,41 @@ class FeedItemSerializer(serializers.ModelSerializer):
             "metadata",
             "created_at",
         ]
+
+
+class GoogleAuthSerializer(serializers.Serializer):
+    """Serializer for Google OAuth login/signup using an ID token."""
+
+    id_token = serializers.CharField(write_only=True)
+
+    def validate_id_token(self, value):
+        """Verify the Google ID token and return the verified payload."""
+        try:
+            payload = verify_google_id_token(value)
+        except InvalidGoogleTokenError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+        return payload
+
+    def validate(self, attrs):
+        payload = attrs["id_token"]
+
+        email = payload.get("email", "").strip().lower()
+        if not email:
+            raise serializers.ValidationError(
+                "Google account does not have an email address."
+            )
+
+        attrs["email"] = email
+        attrs["first_name"] = payload.get("given_name", "").strip()
+        attrs["last_name"] = payload.get("family_name", "").strip()
+        attrs["avatar_url"] = payload.get("picture", "")
+
+        # If given_name/family_name missing, use the full name
+        if not attrs["first_name"] and not attrs["last_name"]:
+            full_name = payload.get("name", "").strip()
+            parts = full_name.split(" ", 1)
+            attrs["first_name"] = parts[0]
+            if len(parts) > 1:
+                attrs["last_name"] = parts[1]
+
+        return attrs
