@@ -271,6 +271,12 @@ PRINT_DEV_OTPS = config("PRINT_DEV_OTPS", default=False, cast=bool)
 # Custom User Model
 AUTH_USER_MODEL = "accounts.User"
 
+# Google OAuth2 Settings
+# ---------------------------------------------------------------------------
+
+GOOGLE_OAUTH2_CLIENT_ID = config("GOOGLE_OAUTH2_CLIENT_ID", default="")
+GOOGLE_OAUTH2_CLIENT_SECRET = config("GOOGLE_OAUTH2_CLIENT_SECRET", default="")
+
 # Flutterwave Payment Settings
 # In development, use Flutterwave TEST keys.
 # In production, the client must provide LIVE keys from their own Flutterwave account.

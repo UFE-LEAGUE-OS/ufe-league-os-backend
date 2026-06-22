@@ -1,6 +1,8 @@
 import shutil
 import tempfile
 
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -8,11 +10,32 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from .google_auth import InvalidGoogleTokenError
 from .models import EmailOTP
 
 User = get_user_model()
 
 TEST_MEDIA_ROOT = tempfile.mkdtemp()
+
+MOCK_GOOGLE_PAYLOAD = {
+    "sub": "1234567890",
+    "email": "googleuser@gmail.com",
+    "email_verified": True,
+    "given_name": "Google",
+    "family_name": "User",
+    "name": "Google User",
+    "picture": "https://lh3.googleusercontent.com/photo.jpg",
+    "aud": "test-client-id.apps.googleusercontent.com",
+    "iss": "accounts.google.com",
+}
+
+MOCK_GOOGLE_PAYLOAD_NO_NAME = {
+    "sub": "1234567891",
+    "email": "noname@gmail.com",
+    "email_verified": True,
+    "aud": "test-client-id.apps.googleusercontent.com",
+    "iss": "accounts.google.com",
+}
 
 SMALL_GIF_IMAGE = (
     b"GIF87a\x01\x00\x01\x00\x80\x01\x00\x00\x00\x00\xff\xff\xff,"
@@ -1086,3 +1109,156 @@ class ProfileAPITests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(bool(self.user.avatar))
         self.assertIsNone(response.data["user"]["avatar_url"])
+
+
+class GoogleAuthAPITests(TestCase):
+    """Tests for Google OAuth authentication."""
+
+    def setUp(self):
+        self.client = APIClient()
+
+    @patch("accounts.serializers.verify_google_id_token")
+    def test_google_auth_new_user(self, mock_verify):
+        """Test that a new user is registered via Google OAuth."""
+        mock_verify.return_value = MOCK_GOOGLE_PAYLOAD
+
+        response = self.client.post(
+            "/api/accounts/google/",
+            {"id_token": "valid-google-id-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.data["is_new_user"])
+        self.assertIn("access", response.data)
+        self.assertIn("refresh", response.data)
+        self.assertEqual(response.data["user"]["email"], "googleuser@gmail.com")
+        self.assertEqual(response.data["user"]["first_name"], "Google")
+        self.assertEqual(response.data["user"]["last_name"], "User")
+        self.assertTrue(response.data["user"]["is_email_verified"])
+        self.assertEqual(response.data["next_step"], "DASHBOARD")
+
+        # Verify the user was created in the database
+        user = User.objects.get(email="googleuser@gmail.com")
+        self.assertTrue(user.is_email_verified)
+        self.assertEqual(user.role, User.Role.FAN)
+        self.assertIsNone(user.phone_number)
+
+    @patch("accounts.serializers.verify_google_id_token")
+    def test_google_auth_existing_user(self, mock_verify):
+        """Test that an existing user can log in via Google OAuth."""
+        # Create an existing user with the same email
+        User.objects.create_user(
+            email="googleuser@gmail.com",
+            password="SomePassword123",
+            first_name="Old",
+            last_name="Name",
+            is_email_verified=False,
+        )
+
+        mock_verify.return_value = MOCK_GOOGLE_PAYLOAD
+
+        response = self.client.post(
+            "/api/accounts/google/",
+            {"id_token": "valid-google-id-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["is_new_user"])
+        self.assertIn("access", response.data)
+        self.assertIn("refresh", response.data)
+        self.assertEqual(response.data["user"]["email"], "googleuser@gmail.com")
+        self.assertEqual(response.data["next_step"], "DASHBOARD")
+
+        # Verify the existing user keeps their name (since it was set)
+        user = User.objects.get(email="googleuser@gmail.com")
+        self.assertEqual(user.first_name, "Old")
+        self.assertEqual(user.last_name, "Name")
+        # Email should be verified now
+        self.assertTrue(user.is_email_verified)
+
+    @patch("accounts.serializers.verify_google_id_token")
+    def test_google_auth_existing_user_empty_name_filled_from_google(self, mock_verify):
+        """Test that an existing user with empty name gets it filled from Google."""
+        User.objects.create_user(
+            email="googleuser@gmail.com",
+            password="SomePassword123",
+            first_name="",
+            last_name="",
+        )
+
+        mock_verify.return_value = MOCK_GOOGLE_PAYLOAD
+
+        response = self.client.post(
+            "/api/accounts/google/",
+            {"id_token": "valid-google-id-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        user = User.objects.get(email="googleuser@gmail.com")
+        self.assertEqual(user.first_name, "Google")
+        self.assertEqual(user.last_name, "User")
+
+    @patch("accounts.serializers.verify_google_id_token")
+    def test_google_auth_existing_user_email_verified(self, mock_verify):
+        """Test that existing user's email becomes verified via Google."""
+        User.objects.create_user(
+            email="googleuser@gmail.com",
+            password="SomePassword123",
+            first_name="Old",
+            last_name="Name",
+        )
+
+        mock_verify.return_value = MOCK_GOOGLE_PAYLOAD
+
+        self.client.post(
+            "/api/accounts/google/",
+            {"id_token": "valid-google-id-token"},
+            format="json",
+        )
+
+        user = User.objects.get(email="googleuser@gmail.com")
+        self.assertTrue(user.is_email_verified)
+
+    def test_google_auth_missing_token(self):
+        """Test that missing id_token returns 400."""
+        response = self.client.post(
+            "/api/accounts/google/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("id_token", response.data)
+
+    @patch("accounts.serializers.verify_google_id_token")
+    def test_google_auth_no_name_in_payload(self, mock_verify):
+        """Test registration when Google payload has no given_name/family_name."""
+        mock_verify.return_value = MOCK_GOOGLE_PAYLOAD_NO_NAME
+
+        response = self.client.post(
+            "/api/accounts/google/",
+            {"id_token": "valid-google-id-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["user"]["email"], "noname@gmail.com")
+        self.assertEqual(response.data["user"]["first_name"], "")
+        self.assertEqual(response.data["user"]["last_name"], "")
+
+    @patch("accounts.serializers.verify_google_id_token")
+    def test_google_auth_server_error(self, mock_verify):
+        """Test that invalid token raises appropriate error."""
+        mock_verify.side_effect = InvalidGoogleTokenError("Token has expired.")
+
+        response = self.client.post(
+            "/api/accounts/google/",
+            {"id_token": "expired-google-id-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("id_token", response.data)
