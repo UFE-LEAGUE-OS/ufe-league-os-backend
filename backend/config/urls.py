@@ -9,7 +9,7 @@ from django.http import JsonResponse
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
-from config.views import api_landing_view
+from config.views import api_landing_view, landing_page_view
 
 
 def health_check_view(request):
@@ -23,6 +23,7 @@ def health_check_view(request):
 
 
 urlpatterns = [
+    path("", landing_page_view, name="landing-page"),
     path("admin/", admin.site.urls),
     path("api/", api_landing_view, name="api-landing"),
     path("api/health/", health_check_view, name="health-check"),
