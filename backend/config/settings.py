@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import sys
 from pathlib import Path
 from datetime import timedelta
 
@@ -129,7 +130,7 @@ AUTH_PASSWORD_VALIDATORS = [
         "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
     },
     {
-        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "NAME": "accounts.validators.AdvancedStrengthValidator",
     },
     {
         "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
@@ -252,9 +253,20 @@ DEFAULT_FROM_EMAIL = config(
 )
 SERVER_EMAIL = config("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
 
+
 OTP_EXPIRY_MINUTES = config("OTP_EXPIRY_MINUTES", default=10, cast=int)
 
 OTP_MAX_ATTEMPTS = config("OTP_MAX_ATTEMPTS", default=5, cast=int)
+
+RUNNING_TESTS = "test" in sys.argv
+
+SEND_OTP_EMAILS = config(
+    "SEND_OTP_EMAILS",
+    default=(not DEBUG and not RUNNING_TESTS),
+    cast=bool,
+)
+
+PRINT_DEV_OTPS = config("PRINT_DEV_OTPS", default=False, cast=bool)
 
 # Custom User Model
 AUTH_USER_MODEL = "accounts.User"

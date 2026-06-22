@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from .models import (
@@ -142,7 +143,10 @@ class RegisterSerializer(serializers.Serializer):
                 {"confirm_password": "Passwords do not match."}
             )
 
-        validate_password(attrs["password"])
+        try:
+            validate_password(attrs["password"])
+        except DjangoValidationError as e:
+            raise serializers.ValidationError({"password": list(e.messages)}) from e
 
         return attrs
 
@@ -213,7 +217,10 @@ class AdminCreateUserSerializer(serializers.Serializer):
                 {"confirm_password": "Passwords do not match."}
             )
 
-        validate_password(attrs["password"])
+        try:
+            validate_password(attrs["password"])
+        except DjangoValidationError as e:
+            raise serializers.ValidationError({"password": list(e.messages)}) from e
 
         if attrs["role"] == User.Role.SPONSOR and not attrs.get("sponsor_type"):
             raise serializers.ValidationError(
@@ -277,7 +284,10 @@ class CreateClubOfficialSerializer(serializers.Serializer):
                 {"confirm_password": "Passwords do not match."}
             )
 
-        validate_password(attrs["password"])
+        try:
+            validate_password(attrs["password"])
+        except DjangoValidationError as e:
+            raise serializers.ValidationError({"password": list(e.messages)}) from e
 
         return attrs
 
@@ -345,9 +355,10 @@ class HierarchicalCreateUserSerializer(serializers.Serializer):
                 {"confirm_password": "Passwords do not match."}
             )
 
-        from django.contrib.auth.password_validation import validate_password
-
-        validate_password(attrs["password"])
+        try:
+            validate_password(attrs["password"])
+        except DjangoValidationError as e:
+            raise serializers.ValidationError({"password": list(e.messages)}) from e
 
         return attrs
 
@@ -470,7 +481,10 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
                 {"confirm_password": "Passwords do not match."}
             )
 
-        validate_password(attrs["password"])
+        try:
+            validate_password(attrs["password"])
+        except DjangoValidationError as e:
+            raise serializers.ValidationError({"password": list(e.messages)}) from e
 
         return attrs
 
