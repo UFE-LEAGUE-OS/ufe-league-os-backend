@@ -3,6 +3,7 @@
 from datetime import timedelta
 
 from django.conf import settings
+from django.core.mail import send_mail
 from django.utils import timezone
 
 from .models import (
@@ -36,6 +37,7 @@ def create_email_verification_otp(user, purpose=EmailOTP.Purpose.EMAIL_VERIFICAT
         expires_at=timezone.now() + timedelta(minutes=expiry_minutes),
     )
 
+    _send_otp_email(user, code, purpose)
     _print_otp_to_console(user, code, purpose.lower().replace("_", " "))
 
     return otp
@@ -171,8 +173,46 @@ def reset_password_with_otp(email, code, new_password):
     return user
 
 
+def _send_otp_email(user, code, purpose):
+    """Send an OTP email when email sending is enabled."""
+
+    if not getattr(settings, "SEND_OTP_EMAILS", False):
+        return 0
+
+    expiry_minutes = getattr(settings, "OTP_EXPIRY_MINUTES", 10)
+
+    if purpose == EmailOTP.Purpose.PASSWORD_RESET:
+        subject = "Reset your League OS password"
+        action_text = "password reset"
+    else:
+        subject = "Verify your League OS email address"
+        action_text = "email verification"
+
+    first_name = user.first_name or "there"
+
+    message = (
+        f"Hello {first_name},\n\n"
+        f"Your League OS {action_text} code is: {code}\n\n"
+        f"This code expires in {expiry_minutes} minutes.\n\n"
+        "If you did not request this code, please ignore this email.\n\n"
+        "League OS Team"
+    )
+
+    return send_mail(
+        subject=subject,
+        message=message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[user.email],
+        fail_silently=False,
+    )
+
+
 def _print_otp_to_console(user, code, purpose):
-    """Print OTP to console for development/testing."""
+    """Optionally print OTPs for local development only."""
+
+    if not getattr(settings, "PRINT_DEV_OTPS", False):
+        return
+
     print("=" * 60)
     print(f"DEV OTP for {user.email}: {code} ({purpose})")
     print("=" * 60)

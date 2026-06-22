@@ -4,6 +4,7 @@ import tempfile
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -104,6 +105,7 @@ class UserModelTests(TestCase):
         self.assertEqual(user.full_name, "Keith Seruyange")
 
 
+@override_settings(PRINT_DEV_OTPS=False)
 class AuthAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -360,6 +362,48 @@ class AuthAPITests(TestCase):
                 is_used=False,
             ).exists()
         )
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        SEND_OTP_EMAILS=True,
+        PRINT_DEV_OTPS=False,
+        DEFAULT_FROM_EMAIL="League OS <noreply@testserver.local>",
+    )
+    def test_register_sends_email_otp_when_enabled(self):
+        mail.outbox = []
+
+        payload = {
+            "email": "otp-email-send@example.com",
+            "phone_number": "+256710000001",
+            "first_name": "Otp",
+            "last_name": "Email",
+            "password": "StrongPass123",
+            "confirm_password": "StrongPass123",
+        }
+
+        response = self.client.post(
+            "/api/accounts/register/",
+            payload,
+            format="json",
+        )
+
+        user = User.objects.get(email=payload["email"])
+        otp = EmailOTP.objects.get(
+            user=user,
+            purpose=EmailOTP.Purpose.EMAIL_VERIFICATION,
+            is_used=False,
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(len(mail.outbox), 1)
+
+        email = mail.outbox[0]
+
+        self.assertEqual(email.subject, "Verify your League OS email address")
+        self.assertEqual(email.to, [payload["email"]])
+        self.assertIn("Hello Otp", email.body)
+        self.assertIn("email verification code", email.body)
+        self.assertIn(otp.code, email.body)
 
     def test_verify_email_otp_successful(self):
         user = User.objects.create_user(

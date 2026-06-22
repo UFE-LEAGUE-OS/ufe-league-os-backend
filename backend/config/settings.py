@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import sys
 from pathlib import Path
 from datetime import timedelta
 
@@ -54,12 +55,14 @@ INSTALLED_APPS = [
     # Third-party apps
     "corsheaders",
     "rest_framework",
+    "drf_spectacular",
     "channels",
     # Local apps
     "accounts",
     "dashboards",
     "governance",
     "sponsorships",
+    "ticketing",
 ]
 
 MIDDLEWARE = [
@@ -173,11 +176,26 @@ REST_FRAMEWORK = {
         "rest_framework.renderers.JSONRenderer",
         "rest_framework.renderers.BrowsableAPIRenderer",
     ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_PARSER_CLASSES": [
         "rest_framework.parsers.JSONParser",
         "rest_framework.parsers.FormParser",
         "rest_framework.parsers.MultiPartParser",
     ],
+}
+
+
+# OpenAPI / Swagger documentation
+SPECTACULAR_SETTINGS = {
+    "TITLE": "League OS Backend API",
+    "DESCRIPTION": (
+        "API documentation for League OS, a multi-role sports engagement "
+        "platform for fans, clubs, leagues, unions, sponsors, ticketing, "
+        "governance, dashboards, and membership workflows."
+    ),
+    "VERSION": "sprint-1-foundation",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
 }
 
 # JWT Authentication
@@ -221,14 +239,34 @@ EMAIL_BACKEND = config(
     default="django.core.mail.backends.console.EmailBackend",
 )
 
+EMAIL_HOST = config("EMAIL_HOST", default="")
+EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
+EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
+EMAIL_USE_SSL = config("EMAIL_USE_SSL", default=False, cast=bool)
+EMAIL_TIMEOUT = config("EMAIL_TIMEOUT", default=20, cast=int)
+
 DEFAULT_FROM_EMAIL = config(
     "DEFAULT_FROM_EMAIL",
-    default="noreply@leagueos.local",
+    default="League OS <noreply@leagueos.local>",
 )
+SERVER_EMAIL = config("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
+
 
 OTP_EXPIRY_MINUTES = config("OTP_EXPIRY_MINUTES", default=10, cast=int)
 
 OTP_MAX_ATTEMPTS = config("OTP_MAX_ATTEMPTS", default=5, cast=int)
+
+RUNNING_TESTS = "test" in sys.argv
+
+SEND_OTP_EMAILS = config(
+    "SEND_OTP_EMAILS",
+    default=(not DEBUG and not RUNNING_TESTS),
+    cast=bool,
+)
+
+PRINT_DEV_OTPS = config("PRINT_DEV_OTPS", default=False, cast=bool)
 
 # Custom User Model
 AUTH_USER_MODEL = "accounts.User"
