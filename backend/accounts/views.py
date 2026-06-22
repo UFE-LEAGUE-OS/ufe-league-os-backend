@@ -19,6 +19,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .models import Club, User
 from .serializers import (
     AdminCreateUserSerializer,
+    GoogleAuthSerializer,
     HierarchicalCreateUserSerializer,
     LoginSerializer,
     RegisterSerializer,
@@ -158,6 +159,100 @@ def login_view(request):
         )
 
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+def google_auth_view(request):
+    """
+    Authenticate or register a user using a Google ID token.
+
+    Flow:
+    1. Frontend sends Google ID token obtained via Google Sign-In.
+    2. Backend verifies the token using google-auth library.
+    3. If a user with the Google email exists, log them in.
+    4. If no user exists, create a new FAN account automatically.
+    5. Return JWT tokens and user data (always marked as email_verified).
+
+    Google accounts come with a verified email, so is_email_verified
+    is set to True for both new and existing users.
+    """
+
+    serializer = GoogleAuthSerializer(data=request.data)
+
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    email = serializer.validated_data["email"]
+    first_name = serializer.validated_data["first_name"]
+    last_name = serializer.validated_data["last_name"]
+
+    # Check if user already exists
+    user = User.objects.filter(email__iexact=email).first()
+
+    if user:
+        # Existing user — update profile fields from Google if empty
+        update_fields = []
+
+        if not user.first_name and first_name:
+            user.first_name = first_name
+            update_fields.append("first_name")
+
+        if not user.last_name and last_name:
+            user.last_name = last_name
+            update_fields.append("last_name")
+
+        # Mark email as verified (Google accounts have verified emails)
+        if not user.is_email_verified:
+            user.is_email_verified = True
+            update_fields.append("is_email_verified")
+
+        if update_fields:
+            user.save(update_fields=update_fields)
+
+        # Generate tokens
+        tokens = build_token_response(user)
+
+        return Response(
+            {
+                "message": "Google login successful.",
+                "is_new_user": False,
+                **tokens,
+                "token_type": "Bearer",
+                "user": UserSerializer(user, context={"request": request}).data,
+                "role": user.role,
+                "frontend_dashboard_route": get_dashboard_route(user),
+                "backend_dashboard_route": get_backend_dashboard_route(user),
+                "next_step": AuthNextStep.DASHBOARD,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    # New user — auto-register with Google data
+    user = User.objects.create_user(
+        email=email,
+        password=None,  # No password needed — Google OAuth handles auth
+        first_name=first_name,
+        last_name=last_name,
+        role=User.Role.FAN,
+        is_email_verified=True,  # Google accounts have verified emails
+    )
+
+    tokens = build_token_response(user)
+
+    return Response(
+        {
+            "message": "Google registration successful.",
+            "is_new_user": True,
+            **tokens,
+            "token_type": "Bearer",
+            "user": UserSerializer(user, context={"request": request}).data,
+            "role": user.role,
+            "frontend_dashboard_route": get_dashboard_route(user),
+            "backend_dashboard_route": get_backend_dashboard_route(user),
+            "next_step": AuthNextStep.DASHBOARD,
+        },
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @api_view(["GET"])
