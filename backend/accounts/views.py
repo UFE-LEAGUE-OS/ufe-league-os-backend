@@ -3,6 +3,7 @@ from smtplib import SMTPException
 
 from django.core.mail import BadHeaderError
 from django.db import transaction
+from django.conf import settings
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -59,6 +60,24 @@ class AuthNextStep:
     DASHBOARD = "DASHBOARD"
     RESET_PASSWORD = "RESET_PASSWORD"
     REQUEST_NEW_OTP = "REQUEST_NEW_OTP"
+
+
+@api_view(["GET"])
+def config_view(request):
+    """
+    Return frontend-facing configuration including auth provider status.
+
+    Frontend uses this to determine whether to show Google Sign-In button.
+    """
+    client_id = getattr(settings, "GOOGLE_OAUTH2_CLIENT_ID", "")
+    return Response(
+        {
+            "google_oauth": {
+                "enabled": bool(client_id),
+                "client_id": client_id,
+            }
+        }
+    )
 
 
 @api_view(["GET"])

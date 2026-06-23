@@ -4,6 +4,7 @@ from . import views
 from . import views_extra
 
 urlpatterns = [
+    path("config/", views.config_view, name="config"),
     path("roles/", views.roles_view, name="roles"),
     path("register/", views.register_view, name="register"),
     path("login/", views.login_view, name="login"),
