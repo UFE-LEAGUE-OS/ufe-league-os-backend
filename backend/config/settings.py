@@ -81,7 +81,7 @@ ROOT_URLCONF = "config.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / "templates"],
+        "DIRS": [],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -297,9 +297,21 @@ FLUTTERWAVE_REDIRECT_URL = config(
     default="http://localhost:8000/api/sponsorships/flutterwave/verify/",
 )
 
+# Sponsorship Payment
 FLUTTERWAVE_PAYMENT_TITLE = config(
     "FLUTTERWAVE_PAYMENT_TITLE",
     default="League OS Sponsorship Payment",
+)
+
+FLUTTERWAVE_TICKET_PAYMENT_TITLE = config(
+    "FLUTTERWAVE_TICKET_PAYMENT_TITLE",
+    default="League OS Match Ticket Payment",
+)
+
+# Ticket Payment
+FLUTTERWAVE_TICKET_REDIRECT_URL = config(
+    "FLUTTERWAVE_TICKET_REDIRECT_URL",
+    default="http://localhost:8000/api/ticketing/flutterwave/verify/",
 )
 
 FLUTTERWAVE_PAYMENT_LOGO_URL = config(

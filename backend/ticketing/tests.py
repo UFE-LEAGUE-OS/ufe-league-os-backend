@@ -1,20 +1,37 @@
 from decimal import Decimal
+from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import override_settings
 from django.utils import timezone
+from rest_framework.test import APITestCase
 
 from accounts.models import Club, User
 from dashboards.models import Competition, League, Match, Union
 
-from .models import Ticket, TicketOrder, TicketType, TicketValidationLog
+from .models import (
+    Ticket,
+    TicketOrder,
+    TicketOrderItem,
+    TicketType,
+    TicketValidationLog,
+)
+from .services.orders import create_ticket_order
 
 
-class TicketingModelTests(TestCase):
+class TicketingTestMixin:
     def setUp(self):
         self.user = User.objects.create_user(
             email="fan@example.com",
             password="StrongPass123!",
             first_name="Test",
+            last_name="Fan",
+            role=User.Role.FAN,
+        )
+
+        self.other_user = User.objects.create_user(
+            email="otherfan@example.com",
+            password="StrongPass123!",
+            first_name="Other",
             last_name="Fan",
             role=User.Role.FAN,
         )
@@ -81,9 +98,12 @@ class TicketingModelTests(TestCase):
             total_amount=Decimal("10000.00"),
             currency="UGX",
             status=TicketOrder.Status.PAID,
+            provider=TicketOrder.PaymentProvider.FLUTTERWAVE,
             payment_reference="TICKET-ORDER-001",
         )
 
+
+class TicketingModelTests(TicketingTestMixin, APITestCase):
     def test_ticket_type_remaining_quantity(self):
         self.assertEqual(self.ticket_type.remaining_quantity, 100)
         self.assertFalse(self.ticket_type.is_sold_out)
@@ -95,6 +115,19 @@ class TicketingModelTests(TestCase):
         self.assertEqual(self.ticket_type.remaining_quantity, 0)
         self.assertTrue(self.ticket_type.is_sold_out)
 
+    def test_create_ticket_order_creates_pending_order_item(self):
+        order = create_ticket_order(
+            buyer=self.user,
+            ticket_type=self.ticket_type,
+            quantity=2,
+        )
+
+        self.assertEqual(order.status, TicketOrder.Status.PENDING)
+        self.assertEqual(order.total_amount, Decimal("20000.00"))
+        self.assertEqual(order.items.count(), 1)
+        self.assertEqual(order.items.first().quantity, 2)
+        self.assertEqual(Ticket.objects.filter(order=order).count(), 0)
+
     def test_ticket_has_qr_payload(self):
         ticket = Ticket.objects.create(
             order=self.order,
@@ -105,24 +138,303 @@ class TicketingModelTests(TestCase):
 
         self.assertEqual(ticket.qr_payload, str(ticket.ticket_code))
 
-    def test_ticket_validation_log_records_scan_result(self):
+
+@override_settings(
+    FLUTTERWAVE_SECRET_KEY="FLWSECK_TEST-test-key",
+    FLUTTERWAVE_SECRET_HASH="test-webhook-secret",
+    FLUTTERWAVE_TICKET_REDIRECT_URL=(
+        "http://localhost:8000/api/ticketing/flutterwave/verify/"
+    ),
+    FLUTTERWAVE_TICKET_PAYMENT_TITLE="League OS Match Ticket Payment",
+)
+class TicketingAPITests(TicketingTestMixin, APITestCase):
+    def flutterwave_initialize_response(self):
+        return {
+            "status": "success",
+            "message": "Hosted Link",
+            "data": {
+                "link": "https://checkout.flutterwave.com/test-ticket-checkout",
+            },
+        }
+
+    def flutterwave_verify_response(self, tx_ref, amount="20000.00"):
+        return {
+            "status": "success",
+            "message": "Transaction fetched successfully",
+            "data": {
+                "id": 123456789,
+                "status": "successful",
+                "tx_ref": tx_ref,
+                "amount": amount,
+                "currency": "UGX",
+                "flw_ref": "FLW-MOCK-001",
+            },
+        }
+
+    def test_public_match_ticket_types_endpoint_lists_ticket_types(self):
+        response = self.client.get(
+            f"/api/ticketing/matches/{self.match.id}/ticket-types/"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["ticket_types"][0]["name"], "Ordinary")
+        self.assertEqual(response.data["ticket_types"][0]["remaining_quantity"], 100)
+
+    def test_anonymous_user_cannot_initialize_checkout(self):
+        response = self.client.post(
+            "/api/ticketing/orders/flutterwave/initialize/",
+            {
+                "ticket_type_id": self.ticket_type.id,
+                "quantity": 1,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+    @patch("ticketing.views.initialize_ticket_flutterwave_payment")
+    def test_initialize_flutterwave_ticket_checkout_creates_pending_order(
+        self,
+        mock_initialize,
+    ):
+        mock_initialize.return_value = self.flutterwave_initialize_response()
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            "/api/ticketing/orders/flutterwave/initialize/",
+            {
+                "ticket_type_id": self.ticket_type.id,
+                "quantity": 2,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            response.data["checkout_url"],
+            mock_initialize.return_value["data"]["link"],
+        )
+        self.assertTrue(response.data["tx_ref"].startswith("LOS-TICKET-"))
+
+        order = TicketOrder.objects.get(id=response.data["order"]["id"])
+        self.assertEqual(order.status, TicketOrder.Status.PENDING)
+        self.assertEqual(order.total_amount, Decimal("20000.00"))
+        self.assertEqual(order.provider, TicketOrder.PaymentProvider.FLUTTERWAVE)
+        self.assertEqual(order.items.count(), 1)
+        self.assertEqual(order.items.first().quantity, 2)
+        self.assertEqual(Ticket.objects.filter(order=order).count(), 0)
+
+    def test_initialize_rejects_quantity_above_remaining_stock(self):
+        self.ticket_type.quantity_available = 1
+        self.ticket_type.save(update_fields=["quantity_available"])
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            "/api/ticketing/orders/flutterwave/initialize/",
+            {
+                "ticket_type_id": self.ticket_type.id,
+                "quantity": 2,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("quantity", response.data)
+
+    @patch("ticketing.views.verify_flutterwave_transaction")
+    def test_verify_flutterwave_payment_issues_tickets_and_updates_stock(
+        self,
+        mock_verify,
+    ):
+        pending_order = TicketOrder.objects.create(
+            buyer=self.user,
+            total_amount=Decimal("20000.00"),
+            currency="UGX",
+            status=TicketOrder.Status.PENDING,
+            provider=TicketOrder.PaymentProvider.FLUTTERWAVE,
+            payment_reference="LOS-TICKET-VERIFY-001",
+        )
+        TicketOrderItem.objects.create(
+            order=pending_order,
+            ticket_type=self.ticket_type,
+            quantity=2,
+            unit_price=Decimal("10000.00"),
+            total_price=Decimal("20000.00"),
+        )
+        mock_verify.return_value = self.flutterwave_verify_response(
+            pending_order.payment_reference
+        )
+
+        response = self.client.get(
+            "/api/ticketing/flutterwave/verify/",
+            {"tx_ref": pending_order.payment_reference},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["tickets"]), 2)
+
+        pending_order.refresh_from_db()
+        self.ticket_type.refresh_from_db()
+
+        self.assertEqual(pending_order.status, TicketOrder.Status.PAID)
+        self.assertIsNotNone(pending_order.paid_at)
+        self.assertEqual(self.ticket_type.quantity_sold, 2)
+        self.assertEqual(Ticket.objects.filter(order=pending_order).count(), 2)
+
+    @patch("ticketing.views.verify_flutterwave_transaction")
+    def test_verify_is_idempotent_for_already_paid_order(self, mock_verify):
+        paid_order = TicketOrder.objects.create(
+            buyer=self.user,
+            total_amount=Decimal("10000.00"),
+            currency="UGX",
+            status=TicketOrder.Status.PENDING,
+            provider=TicketOrder.PaymentProvider.FLUTTERWAVE,
+            payment_reference="LOS-TICKET-PAID-001",
+        )
+        TicketOrderItem.objects.create(
+            order=paid_order,
+            ticket_type=self.ticket_type,
+            quantity=1,
+            unit_price=Decimal("10000.00"),
+            total_price=Decimal("10000.00"),
+        )
+        mock_verify.return_value = self.flutterwave_verify_response(
+            paid_order.payment_reference,
+            amount="10000.00",
+        )
+
+        first_response = self.client.get(
+            "/api/ticketing/flutterwave/verify/",
+            {"tx_ref": paid_order.payment_reference},
+        )
+        second_response = self.client.get(
+            "/api/ticketing/flutterwave/verify/",
+            {"tx_ref": paid_order.payment_reference},
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(Ticket.objects.filter(order=paid_order).count(), 1)
+
+    @patch("ticketing.views.verify_flutterwave_transaction")
+    def test_failed_flutterwave_verification_does_not_issue_tickets(self, mock_verify):
+        pending_order = TicketOrder.objects.create(
+            buyer=self.user,
+            total_amount=Decimal("10000.00"),
+            currency="UGX",
+            status=TicketOrder.Status.PENDING,
+            provider=TicketOrder.PaymentProvider.FLUTTERWAVE,
+            payment_reference="LOS-TICKET-FAILED-001",
+        )
+        TicketOrderItem.objects.create(
+            order=pending_order,
+            ticket_type=self.ticket_type,
+            quantity=1,
+            unit_price=Decimal("10000.00"),
+            total_price=Decimal("10000.00"),
+        )
+        mock_verify.return_value = {
+            "status": "success",
+            "data": {
+                "id": 999,
+                "status": "failed",
+                "tx_ref": pending_order.payment_reference,
+                "amount": "10000.00",
+                "currency": "UGX",
+            },
+        }
+
+        response = self.client.get(
+            "/api/ticketing/flutterwave/verify/",
+            {"tx_ref": pending_order.payment_reference},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        pending_order.refresh_from_db()
+        self.assertEqual(pending_order.status, TicketOrder.Status.FAILED)
+        self.assertEqual(Ticket.objects.filter(order=pending_order).count(), 0)
+
+    def test_my_tickets_endpoint_returns_owned_tickets_only(self):
         ticket = Ticket.objects.create(
             order=self.order,
             ticket_type=self.ticket_type,
             match=self.match,
             owner=self.user,
         )
-
-        log = TicketValidationLog.objects.create(
-            ticket=ticket,
+        other_order = TicketOrder.objects.create(
+            buyer=self.other_user,
+            total_amount=Decimal("10000.00"),
+            currency="UGX",
+            status=TicketOrder.Status.PAID,
+            provider=TicketOrder.PaymentProvider.FLUTTERWAVE,
+            payment_reference="OTHER-TICKET-ORDER-001",
+        )
+        Ticket.objects.create(
+            order=other_order,
+            ticket_type=self.ticket_type,
             match=self.match,
-            scanned_by=self.ticketing_officer,
-            scanned_code=str(ticket.ticket_code),
-            result=TicketValidationLog.Result.VALID,
-            message="Ticket is valid.",
+            owner=self.other_user,
+        )
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get("/api/ticketing/tickets/me/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(
+            response.data["tickets"][0]["ticket_code"],
+            str(ticket.ticket_code),
         )
 
-        self.assertEqual(log.result, TicketValidationLog.Result.VALID)
-        self.assertEqual(log.ticket, ticket)
-        self.assertEqual(log.match, self.match)
-        self.assertEqual(log.scanned_by, self.ticketing_officer)
+    def test_ticketing_officer_can_validate_ticket_once(self):
+        ticket = Ticket.objects.create(
+            order=self.order,
+            ticket_type=self.ticket_type,
+            match=self.match,
+            owner=self.user,
+        )
+        self.client.force_authenticate(user=self.ticketing_officer)
+
+        response = self.client.post(
+            "/api/ticketing/validate/",
+            {
+                "scanned_code": str(ticket.ticket_code),
+                "match_id": self.match.id,
+            },
+            format="json",
+        )
+        second_response = self.client.post(
+            "/api/ticketing/validate/",
+            {
+                "scanned_code": str(ticket.ticket_code),
+                "match_id": self.match.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["result"], TicketValidationLog.Result.VALID)
+        self.assertEqual(second_response.status_code, 400)
+        self.assertEqual(
+            second_response.data["result"],
+            TicketValidationLog.Result.ALREADY_USED,
+        )
+
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.status, Ticket.Status.USED)
+        self.assertEqual(ticket.checked_in_by, self.ticketing_officer)
+
+    def test_fan_cannot_validate_ticket(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            "/api/ticketing/validate/",
+            {
+                "scanned_code": "not-a-ticket",
+                "match_id": self.match.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)

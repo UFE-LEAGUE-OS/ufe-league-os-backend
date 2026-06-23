@@ -27,6 +27,7 @@ def build_api_landing_payload(request):
             "dashboards": request.build_absolute_uri("/api/dashboards/"),
             "governance": request.build_absolute_uri("/api/governance/"),
             "sponsorships": request.build_absolute_uri("/api/sponsorships/"),
+            "ticketing": request.build_absolute_uri("/api/ticketing/"),
         },
         "quick_links": [
             {
@@ -64,6 +65,15 @@ def build_api_landing_payload(request):
                 "description": "Sponsor accounts, packages, agreements, and payments.",
                 "url": request.build_absolute_uri("/api/sponsorships/"),
                 "label": "/api/sponsorships/",
+            },
+            {
+                "title": "Ticketing API",
+                "description": (
+                    "Match ticket checkout, Flutterwave payment verification, "
+                    "and QR validation."
+                ),
+                "url": request.build_absolute_uri("/api/ticketing/"),
+                "label": "/api/ticketing/",
             },
         ],
         "staging_frontend": "https://ufe-league-os-frontend.onrender.com",
