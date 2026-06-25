@@ -440,15 +440,6 @@ class Migration(migrations.Migration):
             ],
             options={
                 "ordering": ["-created_at"],
-                "constraints": [
-                    models.UniqueConstraint(
-                        condition=models.Q(
-                            ("poll__allow_multiple_votes", True), _negated=True
-                        ),
-                        fields=("poll", "voter"),
-                        name="unique_poll_vote_per_user",
-                    )
-                ],
             },
         ),
         migrations.AddConstraint(
