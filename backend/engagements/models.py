@@ -175,9 +175,7 @@ class Quiz(models.Model):
 
 
 class QuizQuestion(models.Model):
-    quiz = models.ForeignKey(
-        Quiz, on_delete=models.CASCADE, related_name="questions"
-    )
+    quiz = models.ForeignKey(Quiz, on_delete=models.CASCADE, related_name="questions")
     question_text = models.TextField()
     order = models.PositiveIntegerField(default=0)
     points = models.PositiveIntegerField(default=1)
@@ -205,9 +203,7 @@ class QuizAnswer(models.Model):
 
 
 class QuizSubmission(models.Model):
-    quiz = models.ForeignKey(
-        Quiz, on_delete=models.CASCADE, related_name="submissions"
-    )
+    quiz = models.ForeignKey(Quiz, on_delete=models.CASCADE, related_name="submissions")
     participant = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,

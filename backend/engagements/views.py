@@ -1,6 +1,4 @@
-from uuid import uuid4
 
-from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -8,17 +6,16 @@ from rest_framework.response import Response
 
 from accounts.models import User
 
-from .models import Poll, PollOption, PollVote, Quiz, QuizSubmission, Sport
+from .models import MVPNomination, Poll, Quiz, QuizSubmission, Sport
 from .serializers import (
     MVPNominationSerializer,
     MVPNominationCreateSerializer,
     MVPVoteCreateSerializer,
     MVPVoteSerializer,
-    PollOptionSerializer,
+    PollCreateSerializer,
     PollSerializer,
     PollVoteSerializer,
     PollVoteCreateSerializer,
-    QuizAnswerSubmissionSerializer,
     QuizCreateSerializer,
     QuizQuestionCreateSerializer,
     QuizQuestionSerializer,
@@ -55,7 +52,9 @@ def sports_view(request):
 def polls_view(request):
     if request.method == "GET":
         sport_id = request.query_params.get("sport")
-        polls = Poll.objects.select_related("sport", "created_by").filter(is_active=True)
+        polls = Poll.objects.select_related("sport", "created_by").filter(
+            is_active=True
+        )
 
         if sport_id:
             polls = polls.filter(sport_id=sport_id)
@@ -63,7 +62,9 @@ def polls_view(request):
         return Response(
             {
                 "count": polls.count(),
-                "results": PollSerializer(polls, many=True, context={"request": request}).data,
+                "results": PollSerializer(
+                    polls, many=True, context={"request": request}
+                ).data,
             },
             status=status.HTTP_200_OK,
         )
@@ -119,7 +120,9 @@ def poll_detail_view(request, poll_id):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def poll_vote_view(request):
-    serializer = PollVoteCreateSerializer(data=request.data, context={"request": request})
+    serializer = PollVoteCreateSerializer(
+        data=request.data, context={"request": request}
+    )
     if serializer.is_valid():
         vote = serializer.save()
         return Response(
@@ -134,9 +137,9 @@ def poll_vote_view(request):
 def mvp_nominations_view(request):
     if request.method == "GET":
         sport_id = request.query_params.get("sport")
-        nominations = MVPNomination.objects.select_related("sport", "created_by", "nominee").filter(
-            is_active=True
-        )
+        nominations = MVPNomination.objects.select_related(
+            "sport", "created_by", "nominee"
+        ).filter(is_active=True)
 
         if sport_id:
             nominations = nominations.filter(sport_id=sport_id)
@@ -151,7 +154,9 @@ def mvp_nominations_view(request):
             status=status.HTTP_200_OK,
         )
 
-    serializer = MVPNominationCreateSerializer(data=request.data, context={"request": request})
+    serializer = MVPNominationCreateSerializer(
+        data=request.data, context={"request": request}
+    )
     if serializer.is_valid():
         nomination = serializer.save()
         return Response(
@@ -164,7 +169,9 @@ def mvp_nominations_view(request):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def mvp_vote_view(request):
-    serializer = MVPVoteCreateSerializer(data=request.data, context={"request": request})
+    serializer = MVPVoteCreateSerializer(
+        data=request.data, context={"request": request}
+    )
     if serializer.is_valid():
         vote = serializer.save()
         return Response(
@@ -179,7 +186,9 @@ def mvp_vote_view(request):
 def quizzes_view(request):
     if request.method == "GET":
         sport_id = request.query_params.get("sport")
-        quizzes = Quiz.objects.select_related("sport", "created_by").filter(is_active=True)
+        quizzes = Quiz.objects.select_related("sport", "created_by").filter(
+            is_active=True
+        )
 
         if sport_id:
             quizzes = quizzes.filter(sport_id=sport_id)
@@ -187,7 +196,9 @@ def quizzes_view(request):
         return Response(
             {
                 "count": quizzes.count(),
-                "results": QuizSerializer(quizzes, many=True, context={"request": request}).data,
+                "results": QuizSerializer(
+                    quizzes, many=True, context={"request": request}
+                ).data,
             },
             status=status.HTTP_200_OK,
         )
@@ -276,7 +287,9 @@ def quiz_question_create_view(request, quiz_id):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def quiz_submit_view(request):
-    serializer = QuizSubmissionCreateSerializer(data=request.data, context={"request": request})
+    serializer = QuizSubmissionCreateSerializer(
+        data=request.data, context={"request": request}
+    )
     if serializer.is_valid():
         submission = serializer.save()
         return Response(
@@ -295,7 +308,9 @@ def my_quiz_submissions_view(request):
     return Response(
         {
             "count": submissions.count(),
-            "results": QuizSubmissionSerializer(submissions, many=True, context={"request": request}).data,
+            "results": QuizSubmissionSerializer(
+                submissions, many=True, context={"request": request}
+            ).data,
         },
         status=status.HTTP_200_OK,
     )

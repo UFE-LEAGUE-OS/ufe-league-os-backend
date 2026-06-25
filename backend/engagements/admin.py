@@ -45,7 +45,14 @@ class PollVoteAdmin(admin.ModelAdmin):
 
 @admin.register(MVPNomination)
 class MVPNominationAdmin(admin.ModelAdmin):
-    list_display = ["title", "sport", "nominee", "created_by", "is_active", "created_at"]
+    list_display = [
+        "title",
+        "sport",
+        "nominee",
+        "created_by",
+        "is_active",
+        "created_at",
+    ]
     list_filter = ["sport", "is_active"]
     search_fields = ["title", "nominee__email"]
 

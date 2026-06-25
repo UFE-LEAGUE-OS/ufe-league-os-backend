@@ -121,7 +121,9 @@ class PollVoteSerializer(serializers.ModelSerializer):
 class PollVoteCreateSerializer(serializers.ModelSerializer):
     """Write serializer preventing duplicate votes per poll."""
 
-    option = serializers.PrimaryKeyRelatedField(queryset=PollOption.objects.select_related("poll"))
+    option = serializers.PrimaryKeyRelatedField(
+        queryset=PollOption.objects.select_related("poll")
+    )
 
     class Meta:
         model = PollVote
@@ -216,7 +218,9 @@ class MVPVoteSerializer(serializers.ModelSerializer):
 class MVPVoteCreateSerializer(serializers.ModelSerializer):
     """Write serializer preventing duplicate votes per nomination."""
 
-    nomination = serializers.PrimaryKeyRelatedField(queryset=MVPNomination.objects.select_related("sport"))
+    nomination = serializers.PrimaryKeyRelatedField(
+        queryset=MVPNomination.objects.select_related("sport")
+    )
 
     class Meta:
         model = MVPVote
@@ -230,7 +234,9 @@ class MVPVoteCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("This nomination is not active.")
 
         if MVPVote.objects.filter(nomination=nomination, voter=voter).exists():
-            raise serializers.ValidationError("You have already voted for this nomination.")
+            raise serializers.ValidationError(
+                "You have already voted for this nomination."
+            )
 
         return attrs
 
@@ -281,7 +287,9 @@ class QuizQuestionCreateSerializer(serializers.ModelSerializer):
         answers_data = validated_data.pop("answers")
         question = QuizQuestion.objects.create(**validated_data)
         for index, answer_text in enumerate(answers_data):
-            QuizAnswer.objects.create(question=question, answer_text=answer_text, order=index)
+            QuizAnswer.objects.create(
+                question=question, answer_text=answer_text, order=index
+            )
         return question
 
 
@@ -338,8 +346,12 @@ class QuizCreateSerializer(serializers.ModelSerializer):
 class QuizAnswerSubmissionSerializer(serializers.ModelSerializer):
     """Write serializer mapping selected answers in a submission."""
 
-    question = serializers.PrimaryKeyRelatedField(queryset=QuizQuestion.objects.select_related("quiz"))
-    selected_answer = serializers.PrimaryKeyRelatedField(queryset=QuizAnswer.objects.all())
+    question = serializers.PrimaryKeyRelatedField(
+        queryset=QuizQuestion.objects.select_related("quiz")
+    )
+    selected_answer = serializers.PrimaryKeyRelatedField(
+        queryset=QuizAnswer.objects.all()
+    )
 
     class Meta:
         model = QuizAnswerSubmission
@@ -369,7 +381,9 @@ class QuizSubmissionCreateSerializer(serializers.ModelSerializer):
         required_question_ids = set(quiz.questions.values_list("id", flat=True))
 
         if provided_question_ids != required_question_ids:
-            raise serializers.ValidationError("You must answer all questions exactly once.")
+            raise serializers.ValidationError(
+                "You must answer all questions exactly once."
+            )
 
         return attrs
 
