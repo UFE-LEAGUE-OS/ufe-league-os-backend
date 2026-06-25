@@ -325,6 +325,12 @@ FLUTTERWAVE_TIMEOUT_SECONDS = config(
     cast=int,
 )
 
+TICKET_RESERVATION_MINUTES = config(
+    "TICKET_RESERVATION_MINUTES",
+    default=10,
+    cast=int,
+)
+
 # Channels / WebSocket configuration
 # ---------------------------------------------------------------------------
 

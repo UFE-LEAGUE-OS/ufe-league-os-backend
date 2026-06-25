@@ -4,6 +4,7 @@ from uuid import uuid4
 from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.utils import timezone
 
 
 class TicketType(models.Model):
@@ -79,8 +80,31 @@ class TicketType(models.Model):
         return f"{self.name} - {self.match}"
 
     @property
+    def active_reserved_quantity(self):
+        """
+        Quantity currently held by pending, unexpired orders.
+
+        This protects ticket stock during the Flutterwave checkout window.
+        The reservation is released when the order is paid, cancelled, failed,
+        or manually expired by the reservation-expiry command.
+        """
+
+        total = (
+            self.order_items.filter(
+                order__status=TicketOrder.Status.PENDING,
+                order__reservation_released_at__isnull=True,
+                order__reservation_expires_at__gt=timezone.now(),
+            ).aggregate(total=models.Sum("quantity"))["total"]
+            or 0
+        )
+        return total
+
+    @property
     def remaining_quantity(self):
-        return max(self.quantity_available - self.quantity_sold, 0)
+        remaining = (
+            self.quantity_available - self.quantity_sold - self.active_reserved_quantity
+        )
+        return max(remaining, 0)
 
     @property
     def is_sold_out(self):
@@ -141,6 +165,9 @@ class TicketOrder(models.Model):
     checkout_url = models.URLField(blank=True)
     checkout_initialized_at = models.DateTimeField(blank=True, null=True)
 
+    reservation_expires_at = models.DateTimeField(blank=True, null=True)
+    reservation_released_at = models.DateTimeField(blank=True, null=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     paid_at = models.DateTimeField(blank=True, null=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -152,14 +179,41 @@ class TicketOrder(models.Model):
             models.Index(fields=["status", "created_at"]),
             models.Index(fields=["payment_reference"]),
             models.Index(fields=["provider", "provider_status"]),
+            models.Index(fields=["status", "reservation_expires_at"]),
         ]
 
     def __str__(self):
         return f"Ticket Order #{self.id} - {self.buyer.email} - {self.status}"
 
     @property
+    def is_reservation_active(self):
+        if self.status != self.Status.PENDING:
+            return False
+
+        if self.reservation_released_at is not None:
+            return False
+
+        if self.reservation_expires_at is None:
+            return True
+
+        return self.reservation_expires_at > timezone.now()
+
+    @property
+    def is_reservation_expired(self):
+        if self.status != self.Status.PENDING:
+            return False
+
+        if self.reservation_released_at is not None:
+            return False
+
+        if self.reservation_expires_at is None:
+            return False
+
+        return self.reservation_expires_at <= timezone.now()
+
+    @property
     def is_payable(self):
-        return self.status == self.Status.PENDING
+        return self.status == self.Status.PENDING and self.is_reservation_active
 
 
 class TicketOrderItem(models.Model):
