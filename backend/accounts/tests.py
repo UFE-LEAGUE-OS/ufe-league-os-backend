@@ -1262,3 +1262,241 @@ class GoogleAuthAPITests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("id_token", response.data)
+
+
+class NotificationWalletPaymentCenterAPITests(TestCase):
+    """Tests for notification preferences and MVP wallet/payment center APIs."""
+
+    def setUp(self):
+        from decimal import Decimal
+
+        from .models import PaymentHistory
+
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email="wallet-fan@example.com",
+            password="StrongPass123",
+            first_name="Wallet",
+            last_name="Fan",
+            role=User.Role.FAN,
+        )
+        self.client.force_authenticate(user=self.user)
+
+        self.legacy_payment = PaymentHistory.objects.create(
+            user=self.user,
+            payment_type=PaymentHistory.PaymentType.MEMBERSHIP_FEE,
+            amount=Decimal("25000.00"),
+            currency="UGX",
+            status=PaymentHistory.PaymentStatus.COMPLETED,
+            reference="LEGACY-MEMBERSHIP-001",
+            description="KCB Kobs Supporter Membership",
+            metadata={"source": "test"},
+        )
+
+    def test_notification_preferences_me_endpoint_creates_default_preferences(self):
+        from .models import NotificationPreference
+
+        response = self.client.get("/api/accounts/notification-preferences/me/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["count"],
+            len(NotificationPreference.EventType.choices),
+        )
+
+        event_types = {
+            preference["event_type"] for preference in response.data["preferences"]
+        }
+
+        self.assertIn(NotificationPreference.EventType.TICKET_UPDATES, event_types)
+        self.assertIn(NotificationPreference.EventType.MEMBERSHIP_UPDATES, event_types)
+        self.assertIn(NotificationPreference.EventType.SPONSORSHIP_UPDATES, event_types)
+        self.assertIn(NotificationPreference.EventType.FANTASY_UPDATES, event_types)
+        self.assertIn(NotificationPreference.EventType.MARKETING_UPDATES, event_types)
+
+    def test_notification_preferences_me_endpoint_updates_single_preference(self):
+        from .models import NotificationPreference
+
+        response = self.client.patch(
+            "/api/accounts/notification-preferences/me/",
+            {
+                "event_type": NotificationPreference.EventType.MARKETING_UPDATES,
+                "email_enabled": False,
+                "push_enabled": False,
+                "sms_enabled": False,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["updated"]), 1)
+
+        preference = NotificationPreference.objects.get(
+            user=self.user,
+            event_type=NotificationPreference.EventType.MARKETING_UPDATES,
+        )
+
+        self.assertFalse(preference.email_enabled)
+        self.assertFalse(preference.push_enabled)
+        self.assertFalse(preference.sms_enabled)
+
+    def test_legacy_notification_endpoint_still_works(self):
+        from .models import NotificationPreference
+
+        response = self.client.put(
+            "/api/accounts/notifications/",
+            {
+                "preferences": [
+                    {
+                        "event_type": NotificationPreference.EventType.TICKET_UPDATES,
+                        "email_enabled": True,
+                        "push_enabled": True,
+                        "sms_enabled": False,
+                    }
+                ]
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["updated"]), 1)
+
+    def test_wallet_endpoint_is_payment_center_not_stored_money_wallet(self):
+        response = self.client.get("/api/accounts/wallet/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["stored_balance_enabled"])
+        self.assertEqual(response.data["balance"], "0.00")
+        self.assertIn(
+            "does not currently store user funds", response.data["balance_note"]
+        )
+        self.assertEqual(response.data["currency"], "UGX")
+        self.assertEqual(response.data["total_spent"], "25000.00")
+        self.assertEqual(response.data["successful_payments_count"], 1)
+        self.assertEqual(response.data["pending_payments_count"], 0)
+        self.assertEqual(response.data["failed_payments_count"], 0)
+        self.assertEqual(response.data["tickets_count"], 0)
+        self.assertEqual(response.data["memberships_count"], 0)
+        self.assertEqual(response.data["sponsorships_count"], 0)
+        self.assertEqual(len(response.data["recent_payments"]), 1)
+
+    def test_payment_history_endpoint_returns_combined_payment_history(self):
+        response = self.client.get("/api/accounts/payments/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(len(response.data["results"]), 1)
+
+        item = response.data["results"][0]
+
+        self.assertEqual(item["source"], "LEGACY")
+        self.assertEqual(item["payment_type"], "MEMBERSHIP_FEE")
+        self.assertEqual(item["payment_type_label"], "Membership Fee")
+        self.assertEqual(item["amount"], "25000.00")
+        self.assertEqual(item["currency"], "UGX")
+        self.assertEqual(item["status"], "SUCCESSFUL")
+        self.assertEqual(item["status_label"], "Successful")
+        self.assertEqual(item["reference"], "LEGACY-MEMBERSHIP-001")
+
+    def test_payment_history_endpoint_filters_by_source_and_status(self):
+        successful_response = self.client.get(
+            "/api/accounts/payments/",
+            {
+                "source": "LEGACY",
+                "status": "SUCCESSFUL",
+            },
+        )
+
+        failed_response = self.client.get(
+            "/api/accounts/payments/",
+            {
+                "source": "LEGACY",
+                "status": "FAILED",
+            },
+        )
+
+        self.assertEqual(successful_response.status_code, 200)
+        self.assertEqual(successful_response.data["count"], 1)
+
+        self.assertEqual(failed_response.status_code, 200)
+        self.assertEqual(failed_response.data["count"], 0)
+
+    def test_wallet_endpoint_includes_paid_ticket_items(self):
+        from datetime import timedelta
+        from decimal import Decimal
+
+        from accounts.models import Club
+        from dashboards.models import Competition, League, Match, Union
+        from ticketing.models import Ticket, TicketOrder, TicketType
+
+        union = Union.objects.create(
+            name="Uganda Rugby Union Wallet Test",
+            slug="uganda-rugby-union-wallet-test",
+            country="Uganda",
+        )
+        league = League.objects.create(
+            union=union,
+            name="Nile Special Rugby League Wallet Test",
+            slug="nile-special-rugby-wallet-test",
+        )
+        competition = Competition.objects.create(
+            league=league,
+            name="Nile Special Rugby League 2026 Wallet Test",
+            slug="nile-special-rugby-2026-wallet-test",
+            season="2026",
+        )
+        home_club = Club.objects.create(
+            name="KCB Kobs Wallet Test",
+            slug="kcb-kobs-wallet-test",
+        )
+        away_club = Club.objects.create(
+            name="Heathens Wallet Test",
+            slug="heathens-wallet-test",
+        )
+        match = Match.objects.create(
+            competition=competition,
+            home_club=home_club,
+            away_club=away_club,
+            match_date=timezone.now() + timedelta(days=7),
+            venue="Legends Rugby Grounds",
+            status=Match.Status.SCHEDULED,
+        )
+        ticket_type = TicketType.objects.create(
+            match=match,
+            name="Ordinary",
+            description="Ordinary match access ticket.",
+            price=Decimal("10000.00"),
+            currency="UGX",
+            quantity_available=100,
+            quantity_sold=1,
+            status=TicketType.Status.ACTIVE,
+        )
+        order = TicketOrder.objects.create(
+            buyer=self.user,
+            total_amount=Decimal("10000.00"),
+            currency="UGX",
+            status=TicketOrder.Status.PAID,
+            provider=TicketOrder.PaymentProvider.FLUTTERWAVE,
+            payment_reference="LOS-TICKET-WALLET-001",
+            provider_status="successful",
+            paid_at=timezone.now(),
+            reservation_released_at=timezone.now(),
+        )
+        Ticket.objects.create(
+            order=order,
+            ticket_type=ticket_type,
+            match=match,
+            owner=self.user,
+        )
+
+        response = self.client.get("/api/accounts/wallet/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["tickets_count"], 1)
+        self.assertEqual(len(response.data["tickets"]), 1)
+        self.assertEqual(response.data["tickets"][0]["ticket_type"], "Ordinary")
+        self.assertEqual(
+            response.data["tickets"][0]["amount_paid"], Decimal("10000.00")
+        )
+        self.assertEqual(response.data["tickets"][0]["currency"], "UGX")
+        self.assertEqual(response.data["tickets"][0]["payment_status"], "PAID")
