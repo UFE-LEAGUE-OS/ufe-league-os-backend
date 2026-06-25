@@ -76,13 +76,6 @@ class PollVote(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        constraints = [
-            UniqueConstraint(
-                fields=["poll", "voter"],
-                condition=~Q(poll__allow_multiple_votes=True),
-                name="unique_poll_vote_per_user",
-            )
-        ]
         ordering = ["-created_at"]
 
     def __str__(self):
