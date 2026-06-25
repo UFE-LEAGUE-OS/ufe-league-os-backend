@@ -55,6 +55,11 @@ urlpatterns = [
     ),
     # Notification preferences
     path(
+        "notification-preferences/me/",
+        views_extra.notification_preferences_me_view,
+        name="notification-preferences-me",
+    ),
+    path(
         "notifications/",
         views_extra.notification_preferences_view,
         name="notification-preferences",

@@ -614,19 +614,22 @@ class FollowListSerializer(serializers.Serializer):
 class NotificationPreferenceSerializer(serializers.ModelSerializer):
     """Serializer for notification preferences."""
 
+    event_label = serializers.CharField(source="get_event_type_display", read_only=True)
+
     class Meta:
         model = NotificationPreference
         fields = [
             "id",
             "user",
             "event_type",
+            "event_label",
             "email_enabled",
             "push_enabled",
             "sms_enabled",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "user", "created_at", "updated_at"]
+        read_only_fields = ["id", "user", "event_label", "created_at", "updated_at"]
 
 
 class BulkNotificationPreferenceSerializer(serializers.Serializer):
@@ -655,7 +658,16 @@ class InterestPreferenceSerializer(serializers.ModelSerializer):
 
 
 class WalletSerializer(serializers.ModelSerializer):
-    """Serializer for user's wallet."""
+    """
+    Serializer for the user's MVP wallet/payment center.
+
+    The MVP wallet does not store money. The balance remains 0.00 and the
+    API exposes stored_balance_enabled=false so the frontend can show the
+    correct product meaning.
+    """
+
+    stored_balance_enabled = serializers.BooleanField(read_only=True)
+    balance_note = serializers.CharField(read_only=True)
 
     class Meta:
         model = Wallet
@@ -665,14 +677,33 @@ class WalletSerializer(serializers.ModelSerializer):
             "balance",
             "currency",
             "is_active",
+            "stored_balance_enabled",
+            "balance_note",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "user", "balance", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "user",
+            "balance",
+            "stored_balance_enabled",
+            "balance_note",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class PaymentHistorySerializer(serializers.ModelSerializer):
-    """Serializer for payment history records."""
+    """Serializer for legacy/manual payment history records."""
+
+    payment_type_label = serializers.CharField(
+        source="get_payment_type_display",
+        read_only=True,
+    )
+    status_label = serializers.CharField(
+        source="get_status_display",
+        read_only=True,
+    )
 
     class Meta:
         model = PaymentHistory
@@ -680,16 +711,68 @@ class PaymentHistorySerializer(serializers.ModelSerializer):
             "id",
             "user",
             "payment_type",
+            "payment_type_label",
             "amount",
             "currency",
             "status",
+            "status_label",
             "reference",
             "description",
             "metadata",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "user", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "user",
+            "payment_type_label",
+            "status_label",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class WalletSummarySerializer(serializers.Serializer):
+    """
+    Response serializer for the MVP wallet/payment center.
+
+    This is not a stored-money wallet. It summarizes what the fan has paid for.
+    """
+
+    stored_balance_enabled = serializers.BooleanField()
+    balance = serializers.DecimalField(max_digits=12, decimal_places=2)
+    balance_note = serializers.CharField()
+    currency = serializers.CharField()
+    total_spent = serializers.DecimalField(max_digits=14, decimal_places=2)
+    successful_payments_count = serializers.IntegerField()
+    pending_payments_count = serializers.IntegerField()
+    failed_payments_count = serializers.IntegerField()
+    refunded_payments_count = serializers.IntegerField()
+    tickets_count = serializers.IntegerField()
+    memberships_count = serializers.IntegerField()
+    sponsorships_count = serializers.IntegerField()
+    recent_payments = serializers.ListField()
+    tickets = serializers.ListField()
+    memberships = serializers.ListField()
+    sponsorships = serializers.ListField()
+
+
+class CombinedPaymentHistoryItemSerializer(serializers.Serializer):
+    """Serializer for combined payment history across tickets, memberships, sponsorships."""
+
+    id = serializers.CharField()
+    source = serializers.CharField()
+    source_id = serializers.IntegerField(required=False)
+    payment_type = serializers.CharField()
+    payment_type_label = serializers.CharField()
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    currency = serializers.CharField()
+    status = serializers.CharField()
+    status_label = serializers.CharField()
+    reference = serializers.CharField(allow_blank=True)
+    description = serializers.CharField(allow_blank=True)
+    metadata = serializers.DictField()
+    created_at = serializers.DateTimeField(required=False)
 
 
 # ---------------------------------------------------------------------------

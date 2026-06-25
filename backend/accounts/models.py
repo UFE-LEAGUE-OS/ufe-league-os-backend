@@ -241,8 +241,18 @@ class NotificationPreference(models.Model):
         SCORE_UPDATE = "SCORE_UPDATE", "Score Update"
         FOLLOWED_TEAM_NEWS = "FOLLOWED_TEAM_NEWS", "Followed Team News"
         STANDINGS_CHANGE = "STANDINGS_CHANGE", "Standings Change"
+
+        TICKET_UPDATES = "TICKET_UPDATES", "Ticket Updates"
         TICKET_OFFER = "TICKET_OFFER", "Ticket Offer"
+
+        MEMBERSHIP_UPDATES = "MEMBERSHIP_UPDATES", "Membership Updates"
+        SPONSORSHIP_UPDATES = "SPONSORSHIP_UPDATES", "Sponsorship Updates"
+        FANTASY_UPDATES = "FANTASY_UPDATES", "Fantasy Updates"
+
+        LEAGUE_NEWS = "LEAGUE_NEWS", "League News"
+        CLUB_NEWS = "CLUB_NEWS", "Club News"
         GENERAL_NEWS = "GENERAL_NEWS", "General News"
+        MARKETING_UPDATES = "MARKETING_UPDATES", "Marketing Updates"
 
     user = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="notification_preferences"
@@ -321,6 +331,20 @@ class Wallet(models.Model):
 
     def __str__(self):
         return f"{self.user.email} wallet ({self.currency} {self.balance})"
+
+    @property
+    def stored_balance_enabled(self):
+        """
+        League OS MVP does not store user money in the wallet.
+
+        The wallet is currently a payment center showing payment summaries,
+        purchased tickets, paid memberships, and sponsorship payments.
+        """
+        return False
+
+    @property
+    def balance_note(self):
+        return "League OS wallet does not currently store user funds."
 
 
 class PaymentHistory(models.Model):
