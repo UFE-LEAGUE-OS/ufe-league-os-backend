@@ -12,6 +12,7 @@ from .services.orders import validate_ticket_type_can_be_purchased
 
 class TicketTypeSerializer(serializers.ModelSerializer):
     remaining_quantity = serializers.IntegerField(read_only=True)
+    active_reserved_quantity = serializers.IntegerField(read_only=True)
     match_label = serializers.SerializerMethodField()
 
     class Meta:
@@ -26,6 +27,7 @@ class TicketTypeSerializer(serializers.ModelSerializer):
             "currency",
             "quantity_available",
             "quantity_sold",
+            "active_reserved_quantity",
             "remaining_quantity",
             "sale_start_at",
             "sale_end_at",
@@ -35,6 +37,7 @@ class TicketTypeSerializer(serializers.ModelSerializer):
             "id",
             "match_label",
             "quantity_sold",
+            "active_reserved_quantity",
             "remaining_quantity",
         ]
 
@@ -69,6 +72,8 @@ class TicketOrderItemSerializer(serializers.ModelSerializer):
 class TicketOrderSerializer(serializers.ModelSerializer):
     items = TicketOrderItemSerializer(many=True, read_only=True)
     tickets_count = serializers.SerializerMethodField()
+    is_reservation_active = serializers.BooleanField(read_only=True)
+    is_reservation_expired = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = TicketOrder
@@ -84,6 +89,10 @@ class TicketOrderSerializer(serializers.ModelSerializer):
             "provider_status",
             "checkout_url",
             "checkout_initialized_at",
+            "reservation_expires_at",
+            "reservation_released_at",
+            "is_reservation_active",
+            "is_reservation_expired",
             "paid_at",
             "created_at",
             "updated_at",
@@ -169,3 +178,7 @@ class TicketValidationResultSerializer(serializers.ModelSerializer):
         if obj.ticket is None:
             return None
         return str(obj.ticket.ticket_code)
+
+
+class ExpireTicketReservationsSerializer(serializers.Serializer):
+    dry_run = serializers.BooleanField(default=False, required=False)

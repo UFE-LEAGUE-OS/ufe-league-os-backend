@@ -38,4 +38,9 @@ urlpatterns = [
         views.ticket_validate_view,
         name="ticketing-validate",
     ),
+    path(
+        "reservations/expire/",
+        views.expire_ticket_reservations_view,
+        name="ticketing-expire-reservations",
+    ),
 ]

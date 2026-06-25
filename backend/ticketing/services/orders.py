@@ -1,6 +1,8 @@
+from datetime import timedelta
 from decimal import Decimal
 from uuid import uuid4
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -22,6 +24,12 @@ PAYABLE_MATCH_STATUSES = {
 
 def make_ticket_order_reference(ticket_type):
     return f"LOS-TICKET-{ticket_type.match_id}-{uuid4().hex[:16]}"
+
+
+def get_ticket_reservation_expires_at(now=None):
+    now = now or timezone.now()
+    reservation_minutes = getattr(settings, "TICKET_RESERVATION_MINUTES", 10)
+    return now + timedelta(minutes=reservation_minutes)
 
 
 def ticket_type_is_on_sale(ticket_type, now=None):
@@ -64,7 +72,7 @@ def validate_ticket_type_can_be_purchased(ticket_type, quantity):
 
 def create_ticket_order(buyer, ticket_type, quantity):
     """
-    Create a pending Flutterwave ticket order.
+    Create a pending Flutterwave ticket order and reserve stock temporarily.
 
     Tickets are not issued here. They are issued only after successful backend
     verification of the Flutterwave payment.
@@ -90,6 +98,7 @@ def create_ticket_order(buyer, ticket_type, quantity):
             status=TicketOrder.Status.PENDING,
             provider=TicketOrder.PaymentProvider.FLUTTERWAVE,
             payment_reference=make_ticket_order_reference(locked_ticket_type),
+            reservation_expires_at=get_ticket_reservation_expires_at(),
         )
 
         TicketOrderItem.objects.create(
@@ -101,6 +110,97 @@ def create_ticket_order(buyer, ticket_type, quantity):
         )
 
         return order
+
+
+def expire_ticket_order_reservation(order, provider_status="reservation_expired"):
+    """
+    Release an unpaid order reservation.
+
+    Because reserved stock is calculated from active pending orders, releasing the
+    reservation means marking when it was released and moving the order out of
+    the payable pending state.
+    """
+
+    with transaction.atomic():
+        locked_order = TicketOrder.objects.select_for_update().get(id=order.id)
+
+        if locked_order.status != TicketOrder.Status.PENDING:
+            return locked_order
+
+        if locked_order.reservation_released_at is not None:
+            return locked_order
+
+        locked_order.status = TicketOrder.Status.CANCELLED
+        locked_order.provider_status = provider_status
+        locked_order.reservation_released_at = timezone.now()
+        locked_order.save(
+            update_fields=[
+                "status",
+                "provider_status",
+                "reservation_released_at",
+                "updated_at",
+            ]
+        )
+
+        return locked_order
+
+
+def expire_stale_ticket_reservations(now=None):
+    """
+    Expire all unpaid reservations whose payment window has passed.
+
+    This can be run manually by QA/devs or scheduled later by Celery/cron.
+    """
+
+    now = now or timezone.now()
+
+    expired_orders = (
+        TicketOrder.objects.select_for_update()
+        .filter(
+            status=TicketOrder.Status.PENDING,
+            reservation_released_at__isnull=True,
+            reservation_expires_at__isnull=False,
+            reservation_expires_at__lte=now,
+        )
+        .order_by("id")
+    )
+
+    expired_count = 0
+    with transaction.atomic():
+        for order in expired_orders:
+            order.status = TicketOrder.Status.CANCELLED
+            order.provider_status = "reservation_expired"
+            order.reservation_released_at = now
+            order.save(
+                update_fields=[
+                    "status",
+                    "provider_status",
+                    "reservation_released_at",
+                    "updated_at",
+                ]
+            )
+            expired_count += 1
+
+    return expired_count
+
+
+def ensure_order_reservation_can_be_paid(order):
+    """
+    Ensure a pending order can still be paid before issuing tickets.
+    """
+
+    if order.is_reservation_expired:
+        raise ValidationError(
+            {
+                "order": (
+                    "This ticket reservation has expired. "
+                    "Please start checkout again."
+                )
+            }
+        )
+
+    if not order.is_payable:
+        raise ValidationError({"order": "This ticket order is no longer payable."})
 
 
 def confirm_ticket_order_payment(
@@ -118,6 +218,17 @@ def confirm_ticket_order_payment(
 
     provider_response = provider_response or {}
 
+    if order.is_reservation_expired:
+        expire_ticket_order_reservation(order)
+        raise ValidationError(
+            {
+                "order": (
+                    "This ticket reservation has expired. "
+                    "Please start checkout again."
+                )
+            }
+        )
+
     with transaction.atomic():
         locked_order = TicketOrder.objects.select_for_update().get(id=order.id)
 
@@ -128,6 +239,8 @@ def confirm_ticket_order_payment(
             raise ValidationError(
                 {"order": "Only pending ticket orders can be confirmed."}
             )
+
+        ensure_order_reservation_can_be_paid(locked_order)
 
         order_items = list(
             locked_order.items.select_related(
@@ -146,7 +259,20 @@ def confirm_ticket_order_payment(
                 id=item.ticket_type_id
             )
 
-            validate_ticket_type_can_be_purchased(ticket_type, item.quantity)
+            current_order_reserved_quantity = item.quantity
+            effective_remaining = (
+                ticket_type.remaining_quantity + current_order_reserved_quantity
+            )
+
+            if effective_remaining < item.quantity:
+                raise ValidationError(
+                    {
+                        "quantity": (
+                            "Requested quantity exceeds available ticket stock. "
+                            f"Only {ticket_type.remaining_quantity} ticket(s) remain."
+                        )
+                    }
+                )
 
             ticket_type.quantity_sold += item.quantity
             update_fields = ["quantity_sold", "updated_at"]
@@ -171,6 +297,7 @@ def confirm_ticket_order_payment(
         locked_order.provider_transaction_id = provider_transaction_id
         locked_order.provider_status = provider_status
         locked_order.paid_at = timezone.now()
+        locked_order.reservation_released_at = locked_order.paid_at
         locked_order.save(
             update_fields=[
                 "status",
@@ -178,6 +305,7 @@ def confirm_ticket_order_payment(
                 "provider_transaction_id",
                 "provider_status",
                 "paid_at",
+                "reservation_released_at",
                 "updated_at",
             ]
         )
@@ -206,11 +334,13 @@ def mark_ticket_order_payment_failed(
         locked_order.status = failed_status
         locked_order.provider_status = provider_status
         locked_order.provider_response = provider_response
+        locked_order.reservation_released_at = timezone.now()
         locked_order.save(
             update_fields=[
                 "status",
                 "provider_status",
                 "provider_response",
+                "reservation_released_at",
                 "updated_at",
             ]
         )
