@@ -14,6 +14,11 @@ urlpatterns = [
         name="fantasy-competition-detail",
     ),
     path(
+        "competitions/<int:competition_id>/gameweeks/",
+        views.fantasy_competition_gameweeks_view,
+        name="fantasy-competition-gameweeks",
+    ),
+    path(
         "competitions/<int:competition_id>/players/",
         views.fantasy_player_market_view,
         name="fantasy-player-market",
@@ -27,6 +32,16 @@ urlpatterns = [
         "teams/me/",
         views.my_fantasy_teams_view,
         name="fantasy-my-teams",
+    ),
+    path(
+        "teams/<int:team_id>/",
+        views.fantasy_team_detail_view,
+        name="fantasy-team-detail",
+    ),
+    path(
+        "teams/<int:team_id>/history/",
+        views.fantasy_team_history_view,
+        name="fantasy-team-history",
     ),
     path(
         "teams/<int:team_id>/squad/",
@@ -49,6 +64,11 @@ urlpatterns = [
         name="fantasy-league-create",
     ),
     path(
+        "leagues/available/",
+        views.fantasy_league_available_view,
+        name="fantasy-league-available",
+    ),
+    path(
         "leagues/join/",
         views.fantasy_league_join_view,
         name="fantasy-league-join",
@@ -57,6 +77,16 @@ urlpatterns = [
         "leagues/my/",
         views.my_fantasy_leagues_view,
         name="fantasy-my-leagues",
+    ),
+    path(
+        "leagues/<int:league_id>/",
+        views.fantasy_league_detail_view,
+        name="fantasy-league-detail",
+    ),
+    path(
+        "leagues/<int:league_id>/leaderboard/",
+        views.fantasy_league_leaderboard_view,
+        name="fantasy-league-leaderboard",
     ),
     path(
         "gameweeks/<int:gameweek_id>/leaderboard/",

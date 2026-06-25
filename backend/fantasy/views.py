@@ -1,3 +1,4 @@
+from django.db.models import Q
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -7,6 +8,7 @@ from rest_framework.response import Response
 from .models import (
     FantasyCompetition,
     FantasyGameweek,
+    FantasyLeague,
     FantasyLeagueMembership,
     FantasyLineup,
     FantasyPlayer,
@@ -45,6 +47,80 @@ from .services import (
     require_fantasy_manager,
     submit_lineup,
 )
+
+
+def _get_positive_int(value, default, maximum=None):
+    """
+    Convert query parameter values into safe positive integers.
+
+    This protects the API from bad query params like:
+    ?limit=abc
+    ?limit=-50
+    ?limit=1000000
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+
+    if number < 0:
+        number = default
+
+    if maximum is not None:
+        number = min(number, maximum)
+
+    return number
+
+
+def _paginated_response(queryset, serializer_class, request):
+    """
+    Simple offset pagination helper.
+
+    The frontend can call:
+    ?limit=20&offset=0
+    ?limit=20&offset=20
+    """
+    limit = _get_positive_int(
+        request.query_params.get("limit"), default=50, maximum=100
+    )
+    offset = _get_positive_int(request.query_params.get("offset"), default=0)
+
+    total = queryset.count()
+    page = queryset[offset : offset + limit]
+
+    serializer = serializer_class(page, many=True)
+    return Response(
+        {
+            "count": total,
+            "limit": limit,
+            "offset": offset,
+            "results": serializer.data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+def _user_can_view_fantasy_league(user, league):
+    """
+    Public leagues can be viewed by anyone.
+
+    Private leagues can only be viewed by:
+    - the creator
+    - a user who has joined with one of their fantasy teams
+    """
+    if league.league_type == FantasyLeague.LeagueType.PUBLIC:
+        return True
+
+    if not user or not user.is_authenticated:
+        return False
+
+    if league.created_by_id == user.id:
+        return True
+
+    return FantasyLeagueMembership.objects.filter(
+        fantasy_league=league,
+        fantasy_team__owner=user,
+    ).exists()
 
 
 @extend_schema(tags=["Fantasy"])
@@ -96,6 +172,29 @@ def fantasy_competition_detail_view(request, competition_id):
         },
         status=status.HTTP_200_OK,
     )
+
+
+@extend_schema(tags=["Fantasy"])
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def fantasy_competition_gameweeks_view(request, competition_id):
+    """
+    List gameweeks for one fantasy competition.
+
+    Frontend screen use:
+    - Fantasy Competition Detail
+    - Gameweek Lineup Centre
+    - Score & Gameweek Operations
+    """
+    queryset = FantasyGameweek.objects.filter(
+        fantasy_competition_id=competition_id
+    ).order_by("number")
+
+    status_filter = request.query_params.get("status")
+    if status_filter:
+        queryset = queryset.filter(status=str(status_filter).upper())
+
+    return _paginated_response(queryset, FantasyGameweekSerializer, request)
 
 
 @extend_schema(tags=["Fantasy"])
@@ -166,6 +265,83 @@ def my_fantasy_teams_view(request):
     serializer = FantasyTeamSerializer(queryset, many=True)
     return Response(
         {"count": queryset.count(), "results": serializer.data},
+        status=status.HTTP_200_OK,
+    )
+
+
+@extend_schema(tags=["Fantasy"])
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def fantasy_team_detail_view(request, team_id):
+    """
+    Get one authenticated user's fantasy team.
+
+    Frontend screen use:
+    - My Fantasy Team Dashboard
+    - Review & Confirm Squad
+    - Gameweek Lineup Centre
+    """
+    team = (
+        FantasyTeam.objects.filter(id=team_id, owner=request.user)
+        .select_related("fantasy_competition", "owner")
+        .prefetch_related(
+            "squad_players",
+            "squad_players__fantasy_player",
+            "squad_players__fantasy_player__club",
+        )
+        .first()
+    )
+
+    if team is None:
+        return Response(
+            {"detail": "Fantasy team not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    return Response(
+        {"team": FantasyTeamSerializer(team).data},
+        status=status.HTTP_200_OK,
+    )
+
+
+@extend_schema(tags=["Fantasy"])
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def fantasy_team_history_view(request, team_id):
+    """
+    Get one authenticated user's fantasy team history.
+
+    Frontend screen use:
+    - Live Points / Gameweek Results / History
+    - My Fantasy Team Dashboard
+    """
+    team = FantasyTeam.objects.filter(id=team_id, owner=request.user).first()
+
+    if team is None:
+        return Response(
+            {"detail": "Fantasy team not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    scores = (
+        FantasyTeamGameweekScore.objects.filter(fantasy_team=team)
+        .select_related("fantasy_team", "fantasy_team__owner", "gameweek")
+        .order_by("-gameweek__number")
+    )
+
+    lineups = (
+        FantasyLineup.objects.filter(fantasy_team=team)
+        .select_related("fantasy_team", "gameweek", "captain", "vice_captain")
+        .prefetch_related("players", "players__fantasy_player")
+        .order_by("-gameweek__number")
+    )
+
+    return Response(
+        {
+            "team": FantasyTeamSerializer(team).data,
+            "scores": FantasyTeamGameweekScoreSerializer(scores, many=True).data,
+            "lineups": FantasyLineupSerializer(lineups, many=True).data,
+        },
         status=status.HTTP_200_OK,
     )
 
@@ -316,6 +492,173 @@ def my_fantasy_leagues_view(request):
         {"count": queryset.count(), "results": serializer.data},
         status=status.HTTP_200_OK,
     )
+
+
+@extend_schema(tags=["Fantasy"])
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def fantasy_league_available_view(request):
+    """
+    List available fantasy leagues.
+
+    Default behaviour:
+    - returns PUBLIC leagues only
+
+    Private league behaviour:
+    - private leagues are only returned to authenticated users
+    - user must be the creator or must have joined using one of their teams
+
+    Frontend screen use:
+    - Fantasy Leagues & Leaderboards
+    """
+    queryset = (
+        FantasyLeague.objects.filter(is_active=True)
+        .select_related("fantasy_competition", "created_by")
+        .order_by("fantasy_competition__name", "name")
+    )
+
+    competition_id = request.query_params.get("competition")
+    if competition_id:
+        queryset = queryset.filter(fantasy_competition_id=competition_id)
+
+    league_type = request.query_params.get("league_type")
+
+    if league_type:
+        normalized_league_type = str(league_type).upper()
+
+        if normalized_league_type == FantasyLeague.LeagueType.PRIVATE:
+            if not request.user.is_authenticated:
+                return Response(
+                    {
+                        "detail": (
+                            "Authentication is required to view private fantasy leagues."
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            queryset = queryset.filter(
+                league_type=FantasyLeague.LeagueType.PRIVATE
+            ).filter(
+                Q(created_by=request.user)
+                | Q(memberships__fantasy_team__owner=request.user)
+            )
+            queryset = queryset.distinct()
+
+        elif normalized_league_type == FantasyLeague.LeagueType.PUBLIC:
+            queryset = queryset.filter(league_type=FantasyLeague.LeagueType.PUBLIC)
+
+        else:
+            queryset = queryset.none()
+
+    else:
+        queryset = queryset.filter(league_type=FantasyLeague.LeagueType.PUBLIC)
+
+    return _paginated_response(queryset, FantasyLeagueSerializer, request)
+
+
+@extend_schema(tags=["Fantasy"])
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def fantasy_league_detail_view(request, league_id):
+    """
+    Get fantasy league detail.
+
+    Public leagues can be viewed by anyone.
+    Private leagues can only be viewed by the creator or joined members.
+    """
+    league = (
+        FantasyLeague.objects.select_related("fantasy_competition", "created_by")
+        .filter(id=league_id, is_active=True)
+        .first()
+    )
+
+    if league is None:
+        return Response(
+            {"detail": "Fantasy league not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not _user_can_view_fantasy_league(request.user, league):
+        return Response(
+            {"detail": "You do not have permission to view this fantasy league."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    memberships = (
+        FantasyLeagueMembership.objects.filter(fantasy_league=league)
+        .select_related("fantasy_team", "fantasy_team__owner")
+        .order_by("fantasy_team__current_rank", "-fantasy_team__total_points")
+    )
+
+    return Response(
+        {
+            "league": FantasyLeagueSerializer(league).data,
+            "members_count": memberships.count(),
+            "members": FantasyLeagueMembershipSerializer(memberships, many=True).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@extend_schema(tags=["Fantasy"])
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def fantasy_league_leaderboard_view(request, league_id):
+    """
+    Get overall or gameweek leaderboard for one fantasy league.
+
+    Query params:
+    - gameweek_id optional
+
+    Without gameweek_id:
+    returns overall team ranking.
+
+    With gameweek_id:
+    returns gameweek score ranking for teams in that league.
+    """
+    league = FantasyLeague.objects.filter(id=league_id, is_active=True).first()
+
+    if league is None:
+        return Response(
+            {"detail": "Fantasy league not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not _user_can_view_fantasy_league(request.user, league):
+        return Response(
+            {"detail": "You do not have permission to view this fantasy league."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    gameweek_id = request.query_params.get("gameweek_id")
+
+    if gameweek_id:
+        queryset = (
+            FantasyTeamGameweekScore.objects.filter(
+                gameweek_id=gameweek_id,
+                fantasy_team__league_memberships__fantasy_league=league,
+            )
+            .select_related("fantasy_team", "fantasy_team__owner", "gameweek")
+            .distinct()
+            .order_by("rank", "-points")
+        )
+
+        return _paginated_response(
+            queryset,
+            FantasyTeamGameweekScoreSerializer,
+            request,
+        )
+
+    queryset = (
+        FantasyTeam.objects.filter(league_memberships__fantasy_league=league)
+        .select_related("owner", "fantasy_competition")
+        .prefetch_related("squad_players", "squad_players__fantasy_player")
+        .distinct()
+        .order_by("current_rank", "-total_points", "name")
+    )
+
+    return _paginated_response(queryset, FantasyTeamSerializer, request)
 
 
 @extend_schema(tags=["Fantasy"])
