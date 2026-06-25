@@ -41,6 +41,8 @@ class TicketOrderAdmin(admin.ModelAdmin):
         "status",
         "provider",
         "provider_status",
+        "reservation_expires_at",
+        "reservation_released_at",
         "created_at",
         "paid_at",
     )
@@ -53,6 +55,8 @@ class TicketOrderAdmin(admin.ModelAdmin):
         "provider_response",
         "checkout_url",
         "checkout_initialized_at",
+        "reservation_expires_at",
+        "reservation_released_at",
         "created_at",
         "paid_at",
         "updated_at",

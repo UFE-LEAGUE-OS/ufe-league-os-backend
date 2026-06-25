@@ -1,6 +1,8 @@
+from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
+from django.core.management import call_command
 from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
@@ -8,14 +10,11 @@ from rest_framework.test import APITestCase
 from accounts.models import Club, User
 from dashboards.models import Competition, League, Match, Union
 
-from .models import (
-    Ticket,
-    TicketOrder,
-    TicketOrderItem,
-    TicketType,
-    TicketValidationLog,
+from .models import Ticket, TicketOrder, TicketType, TicketValidationLog
+from .services.orders import (
+    create_ticket_order,
+    expire_stale_ticket_reservations,
 )
-from .services.orders import create_ticket_order
 
 
 class TicketingTestMixin:
@@ -42,6 +41,14 @@ class TicketingTestMixin:
             first_name="Ticketing",
             last_name="Officer",
             role=User.Role.TICKETING_OFFICER,
+        )
+
+        self.super_admin = User.objects.create_user(
+            email="superadmin@example.com",
+            password="StrongPass123!",
+            first_name="Super",
+            last_name="Admin",
+            role=User.Role.SUPER_ADMIN,
         )
 
         self.union = Union.objects.create(
@@ -77,8 +84,9 @@ class TicketingTestMixin:
             competition=self.competition,
             home_club=self.home_club,
             away_club=self.away_club,
-            match_date=timezone.now(),
+            match_date=timezone.now() + timedelta(days=7),
             venue="Legends Rugby Grounds",
+            status=Match.Status.SCHEDULED,
         )
 
         self.ticket_type = TicketType.objects.create(
@@ -100,12 +108,15 @@ class TicketingTestMixin:
             status=TicketOrder.Status.PAID,
             provider=TicketOrder.PaymentProvider.FLUTTERWAVE,
             payment_reference="TICKET-ORDER-001",
+            reservation_released_at=timezone.now(),
         )
 
 
+@override_settings(TICKET_RESERVATION_MINUTES=10)
 class TicketingModelTests(TicketingTestMixin, APITestCase):
     def test_ticket_type_remaining_quantity(self):
         self.assertEqual(self.ticket_type.remaining_quantity, 100)
+        self.assertEqual(self.ticket_type.active_reserved_quantity, 0)
         self.assertFalse(self.ticket_type.is_sold_out)
 
     def test_ticket_type_is_sold_out_when_quantity_is_exhausted(self):
@@ -115,7 +126,7 @@ class TicketingModelTests(TicketingTestMixin, APITestCase):
         self.assertEqual(self.ticket_type.remaining_quantity, 0)
         self.assertTrue(self.ticket_type.is_sold_out)
 
-    def test_create_ticket_order_creates_pending_order_item(self):
+    def test_create_ticket_order_creates_pending_order_item_and_reservation(self):
         order = create_ticket_order(
             buyer=self.user,
             ticket_type=self.ticket_type,
@@ -124,9 +135,59 @@ class TicketingModelTests(TicketingTestMixin, APITestCase):
 
         self.assertEqual(order.status, TicketOrder.Status.PENDING)
         self.assertEqual(order.total_amount, Decimal("20000.00"))
+        self.assertIsNotNone(order.reservation_expires_at)
+        self.assertIsNone(order.reservation_released_at)
+        self.assertTrue(order.is_reservation_active)
+        self.assertFalse(order.is_reservation_expired)
         self.assertEqual(order.items.count(), 1)
         self.assertEqual(order.items.first().quantity, 2)
         self.assertEqual(Ticket.objects.filter(order=order).count(), 0)
+
+    def test_active_reservation_reduces_remaining_ticket_quantity(self):
+        create_ticket_order(
+            buyer=self.user,
+            ticket_type=self.ticket_type,
+            quantity=2,
+        )
+
+        self.ticket_type.refresh_from_db()
+
+        self.assertEqual(self.ticket_type.active_reserved_quantity, 2)
+        self.assertEqual(self.ticket_type.remaining_quantity, 98)
+
+    def test_expired_reservation_does_not_reduce_remaining_ticket_quantity(self):
+        order = create_ticket_order(
+            buyer=self.user,
+            ticket_type=self.ticket_type,
+            quantity=2,
+        )
+        order.reservation_expires_at = timezone.now() - timedelta(minutes=1)
+        order.save(update_fields=["reservation_expires_at"])
+
+        self.ticket_type.refresh_from_db()
+
+        self.assertEqual(self.ticket_type.active_reserved_quantity, 0)
+        self.assertEqual(self.ticket_type.remaining_quantity, 100)
+        self.assertTrue(order.is_reservation_expired)
+
+    def test_expire_stale_ticket_reservations_cancels_expired_pending_order(self):
+        order = create_ticket_order(
+            buyer=self.user,
+            ticket_type=self.ticket_type,
+            quantity=2,
+        )
+        order.reservation_expires_at = timezone.now() - timedelta(minutes=1)
+        order.save(update_fields=["reservation_expires_at"])
+
+        expired_count = expire_stale_ticket_reservations()
+
+        order.refresh_from_db()
+        self.ticket_type.refresh_from_db()
+
+        self.assertEqual(expired_count, 1)
+        self.assertEqual(order.status, TicketOrder.Status.CANCELLED)
+        self.assertIsNotNone(order.reservation_released_at)
+        self.assertEqual(self.ticket_type.remaining_quantity, 100)
 
     def test_ticket_has_qr_payload(self):
         ticket = Ticket.objects.create(
@@ -146,6 +207,7 @@ class TicketingModelTests(TicketingTestMixin, APITestCase):
         "http://localhost:8000/api/ticketing/flutterwave/verify/"
     ),
     FLUTTERWAVE_TICKET_PAYMENT_TITLE="League OS Match Ticket Payment",
+    TICKET_RESERVATION_MINUTES=10,
 )
 class TicketingAPITests(TicketingTestMixin, APITestCase):
     def flutterwave_initialize_response(self):
@@ -180,6 +242,28 @@ class TicketingAPITests(TicketingTestMixin, APITestCase):
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["ticket_types"][0]["name"], "Ordinary")
         self.assertEqual(response.data["ticket_types"][0]["remaining_quantity"], 100)
+        self.assertEqual(
+            response.data["ticket_types"][0]["active_reserved_quantity"],
+            0,
+        )
+
+    def test_public_match_ticket_types_endpoint_shows_reserved_quantity(self):
+        create_ticket_order(
+            buyer=self.user,
+            ticket_type=self.ticket_type,
+            quantity=2,
+        )
+
+        response = self.client.get(
+            f"/api/ticketing/matches/{self.match.id}/ticket-types/"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["ticket_types"][0]["active_reserved_quantity"],
+            2,
+        )
+        self.assertEqual(response.data["ticket_types"][0]["remaining_quantity"], 98)
 
     def test_anonymous_user_cannot_initialize_checkout(self):
         response = self.client.post(
@@ -218,9 +302,13 @@ class TicketingAPITests(TicketingTestMixin, APITestCase):
         self.assertTrue(response.data["tx_ref"].startswith("LOS-TICKET-"))
 
         order = TicketOrder.objects.get(id=response.data["order"]["id"])
+
         self.assertEqual(order.status, TicketOrder.Status.PENDING)
         self.assertEqual(order.total_amount, Decimal("20000.00"))
         self.assertEqual(order.provider, TicketOrder.PaymentProvider.FLUTTERWAVE)
+        self.assertIsNotNone(order.reservation_expires_at)
+        self.assertIsNone(order.reservation_released_at)
+        self.assertTrue(order.is_reservation_active)
         self.assertEqual(order.items.count(), 1)
         self.assertEqual(order.items.first().quantity, 2)
         self.assertEqual(Ticket.objects.filter(order=order).count(), 0)
@@ -242,25 +330,35 @@ class TicketingAPITests(TicketingTestMixin, APITestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("quantity", response.data)
 
+    def test_initialize_rejects_quantity_reserved_by_other_pending_order(self):
+        create_ticket_order(
+            buyer=self.other_user,
+            ticket_type=self.ticket_type,
+            quantity=100,
+        )
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            "/api/ticketing/orders/flutterwave/initialize/",
+            {
+                "ticket_type_id": self.ticket_type.id,
+                "quantity": 1,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("quantity", response.data)
+
     @patch("ticketing.views.verify_flutterwave_transaction")
     def test_verify_flutterwave_payment_issues_tickets_and_updates_stock(
         self,
         mock_verify,
     ):
-        pending_order = TicketOrder.objects.create(
+        pending_order = create_ticket_order(
             buyer=self.user,
-            total_amount=Decimal("20000.00"),
-            currency="UGX",
-            status=TicketOrder.Status.PENDING,
-            provider=TicketOrder.PaymentProvider.FLUTTERWAVE,
-            payment_reference="LOS-TICKET-VERIFY-001",
-        )
-        TicketOrderItem.objects.create(
-            order=pending_order,
             ticket_type=self.ticket_type,
             quantity=2,
-            unit_price=Decimal("10000.00"),
-            total_price=Decimal("20000.00"),
         )
         mock_verify.return_value = self.flutterwave_verify_response(
             pending_order.payment_reference
@@ -279,25 +377,18 @@ class TicketingAPITests(TicketingTestMixin, APITestCase):
 
         self.assertEqual(pending_order.status, TicketOrder.Status.PAID)
         self.assertIsNotNone(pending_order.paid_at)
+        self.assertIsNotNone(pending_order.reservation_released_at)
         self.assertEqual(self.ticket_type.quantity_sold, 2)
+        self.assertEqual(self.ticket_type.active_reserved_quantity, 0)
+        self.assertEqual(self.ticket_type.remaining_quantity, 98)
         self.assertEqual(Ticket.objects.filter(order=pending_order).count(), 2)
 
     @patch("ticketing.views.verify_flutterwave_transaction")
     def test_verify_is_idempotent_for_already_paid_order(self, mock_verify):
-        paid_order = TicketOrder.objects.create(
+        paid_order = create_ticket_order(
             buyer=self.user,
-            total_amount=Decimal("10000.00"),
-            currency="UGX",
-            status=TicketOrder.Status.PENDING,
-            provider=TicketOrder.PaymentProvider.FLUTTERWAVE,
-            payment_reference="LOS-TICKET-PAID-001",
-        )
-        TicketOrderItem.objects.create(
-            order=paid_order,
             ticket_type=self.ticket_type,
             quantity=1,
-            unit_price=Decimal("10000.00"),
-            total_price=Decimal("10000.00"),
         )
         mock_verify.return_value = self.flutterwave_verify_response(
             paid_order.payment_reference,
@@ -318,21 +409,41 @@ class TicketingAPITests(TicketingTestMixin, APITestCase):
         self.assertEqual(Ticket.objects.filter(order=paid_order).count(), 1)
 
     @patch("ticketing.views.verify_flutterwave_transaction")
-    def test_failed_flutterwave_verification_does_not_issue_tickets(self, mock_verify):
-        pending_order = TicketOrder.objects.create(
+    def test_expired_reservation_cannot_be_confirmed(self, mock_verify):
+        pending_order = create_ticket_order(
             buyer=self.user,
-            total_amount=Decimal("10000.00"),
-            currency="UGX",
-            status=TicketOrder.Status.PENDING,
-            provider=TicketOrder.PaymentProvider.FLUTTERWAVE,
-            payment_reference="LOS-TICKET-FAILED-001",
-        )
-        TicketOrderItem.objects.create(
-            order=pending_order,
             ticket_type=self.ticket_type,
             quantity=1,
-            unit_price=Decimal("10000.00"),
-            total_price=Decimal("10000.00"),
+        )
+        pending_order.reservation_expires_at = timezone.now() - timedelta(minutes=1)
+        pending_order.save(update_fields=["reservation_expires_at"])
+
+        mock_verify.return_value = self.flutterwave_verify_response(
+            pending_order.payment_reference,
+            amount="10000.00",
+        )
+
+        response = self.client.get(
+            "/api/ticketing/flutterwave/verify/",
+            {"tx_ref": pending_order.payment_reference},
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+        pending_order.refresh_from_db()
+        self.ticket_type.refresh_from_db()
+
+        self.assertEqual(pending_order.status, TicketOrder.Status.CANCELLED)
+        self.assertIsNotNone(pending_order.reservation_released_at)
+        self.assertEqual(Ticket.objects.filter(order=pending_order).count(), 0)
+        self.assertEqual(self.ticket_type.remaining_quantity, 100)
+
+    @patch("ticketing.views.verify_flutterwave_transaction")
+    def test_failed_flutterwave_verification_does_not_issue_tickets(self, mock_verify):
+        pending_order = create_ticket_order(
+            buyer=self.user,
+            ticket_type=self.ticket_type,
+            quantity=1,
         )
         mock_verify.return_value = {
             "status": "success",
@@ -352,8 +463,12 @@ class TicketingAPITests(TicketingTestMixin, APITestCase):
 
         self.assertEqual(response.status_code, 400)
         pending_order.refresh_from_db()
+        self.ticket_type.refresh_from_db()
+
         self.assertEqual(pending_order.status, TicketOrder.Status.FAILED)
+        self.assertIsNotNone(pending_order.reservation_released_at)
         self.assertEqual(Ticket.objects.filter(order=pending_order).count(), 0)
+        self.assertEqual(self.ticket_type.remaining_quantity, 100)
 
     def test_my_tickets_endpoint_returns_owned_tickets_only(self):
         ticket = Ticket.objects.create(
@@ -369,6 +484,7 @@ class TicketingAPITests(TicketingTestMixin, APITestCase):
             status=TicketOrder.Status.PAID,
             provider=TicketOrder.PaymentProvider.FLUTTERWAVE,
             payment_reference="OTHER-TICKET-ORDER-001",
+            reservation_released_at=timezone.now(),
         )
         Ticket.objects.create(
             order=other_order,
@@ -438,3 +554,68 @@ class TicketingAPITests(TicketingTestMixin, APITestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+
+    def test_super_admin_can_expire_stale_reservations_from_endpoint(self):
+        order = create_ticket_order(
+            buyer=self.user,
+            ticket_type=self.ticket_type,
+            quantity=2,
+        )
+        order.reservation_expires_at = timezone.now() - timedelta(minutes=1)
+        order.save(update_fields=["reservation_expires_at"])
+
+        self.client.force_authenticate(user=self.super_admin)
+
+        response = self.client.post(
+            "/api/ticketing/reservations/expire/",
+            {"dry_run": False},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["expired_count"], 1)
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, TicketOrder.Status.CANCELLED)
+        self.assertIsNotNone(order.reservation_released_at)
+
+    def test_fan_cannot_expire_stale_reservations_from_endpoint(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            "/api/ticketing/reservations/expire/",
+            {"dry_run": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_expire_ticket_reservations_management_command_dry_run(self):
+        order = create_ticket_order(
+            buyer=self.user,
+            ticket_type=self.ticket_type,
+            quantity=2,
+        )
+        order.reservation_expires_at = timezone.now() - timedelta(minutes=1)
+        order.save(update_fields=["reservation_expires_at"])
+
+        call_command("expire_ticket_reservations", "--dry-run")
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, TicketOrder.Status.PENDING)
+        self.assertIsNone(order.reservation_released_at)
+
+    def test_expire_ticket_reservations_management_command(self):
+        order = create_ticket_order(
+            buyer=self.user,
+            ticket_type=self.ticket_type,
+            quantity=2,
+        )
+        order.reservation_expires_at = timezone.now() - timedelta(minutes=1)
+        order.save(update_fields=["reservation_expires_at"])
+
+        call_command("expire_ticket_reservations")
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, TicketOrder.Status.CANCELLED)
+        self.assertIsNotNone(order.reservation_released_at)
