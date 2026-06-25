@@ -9,6 +9,7 @@ from .models import (
     Follow,
     NotificationPreference,
     InterestPreference,
+    RoleApproval,
     Wallet,
     PaymentHistory,
     FeedItem,
@@ -689,6 +690,126 @@ class PaymentHistorySerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "user", "created_at", "updated_at"]
+
+
+# ---------------------------------------------------------------------------
+# Role Approval Serializers
+# ---------------------------------------------------------------------------
+
+
+class RoleApprovalListSerializer(serializers.ModelSerializer):
+    """Serializer for listing role approval requests."""
+
+    target_user_email = serializers.EmailField(
+        source="target_user.email", read_only=True
+    )
+    target_user_name = serializers.SerializerMethodField()
+    requested_by_email = serializers.EmailField(
+        source="requested_by.email", read_only=True
+    )
+    requested_by_name = serializers.SerializerMethodField()
+    reviewed_by_email = serializers.EmailField(
+        source="reviewed_by.email", read_only=True, default=None
+    )
+    reviewed_by_name = serializers.SerializerMethodField()
+    requested_role_display = serializers.CharField(
+        source="get_requested_role_display", read_only=True
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = RoleApproval
+        fields = [
+            "id",
+            "target_user",
+            "target_user_email",
+            "target_user_name",
+            "requested_role",
+            "requested_role_display",
+            "requested_by",
+            "requested_by_email",
+            "requested_by_name",
+            "reviewed_by",
+            "reviewed_by_email",
+            "reviewed_by_name",
+            "status",
+            "status_display",
+            "reason",
+            "rejection_reason",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "target_user",
+            "target_user_email",
+            "target_user_name",
+            "requested_role",
+            "requested_role_display",
+            "requested_by",
+            "requested_by_email",
+            "requested_by_name",
+            "reviewed_by",
+            "reviewed_by_email",
+            "reviewed_by_name",
+            "status",
+            "status_display",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_target_user_name(self, obj):
+        return obj.target_user.full_name or obj.target_user.email
+
+    def get_requested_by_name(self, obj):
+        return obj.requested_by.full_name or obj.requested_by.email
+
+    def get_reviewed_by_name(self, obj):
+        if obj.reviewed_by:
+            return obj.reviewed_by.full_name or obj.reviewed_by.email
+        return None
+
+
+class RoleApprovalReviewSerializer(serializers.Serializer):
+    """Serializer for approving or rejecting a role approval request."""
+
+    action = serializers.ChoiceField(choices=["approve", "reject"])
+    rejection_reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Required if action is 'reject'.",
+    )
+
+    def validate(self, attrs):
+        if attrs["action"] == "reject" and not attrs.get("rejection_reason"):
+            raise serializers.ValidationError(
+                {
+                    "rejection_reason": "Rejection reason is required when rejecting a request."
+                }
+            )
+        return attrs
+
+
+# ---------------------------------------------------------------------------
+# Switch Workspace Serializer
+# ---------------------------------------------------------------------------
+
+
+class SwitchWorkspaceSerializer(serializers.Serializer):
+    """Serializer for switching the active workspace/role context."""
+
+    role = serializers.ChoiceField(choices=User.Role.choices)
+
+    def validate_role(self, value):
+        user = self.context.get("user")
+        if not user:
+            raise serializers.ValidationError("User context is required.")
+
+        if value not in user.roles:
+            raise serializers.ValidationError(
+                f"You do not have access to the '{value}' workspace."
+            )
+        return value
 
 
 # ---------------------------------------------------------------------------

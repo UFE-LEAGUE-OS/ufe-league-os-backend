@@ -410,3 +410,76 @@ class FeedItem(models.Model):
 
     def __str__(self):
         return f"{self.user.email} - {self.item_type} - {self.title}"
+
+
+class RoleApproval(models.Model):
+    """
+    Tracks pending approval requests for sensitive role assignments.
+
+    When a SUPER_ADMIN assigns a sensitive role (UNION_ADMIN, SUPER_ADMIN),
+    the change is not applied immediately. Instead, a RoleApproval record is
+    created in PENDING status. Another SUPER_ADMIN must approve it before
+    the role change takes effect.
+
+    Status lifecycle:
+        PENDING  →  APPROVED  (role applied)
+        PENDING  →  REJECTED  (role denied)
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+
+    # The user whose role is being changed
+    target_user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="role_approval_requests",
+    )
+    # The role being requested for the target user
+    requested_role = models.CharField(max_length=30, choices=User.Role.choices)
+    # The admin who initiated the request
+    requested_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="role_approval_requests_made",
+    )
+    # The admin who approved/rejected the request
+    reviewed_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="role_approval_reviews",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    reason = models.TextField(
+        blank=True,
+        help_text="Reason for the role change request",
+    )
+    rejection_reason = models.TextField(
+        blank=True,
+        help_text="Reason provided by the reviewer for rejection",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Role Approval Request"
+        verbose_name_plural = "Role Approval Requests"
+        indexes = [
+            models.Index(fields=["status", "-created_at"]),
+            models.Index(fields=["target_user", "status"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"RoleApproval({self.target_user.email} -> {self.requested_role}"
+            f" [{self.status}])"
+        )

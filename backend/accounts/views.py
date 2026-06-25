@@ -15,6 +15,7 @@ from accounts.permissions import (
     IsLeagueAdmin,
     IsUnionAdmin,
 )
+from accounts.models import RoleApproval
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import Club, User
@@ -24,6 +25,9 @@ from .serializers import (
     HierarchicalCreateUserSerializer,
     LoginSerializer,
     RegisterSerializer,
+    RoleApprovalListSerializer,
+    RoleApprovalReviewSerializer,
+    SwitchWorkspaceSerializer,
     UserSerializer,
     VerifyOTPSerializer,
     ResendOTPSerializer,
@@ -35,6 +39,9 @@ from .rbac import (
     get_backend_dashboard_route,
     get_dashboard_route,
     get_dashboard_routes,
+    is_sensitive_role,
+    create_role_approval,
+    approve_role_approval,
     log_role_change,
 )
 from .services import (
@@ -494,13 +501,24 @@ def become_sponsor_view(request):
 @api_view(["POST"])
 @permission_classes([IsAuthenticatedAudit, IsSuperAdmin])
 def superadmin_create_user_view(request):
-    """Allow a superadmin to create a new authenticated user with a role."""
+    """
+    Allow a superadmin to create a new authenticated user.
+
+    If the requested role is a sensitive role (UNION_ADMIN, SUPER_ADMIN),
+    the role change is NOT applied immediately. Instead, a RoleApproval
+    request is created in PENDING status. Another SUPER_ADMIN must approve
+    it via the role-approval review endpoint before the role takes effect.
+
+    Non-sensitive roles are applied immediately (existing behavior).
+    """
 
     serializer = AdminCreateUserSerializer(data=request.data)
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     validated = serializer.validated_data
+    role = validated["role"]
+
     club = None
     if validated.get("club_id"):
         club = Club.objects.filter(pk=validated["club_id"]).first()
@@ -511,9 +529,36 @@ def superadmin_create_user_view(request):
         phone_number=validated.get("phone_number"),
         first_name=validated["first_name"].strip(),
         last_name=validated["last_name"].strip(),
-        role=validated["role"],
+        role=User.Role.FAN,  # Always start as FAN; role will be applied after approval
         club=club,
     )
+
+    if is_sensitive_role(role):
+        # Sensitive role: create approval request instead of applying directly
+        approval = create_role_approval(
+            target_user=user,
+            requested_role=role,
+            requested_by=request.user,
+            reason=validated.get("reason", "superadmin_create"),
+        )
+
+        return Response(
+            {
+                "message": (
+                    f"User created successfully. A role approval request has been "
+                    f"submitted for the '{role}' role. Another SUPER_ADMIN must "
+                    f"approve this request before the role takes effect."
+                ),
+                "requires_approval": True,
+                "approval": RoleApprovalListSerializer(approval).data,
+                "user": UserSerializer(user, context={"request": request}).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    # Non-sensitive role: apply immediately
+    user.role = role
+    user.save(update_fields=["role"])
 
     log_role_change(
         target_user=user,
@@ -529,6 +574,165 @@ def superadmin_create_user_view(request):
             "user": UserSerializer(user, context={"request": request}).data,
         },
         status=status.HTTP_201_CREATED,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Role Approval Endpoints
+# ---------------------------------------------------------------------------
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAudit, IsSuperAdmin])
+def role_approval_list_view(request):
+    """
+    GET: List all role approval requests.
+
+    Filters:
+    - status: Filter by status (PENDING, APPROVED, REJECTED)
+    - target_user: Filter by target user ID
+    """
+    queryset = RoleApproval.objects.all()
+
+    status_filter = request.query_params.get("status")
+    if status_filter:
+        queryset = queryset.filter(status=status_filter.upper())
+
+    target_user = request.query_params.get("target_user")
+    if target_user:
+        queryset = queryset.filter(target_user_id=target_user)
+
+    queryset = queryset.order_by("-created_at")
+    serializer = RoleApprovalListSerializer(queryset, many=True)
+    return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAudit, IsSuperAdmin])
+def role_approval_pending_count_view(request):
+    """
+    GET: Return the count of pending role approval requests.
+    """
+    count = RoleApproval.objects.filter(status=RoleApproval.Status.PENDING).count()
+    return Response({"pending_count": count})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAudit, IsSuperAdmin])
+def role_approval_review_view(request, pk):
+    """
+    POST: Approve or reject a role approval request.
+
+    The reviewer must be a different SUPER_ADMIN than the requester.
+    """
+    try:
+        approval = RoleApproval.objects.select_related(
+            "target_user", "requested_by"
+        ).get(pk=pk)
+    except RoleApproval.DoesNotExist:
+        return Response(
+            {"detail": "Role approval request not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if approval.status != RoleApproval.Status.PENDING:
+        return Response(
+            {
+                "detail": (
+                    f"This request has already been {approval.status.lower()}."
+                    " Only PENDING requests can be reviewed."
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # A SUPER_ADMIN cannot approve their own request
+    if approval.requested_by == request.user:
+        return Response(
+            {
+                "detail": "You cannot approve or reject your own role approval request."
+                " Another SUPER_ADMIN must review it."
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    serializer = RoleApprovalReviewSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    action = serializer.validated_data["action"]
+    rejection_reason = serializer.validated_data.get("rejection_reason", "")
+
+    try:
+        approve_role_approval(
+            approval=approval,
+            reviewer=request.user,
+            rejection_reason=rejection_reason if action == "reject" else "",
+        )
+    except ValueError as e:
+        return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    action_label = "approved" if action == "approve" else "rejected"
+
+    return Response(
+        {
+            "detail": f"Role approval request {action_label} successfully.",
+            "approval": RoleApprovalListSerializer(approval).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Switch Workspace / Account API
+# ---------------------------------------------------------------------------
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAudit])
+def switch_workspace_view(request):
+    """
+    POST: Switch the active workspace/role context for the authenticated user.
+
+    Users with multiple roles (e.g., FAN + SPONSOR) can switch between their
+    available workspaces to access role-specific dashboards and features.
+
+    Request body:
+        { "role": "SPONSOR" }
+
+    Returns the dashboard route for the requested role.
+    """
+    from .rbac import FRONTEND_DASHBOARD_ROUTES, BACKEND_DASHBOARD_ROUTES
+
+    serializer = SwitchWorkspaceSerializer(
+        data=request.data,
+        context={"user": request.user},
+    )
+
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    target_role = serializer.validated_data["role"]
+
+    # The User model only has a single role field, but `user.roles` can include
+    # additional roles like SPONSOR via `has_role`. The switch workspace API
+    # returns the appropriate dashboard info for the requested role without
+    # changing the user's primary role in the DB.
+    return Response(
+        {
+            "message": f"Switched to {target_role} workspace.",
+            "role": target_role,
+            "role_display": dict(User.Role.choices).get(target_role, target_role),
+            "frontend_dashboard_route": FRONTEND_DASHBOARD_ROUTES.get(
+                target_role, "/dashboard/fan"
+            ),
+            "backend_dashboard_route": BACKEND_DASHBOARD_ROUTES.get(
+                target_role, "/api/dashboards/me/"
+            ),
+            "available_dashboards": get_dashboard_routes(request.user),
+            "user": UserSerializer(request.user, context={"request": request}).data,
+        },
+        status=status.HTTP_200_OK,
     )
 
 
