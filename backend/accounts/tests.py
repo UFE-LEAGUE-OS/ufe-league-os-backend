@@ -1500,3 +1500,132 @@ class NotificationWalletPaymentCenterAPITests(TestCase):
         )
         self.assertEqual(response.data["tickets"][0]["currency"], "UGX")
         self.assertEqual(response.data["tickets"][0]["payment_status"], "PAID")
+
+
+class NotificationInboxAPITests(TestCase):
+    """Tests for in-app notification inbox APIs."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email="notifications-fan@example.com",
+            password="StrongPass123",
+            first_name="Notify",
+            last_name="Fan",
+            role=User.Role.FAN,
+        )
+        self.other_user = User.objects.create_user(
+            email="notifications-other@example.com",
+            password="StrongPass123",
+            first_name="Other",
+            last_name="Fan",
+            role=User.Role.FAN,
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_create_in_app_notification_respects_push_preference(self):
+        from .models import Notification, NotificationPreference
+        from .services import create_in_app_notification
+
+        NotificationPreference.objects.create(
+            user=self.user,
+            event_type=NotificationPreference.EventType.TICKET_UPDATES,
+            email_enabled=True,
+            push_enabled=False,
+            sms_enabled=False,
+        )
+
+        notification = create_in_app_notification(
+            user=self.user,
+            event_type=NotificationPreference.EventType.TICKET_UPDATES,
+            category=Notification.Category.TICKET,
+            title="Should not be created",
+        )
+
+        self.assertIsNone(notification)
+        self.assertEqual(Notification.objects.filter(user=self.user).count(), 0)
+
+    def test_notification_inbox_returns_user_notifications_only(self):
+        from .models import Notification, NotificationPreference
+        from .services import create_in_app_notification
+
+        own_notification = create_in_app_notification(
+            user=self.user,
+            event_type=NotificationPreference.EventType.TICKET_UPDATES,
+            category=Notification.Category.TICKET,
+            priority=Notification.Priority.HIGH,
+            title="QR ticket issued",
+            message="Your ticket is ready.",
+            action_url="/dashboard/tickets",
+            metadata={"order_id": 1},
+        )
+
+        create_in_app_notification(
+            user=self.other_user,
+            event_type=NotificationPreference.EventType.TICKET_UPDATES,
+            category=Notification.Category.TICKET,
+            title="Other user's ticket",
+        )
+
+        response = self.client.get("/api/accounts/notifications/inbox/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["unread_count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], own_notification.id)
+        self.assertEqual(response.data["results"][0]["title"], "QR ticket issued")
+
+    def test_unread_count_and_mark_read(self):
+        from .models import Notification, NotificationPreference
+        from .services import create_in_app_notification
+
+        notification = create_in_app_notification(
+            user=self.user,
+            event_type=NotificationPreference.EventType.TICKET_UPDATES,
+            category=Notification.Category.TICKET,
+            priority=Notification.Priority.HIGH,
+            title="Ticket confirmed",
+        )
+
+        count_response = self.client.get("/api/accounts/notifications/unread-count/")
+        self.assertEqual(count_response.status_code, 200)
+        self.assertEqual(count_response.data["unread_count"], 1)
+
+        mark_response = self.client.post(
+            f"/api/accounts/notifications/{notification.id}/mark-read/"
+        )
+
+        self.assertEqual(mark_response.status_code, 200)
+
+        notification.refresh_from_db()
+        self.assertTrue(notification.is_read)
+        self.assertIsNotNone(notification.read_at)
+
+        count_response = self.client.get("/api/accounts/notifications/unread-count/")
+        self.assertEqual(count_response.data["unread_count"], 0)
+
+    def test_mark_all_notifications_read(self):
+        from .models import Notification, NotificationPreference
+        from .services import create_in_app_notification
+
+        create_in_app_notification(
+            user=self.user,
+            event_type=NotificationPreference.EventType.TICKET_UPDATES,
+            category=Notification.Category.TICKET,
+            title="Ticket confirmed",
+        )
+        create_in_app_notification(
+            user=self.user,
+            event_type=NotificationPreference.EventType.MEMBERSHIP_UPDATES,
+            category=Notification.Category.MEMBERSHIP,
+            title="Membership confirmed",
+        )
+
+        response = self.client.post("/api/accounts/notifications/mark-all-read/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["updated_count"], 2)
+        self.assertEqual(response.data["unread_count"], 0)
+        self.assertEqual(
+            Notification.objects.filter(user=self.user, is_read=False).count(), 0
+        )

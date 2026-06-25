@@ -9,6 +9,7 @@ from django.utils import timezone
 from django.db.models import Q
 
 from .models import (
+    Notification,
     EmailOTP,
     FeedItem,
     Follow,
@@ -885,3 +886,101 @@ def get_wallet_payment_center(user, limit=10):
         "memberships": memberships[:limit],
         "sponsorships": sponsorships[:limit],
     }
+
+
+def user_allows_notification(user, event_type, channel="push"):
+    """
+    Check whether a user allows a notification event/channel.
+
+    For the frontend inbox, we treat push_enabled as the in-app notification toggle.
+    """
+    pref, _created = NotificationPreference.objects.get_or_create(
+        user=user,
+        event_type=event_type,
+    )
+
+    if channel == "email":
+        return pref.email_enabled
+
+    if channel == "sms":
+        return pref.sms_enabled
+
+    return pref.push_enabled
+
+
+def create_in_app_notification(
+    user,
+    event_type,
+    title,
+    message="",
+    category=Notification.Category.SYSTEM,
+    priority=Notification.Priority.NORMAL,
+    action_url="",
+    metadata=None,
+):
+    """
+    Create an in-app notification if the user's in-app/push preference allows it.
+    """
+    metadata = metadata or {}
+
+    if not user_allows_notification(user, event_type, channel="push"):
+        return None
+
+    return Notification.objects.create(
+        user=user,
+        event_type=event_type,
+        category=category,
+        priority=priority,
+        title=title,
+        message=message,
+        action_url=action_url,
+        metadata=metadata,
+    )
+
+
+def list_user_notifications(
+    user,
+    limit=50,
+    offset=0,
+    unread_only=False,
+    category=None,
+):
+    queryset = Notification.objects.filter(user=user).order_by("-created_at")
+
+    if unread_only:
+        queryset = queryset.filter(is_read=False)
+
+    if category:
+        queryset = queryset.filter(category=str(category).upper())
+
+    total = queryset.count()
+    items = queryset[offset : offset + limit]
+
+    return items, total
+
+
+def get_unread_notification_count(user):
+    return Notification.objects.filter(user=user, is_read=False).count()
+
+
+def mark_notification_read(user, notification_id):
+    notification = Notification.objects.filter(id=notification_id, user=user).first()
+
+    if notification is None:
+        return None
+
+    if not notification.is_read:
+        notification.is_read = True
+        notification.read_at = timezone.now()
+        notification.save(update_fields=["is_read", "read_at"])
+
+    return notification
+
+
+def mark_all_notifications_read(user):
+    now = timezone.now()
+
+    return Notification.objects.filter(user=user, is_read=False).update(
+        is_read=True,
+        read_at=now,
+    )

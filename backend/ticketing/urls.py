@@ -43,4 +43,9 @@ urlpatterns = [
         views.expire_ticket_reservations_view,
         name="ticketing-expire-reservations",
     ),
+    path(
+        "tickets/<int:ticket_id>/qr/",
+        views.ticket_qr_svg_view,
+        name="ticketing-ticket-qr-svg",
+    ),
 ]

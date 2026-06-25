@@ -23,6 +23,7 @@ from .serializers import (
     FollowResponseSerializer,
     InterestPreferenceSerializer,
     NotificationPreferenceSerializer,
+    NotificationSerializer,
     WalletSummarySerializer,
 )
 from .services import (
@@ -31,6 +32,10 @@ from .services import (
     get_combined_payment_history,
     get_or_create_interest_preferences,
     get_or_create_notification_preferences,
+    mark_notification_read,
+    mark_all_notifications_read,
+    list_user_notifications,
+    get_unread_notification_count,
     get_user_follows,
     get_wallet_payment_center,
     is_following,
@@ -258,7 +263,9 @@ def wallet_view(request):
     The MVP wallet does not store user money. It summarizes payment history,
     purchased tickets, memberships, and sponsorship payments.
     """
-    limit = int(request.query_params.get("limit", 10))
+    limit = _safe_positive_int(
+        request.query_params.get("limit"), default=10, maximum=50
+    )
     wallet_data = get_wallet_payment_center(request.user, limit=limit)
     serializer = WalletSummarySerializer(wallet_data)
     return Response(serializer.data, status=status.HTTP_200_OK)
@@ -287,8 +294,10 @@ def payment_history_view(request):
     payment_type = request.query_params.get("payment_type")
     status_filter = request.query_params.get("status")
     source = request.query_params.get("source")
-    limit = int(request.query_params.get("limit", 50))
-    offset = int(request.query_params.get("offset", 0))
+    limit = _safe_positive_int(
+        request.query_params.get("limit"), default=50, maximum=100
+    )
+    offset = _safe_positive_int(request.query_params.get("offset"), default=0)
 
     items, total = get_combined_payment_history(
         request.user,
@@ -326,8 +335,10 @@ def feed_view(request):
     Query params: limit, offset, item_type, unread_only
     """
     user = request.user
-    limit = int(request.query_params.get("limit", 50))
-    offset = int(request.query_params.get("offset", 0))
+    limit = _safe_positive_int(
+        request.query_params.get("limit"), default=50, maximum=100
+    )
+    offset = _safe_positive_int(request.query_params.get("offset"), default=0)
     item_type = request.query_params.get("item_type")
     unread_only = request.query_params.get("unread_only", "").lower() == "true"
 
@@ -382,3 +393,122 @@ def feed_unread_count_view(request):
 
     count = get_unread_feed_count(request.user)
     return Response({"unread_count": count}, status=status.HTTP_200_OK)
+
+
+def _safe_positive_int(value, default, maximum=None):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+
+    if number < 0:
+        number = default
+
+    if maximum is not None:
+        number = min(number, maximum)
+
+    return number
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAudit])
+def notification_inbox_view(request):
+    """
+    Get the authenticated user's in-app notification inbox.
+
+    GET /api/accounts/notifications/inbox/
+
+    Query params:
+    - limit
+    - offset
+    - unread_only=true
+    - category=TICKET, PAYMENT, MEMBERSHIP, FANTASY, etc.
+    """
+    limit = _safe_positive_int(
+        request.query_params.get("limit"),
+        default=50,
+        maximum=100,
+    )
+    offset = _safe_positive_int(request.query_params.get("offset"), default=0)
+    unread_only = request.query_params.get("unread_only", "").lower() == "true"
+    category = request.query_params.get("category")
+
+    items, total = list_user_notifications(
+        request.user,
+        limit=limit,
+        offset=offset,
+        unread_only=unread_only,
+        category=category,
+    )
+
+    serializer = NotificationSerializer(items, many=True)
+
+    return Response(
+        {
+            "count": total,
+            "limit": limit,
+            "offset": offset,
+            "unread_count": get_unread_notification_count(request.user),
+            "results": serializer.data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAudit])
+def notification_unread_count_view(request):
+    """
+    Get unread notification count for navbar/header badge.
+
+    GET /api/accounts/notifications/unread-count/
+    """
+    return Response(
+        {"unread_count": get_unread_notification_count(request.user)},
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAudit])
+def notification_mark_read_view(request, notification_id):
+    """
+    Mark one notification as read.
+
+    POST /api/accounts/notifications/<notification_id>/mark-read/
+    """
+    notification = mark_notification_read(request.user, notification_id)
+
+    if notification is None:
+        return Response(
+            {"detail": "Notification not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    return Response(
+        {
+            "detail": "Notification marked as read.",
+            "notification": NotificationSerializer(notification).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAudit])
+def notification_mark_all_read_view(request):
+    """
+    Mark all user notifications as read.
+
+    POST /api/accounts/notifications/mark-all-read/
+    """
+    updated_count = mark_all_notifications_read(request.user)
+
+    return Response(
+        {
+            "detail": "All notifications marked as read.",
+            "updated_count": updated_count,
+            "unread_count": get_unread_notification_count(request.user),
+        },
+        status=status.HTTP_200_OK,
+    )

@@ -320,6 +320,10 @@ class Ticket(models.Model):
     def qr_payload(self):
         return str(self.ticket_code)
 
+    @property
+    def qr_download_filename(self):
+        return f"league-os-ticket-{self.id}.svg"
+
 
 class TicketValidationLog(models.Model):
     """

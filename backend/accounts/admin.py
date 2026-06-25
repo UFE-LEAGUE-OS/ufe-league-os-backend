@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import AuditLog, EmailOTP, User
+from .models import AuditLog, EmailOTP, Notification, User
 from .rbac import log_role_change
 
 
@@ -137,6 +137,25 @@ class AuditLogAdmin(admin.ModelAdmin):
     list_filter = ("category", "action", "created_at")
     search_fields = ("actor__email", "target_user__email", "action", "path")
     readonly_fields = ("created_at",)
+    ordering = ("-created_at",)
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    """Django admin configuration for in-app notifications."""
+
+    list_display = (
+        "user",
+        "event_type",
+        "category",
+        "priority",
+        "title",
+        "is_read",
+        "created_at",
+    )
+    list_filter = ("event_type", "category", "priority", "is_read", "created_at")
+    search_fields = ("user__email", "title", "message")
+    readonly_fields = ("created_at", "read_at")
     ordering = ("-created_at",)
 
 

@@ -7,6 +7,9 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from accounts.models import Notification, NotificationPreference
+from accounts.services import create_in_app_notification
+
 from dashboards.models import Match
 from ticketing.models import (
     Ticket,
@@ -310,6 +313,21 @@ def confirm_ticket_order_payment(
             ]
         )
 
+        create_in_app_notification(
+            user=locked_order.buyer,
+            event_type=NotificationPreference.EventType.TICKET_UPDATES,
+            category=Notification.Category.TICKET,
+            priority=Notification.Priority.HIGH,
+            title="QR ticket issued",
+            message="Your ticket payment was confirmed and your QR ticket is ready.",
+            action_url="/dashboard/tickets",
+            metadata={
+                "order_id": locked_order.id,
+                "tickets_count": len(issued_tickets),
+                "payment_reference": locked_order.payment_reference,
+            },
+        )
+
         return locked_order, issued_tickets
 
 
@@ -348,6 +366,13 @@ def mark_ticket_order_payment_failed(
         return locked_order
 
 
+def normalize_scanned_ticket_code(scanned_code):
+    value = str(scanned_code or "").strip()
+    if value.startswith("LOS-TICKET:"):
+        return value.split(":", 1)[1].strip()
+    return value
+
+
 def validate_ticket_code(scanned_code, scanned_by, match_id=None):
     """
     Validate and check in a ticket.
@@ -355,7 +380,7 @@ def validate_ticket_code(scanned_code, scanned_by, match_id=None):
     Invalid scans are still logged for audit purposes.
     """
 
-    scanned_code = str(scanned_code or "").strip()
+    scanned_code = normalize_scanned_ticket_code(scanned_code)
 
     with transaction.atomic():
         ticket = (

@@ -1,3 +1,5 @@
+from io import BytesIO
+from django.http import HttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import OpenApiExample, OpenApiResponse, extend_schema
@@ -5,6 +7,8 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+import qrcode
+import qrcode.image.svg
 
 from accounts.models import User
 from dashboards.models import Match
@@ -548,3 +552,42 @@ def expire_ticket_reservations_view(request):
         },
         status=status.HTTP_200_OK,
     )
+
+
+@extend_schema(
+    tags=["Ticketing"],
+    summary="Get ticket QR code as SVG",
+    description=(
+        "Returns a real scannable SVG QR code for an authenticated ticket owner. "
+        "The QR payload can be scanned and submitted to the ticket validation endpoint."
+    ),
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def ticket_qr_svg_view(request, ticket_id):
+    ticket = Ticket.objects.filter(id=ticket_id, owner=request.user).first()
+
+    if ticket is None:
+        return Response(
+            {"detail": "Ticket not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    qr_image = qrcode.make(
+        f"LOS-TICKET:{ticket.ticket_code}",
+        image_factory=qrcode.image.svg.SvgImage,
+        box_size=10,
+        border=4,
+    )
+
+    buffer = BytesIO()
+    qr_image.save(buffer)
+
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type="image/svg+xml",
+    )
+    response["Content-Disposition"] = (
+        f'inline; filename="{ticket.qr_download_filename}"'
+    )
+    return response

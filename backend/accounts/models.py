@@ -272,6 +272,70 @@ class NotificationPreference(models.Model):
         return f"{self.user.email} - {self.event_type}"
 
 
+class Notification(models.Model):
+    """
+    In-app notification shown in the frontend notification inbox.
+
+    NotificationPreference controls whether a user wants a category/channel.
+    This model stores the actual notifications the frontend displays.
+    """
+
+    class Category(models.TextChoices):
+        TICKET = "TICKET", "Ticket"
+        PAYMENT = "PAYMENT", "Payment"
+        MEMBERSHIP = "MEMBERSHIP", "Membership"
+        SPONSORSHIP = "SPONSORSHIP", "Sponsorship"
+        FANTASY = "FANTASY", "Fantasy"
+        MATCH = "MATCH", "Match"
+        CLUB = "CLUB", "Club"
+        SYSTEM = "SYSTEM", "System"
+
+    class Priority(models.TextChoices):
+        LOW = "LOW", "Low"
+        NORMAL = "NORMAL", "Normal"
+        HIGH = "HIGH", "High"
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    event_type = models.CharField(
+        max_length=30,
+        choices=NotificationPreference.EventType.choices,
+    )
+    category = models.CharField(
+        max_length=30,
+        choices=Category.choices,
+        default=Category.SYSTEM,
+    )
+    priority = models.CharField(
+        max_length=20,
+        choices=Priority.choices,
+        default=Priority.NORMAL,
+    )
+    title = models.CharField(max_length=200)
+    message = models.TextField(blank=True)
+    action_url = models.CharField(max_length=500, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "is_read", "created_at"]),
+            models.Index(fields=["user", "category", "created_at"]),
+            models.Index(fields=["event_type"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} - {self.title}"
+
+
 class InterestPreference(models.Model):
     """
     Stores a fan's interest and privacy preferences.
