@@ -46,9 +46,7 @@ class Command(BaseCommand):
 
             updated_subscriptions += 1
             updated_cards += 1
-            self.stdout.write(
-                f"Expired: {subscription}"
-            )
+            self.stdout.write(f"Expired: {subscription}")
 
         self.stdout.write(
             self.style.SUCCESS(

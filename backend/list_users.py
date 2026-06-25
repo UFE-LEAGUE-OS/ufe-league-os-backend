@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Django standalone script to list all user emails from the accounts app."""
+
 import os
 import sys
 import django

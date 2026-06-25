@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Django standalone script to delete users by email address."""
+
 import os
 import sys
 import django

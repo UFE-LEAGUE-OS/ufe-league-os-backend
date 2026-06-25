@@ -1,11 +1,23 @@
 from django.contrib import admin
 
-from .models import MembershipCard, MembershipPayment, MembershipPlan, MembershipSubscription
+from .models import (
+    MembershipCard,
+    MembershipPayment,
+    MembershipPlan,
+    MembershipSubscription,
+)
 
 
 @admin.register(MembershipPlan)
 class MembershipPlanAdmin(admin.ModelAdmin):
-    list_display = ("club", "name", "tier", "billing_cycle", "price_amount", "is_active")
+    list_display = (
+        "club",
+        "name",
+        "tier",
+        "billing_cycle",
+        "price_amount",
+        "is_active",
+    )
     list_filter = ("tier", "billing_cycle", "is_active")
     search_fields = ("club__name", "name")
 
@@ -26,6 +38,14 @@ class MembershipPaymentAdmin(admin.ModelAdmin):
 
 @admin.register(MembershipCard)
 class MembershipCardAdmin(admin.ModelAdmin):
-    list_display = ("user", "club", "card_number", "tier", "valid_from", "valid_until", "status")
+    list_display = (
+        "user",
+        "club",
+        "card_number",
+        "tier",
+        "valid_from",
+        "valid_until",
+        "status",
+    )
     list_filter = ("status", "tier")
     search_fields = ("user__email", "club__name", "card_number")

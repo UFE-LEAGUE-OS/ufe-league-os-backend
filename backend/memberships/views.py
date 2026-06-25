@@ -12,7 +12,12 @@ from rest_framework.response import Response
 
 from accounts.models import Club, User
 
-from .models import MembershipCard, MembershipPayment, MembershipPlan, MembershipSubscription
+from .models import (
+    MembershipCard,
+    MembershipPayment,
+    MembershipPlan,
+    MembershipSubscription,
+)
 from .serializers import (
     MembershipCardSerializer,
     MembershipPaymentSerializer,
@@ -248,8 +253,7 @@ def membership_card_view(request):
             "card_number": f"MEM-{subscription.club.slug.upper()}-{uuid4().hex[:8].upper()}",
             "qr_code_data": f"membership:{subscription.id}:{request.user.id}",
             "valid_from": timezone.now(),
-            "valid_until": timezone.now()
-            + timedelta(days=30),
+            "valid_until": timezone.now() + timedelta(days=30),
         },
     )
 
@@ -263,7 +267,9 @@ def membership_card_view(request):
 @permission_classes([IsAuthenticated])
 def membership_payments_view(request):
     subscription_id = request.query_params.get("subscription")
-    queryset = MembershipPayment.objects.select_related("subscription", "subscription_plan")
+    queryset = MembershipPayment.objects.select_related(
+        "subscription", "subscription_plan"
+    )
 
     if subscription_id:
         queryset = queryset.filter(subscription_id=subscription_id)
@@ -343,16 +349,20 @@ def membership_initiate_payment_view(request):
             if payment_method == MembershipPayment.PaymentMethod.MANUAL
             else MembershipPayment.Status.PENDING
         ),
-        paid_at=timezone.now()
-        if payment_method == MembershipPayment.PaymentMethod.MANUAL
-        else None,
+        paid_at=(
+            timezone.now()
+            if payment_method == MembershipPayment.PaymentMethod.MANUAL
+            else None
+        ),
     )
 
     if payment.status == MembershipPayment.Status.CONFIRMED:
         subscription.status = MembershipSubscription.Status.ACTIVE
         subscription.starts_at = timezone.now()
         subscription.ends_at = timezone.now() + timedelta(days=30)
-        subscription.save(update_fields=["status", "starts_at", "ends_at", "updated_at"])
+        subscription.save(
+            update_fields=["status", "starts_at", "ends_at", "updated_at"]
+        )
 
     return Response(
         {
@@ -396,7 +406,9 @@ def membership_payment_webhook_view(request):
     if status_value in {"CONFIRMED", "SUCCESSFUL", "SUCCESS"}:
         payment.status = MembershipPayment.Status.CONFIRMED
         payment.paid_at = timezone.now()
-        payment.provider_transaction_id = request.data.get("provider_transaction_id", "")
+        payment.provider_transaction_id = request.data.get(
+            "provider_transaction_id", ""
+        )
 
         subscription = payment.subscription
         subscription.status = MembershipSubscription.Status.ACTIVE
