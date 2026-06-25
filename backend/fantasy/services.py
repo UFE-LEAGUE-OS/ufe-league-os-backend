@@ -117,7 +117,6 @@ def calculate_suggested_player_price(
     price = max(price, competition.min_player_price)
     price = min(price, competition.max_player_price)
 
-    # Round to nearest 0.5 fantasy credits.
     price = (price * 2).quantize(Decimal("1")) / 2
     return price.quantize(Decimal("0.01"))
 
@@ -561,3 +560,247 @@ def close_gameweek(gameweek):
     gameweek.status = FantasyGameweek.Status.COMPLETED
     gameweek.save(update_fields=["status", "updated_at"])
     return scores
+
+
+def get_fantasy_admin_dashboard_summary(fantasy_competition_id=None):
+    """
+    Build a summary for the Fantasy Admin Dashboard.
+
+    This avoids making the frontend call many separate endpoints just to load
+    the admin dashboard cards.
+    """
+
+    competitions = FantasyCompetition.objects.all()
+    gameweeks = FantasyGameweek.objects.all()
+    players = FantasyPlayer.objects.all()
+    teams = FantasyTeam.objects.all()
+    leagues = FantasyLeague.objects.all()
+    player_scores = FantasyPlayerGameweekScore.objects.all()
+
+    if fantasy_competition_id:
+        competitions = competitions.filter(id=fantasy_competition_id)
+        gameweeks = gameweeks.filter(fantasy_competition_id=fantasy_competition_id)
+        players = players.filter(fantasy_competition_id=fantasy_competition_id)
+        teams = teams.filter(fantasy_competition_id=fantasy_competition_id)
+        leagues = leagues.filter(fantasy_competition_id=fantasy_competition_id)
+        player_scores = player_scores.filter(
+            gameweek__fantasy_competition_id=fantasy_competition_id
+        )
+
+    return {
+        "competitions_count": competitions.count(),
+        "open_competitions_count": competitions.filter(
+            status=FantasyCompetition.Status.OPEN
+        ).count(),
+        "gameweeks_count": gameweeks.count(),
+        "open_gameweeks_count": gameweeks.filter(
+            status=FantasyGameweek.Status.OPEN
+        ).count(),
+        "locked_gameweeks_count": gameweeks.filter(
+            status=FantasyGameweek.Status.LOCKED
+        ).count(),
+        "completed_gameweeks_count": gameweeks.filter(
+            status=FantasyGameweek.Status.COMPLETED
+        ).count(),
+        "players_count": players.count(),
+        "available_players_count": players.filter(
+            is_active=True,
+            is_available=True,
+        ).count(),
+        "teams_count": teams.count(),
+        "leagues_count": leagues.count(),
+        "public_leagues_count": leagues.filter(
+            league_type=FantasyLeague.LeagueType.PUBLIC
+        ).count(),
+        "private_leagues_count": leagues.filter(
+            league_type=FantasyLeague.LeagueType.PRIVATE
+        ).count(),
+        "draft_scores_count": player_scores.filter(
+            status=FantasyPlayerGameweekScore.Status.DRAFT
+        ).count(),
+        "submitted_scores_count": player_scores.filter(
+            status=FantasyPlayerGameweekScore.Status.SUBMITTED
+        ).count(),
+        "approved_scores_count": player_scores.filter(
+            status=FantasyPlayerGameweekScore.Status.APPROVED
+        ).count(),
+        "rejected_scores_count": player_scores.filter(
+            status=FantasyPlayerGameweekScore.Status.REJECTED
+        ).count(),
+    }
+
+
+def update_fantasy_competition_settings(competition, data, updated_by):
+    """
+    Update fantasy competition settings.
+
+    This is admin-only business logic.
+    """
+    require_fantasy_manager(updated_by)
+
+    editable_fields = [
+        "name",
+        "season",
+        "status",
+        "budget",
+        "squad_size",
+        "lineup_size",
+        "max_players_per_club",
+        "captain_multiplier",
+        "min_player_price",
+        "max_player_price",
+        "default_player_price",
+        "rules_summary",
+    ]
+
+    for field in editable_fields:
+        if field in data:
+            setattr(competition, field, data[field])
+
+    competition.save()
+    return competition
+
+
+def update_fantasy_gameweek_settings(gameweek, data, updated_by):
+    """
+    Update fantasy gameweek setup.
+
+    This handles normal fields plus the many-to-many match selection.
+    """
+    require_fantasy_manager(updated_by)
+
+    matches = data.pop("matches", None)
+
+    editable_fields = [
+        "name",
+        "number",
+        "start_at",
+        "lock_at",
+        "end_at",
+        "status",
+    ]
+
+    for field in editable_fields:
+        if field in data:
+            setattr(gameweek, field, data[field])
+
+    gameweek.save()
+
+    if matches is not None:
+        gameweek.matches.set(matches)
+
+    return gameweek
+
+
+def update_fantasy_player_admin(player, data, updated_by):
+    """
+    Update fantasy player details, availability, stats, and price.
+
+    Pricing rules:
+    - If recalculate_price=true, the system recalculates from previous_stats.
+    - If final_price is supplied directly, it becomes a manual override.
+    """
+    require_fantasy_manager(updated_by)
+
+    recalculate_price = data.pop("recalculate_price", False)
+
+    club_id = data.pop("club", None)
+    if club_id:
+        from accounts.models import Club
+
+        club = Club.objects.filter(id=club_id).first()
+        if club is None:
+            raise ValidationError({"club": "Club was not found."})
+        player.club = club
+
+    editable_fields = [
+        "display_name",
+        "position",
+        "previous_stats",
+        "current_form",
+        "is_active",
+        "is_available",
+        "availability_note",
+    ]
+
+    for field in editable_fields:
+        if field in data:
+            setattr(player, field, data[field])
+
+    if recalculate_price:
+        calculated_price = calculate_suggested_player_price(
+            player.fantasy_competition,
+            previous_stats=player.previous_stats,
+        )
+        player.calculated_price = calculated_price
+        player.final_price = calculated_price
+        player.price_source = FantasyPlayer.PriceSource.AUTO
+        player.price_override_reason = ""
+        player.price_locked_at = None
+
+    if "final_price" in data:
+        player.final_price = data["final_price"]
+        player.price_source = FantasyPlayer.PriceSource.MANUAL
+        player.price_override_reason = data.get("price_override_reason", "")
+        player.price_locked_at = timezone.now()
+
+    player.save()
+    return player
+
+
+def update_fantasy_player_score_admin(score, data, updated_by):
+    """
+    Update a fantasy player score.
+
+    Score status rules:
+    - DRAFT/SUBMITTED can be set by fantasy managers.
+    - APPROVED/REJECTED requires League/Union/Super Admin approval permissions.
+    """
+    require_fantasy_manager(updated_by)
+
+    if "match_id" in data:
+        match_id = data["match_id"]
+        if match_id is None:
+            score.match = None
+        else:
+            match = Match.objects.filter(id=match_id).first()
+            if match is None:
+                raise ValidationError({"match_id": "Match was not found."})
+            score.match = match
+
+    if "points" in data:
+        score.points = data["points"]
+
+    if "breakdown" in data:
+        score.breakdown = data["breakdown"]
+
+    if "status" in data:
+        new_status = data["status"]
+
+        if new_status in [
+            FantasyPlayerGameweekScore.Status.APPROVED,
+            FantasyPlayerGameweekScore.Status.REJECTED,
+        ]:
+            require_fantasy_score_approver(updated_by)
+            score.approved_by = updated_by
+            score.approved_at = timezone.now()
+
+        score.status = new_status
+
+    score.save()
+    return score
+
+
+def reject_player_score(score, rejected_by):
+    """
+    Reject a submitted player score.
+
+    Rejection is treated like an approval decision, so only approval roles can do it.
+    """
+    require_fantasy_score_approver(rejected_by)
+
+    score.status = FantasyPlayerGameweekScore.Status.REJECTED
+    score.approved_by = rejected_by
+    score.approved_at = timezone.now()
+    score.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
+    return score

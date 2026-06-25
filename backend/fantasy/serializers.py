@@ -1,4 +1,8 @@
+from decimal import Decimal
+
 from rest_framework import serializers
+
+from dashboards.models import Match
 
 from .models import (
     FantasyCompetition,
@@ -506,3 +510,208 @@ class FantasyTeamGameweekScoreSerializer(serializers.ModelSerializer):
             "calculated_at",
         ]
         read_only_fields = fields
+
+
+class FantasyCompetitionAdminUpdateSerializer(serializers.Serializer):
+    """
+    Admin serializer for updating fantasy competition settings.
+
+    Used by:
+    - Fantasy Competition Setup
+    - Fantasy Admin Dashboard
+    """
+
+    name = serializers.CharField(max_length=200, required=False)
+    season = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    status = serializers.ChoiceField(
+        choices=FantasyCompetition.Status.choices,
+        required=False,
+    )
+    budget = serializers.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal("0.00"),
+    )
+    squad_size = serializers.IntegerField(required=False, min_value=1)
+    lineup_size = serializers.IntegerField(required=False, min_value=1)
+    max_players_per_club = serializers.IntegerField(required=False, min_value=1)
+    captain_multiplier = serializers.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal("1.00"),
+    )
+    min_player_price = serializers.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal("0.00"),
+    )
+    max_player_price = serializers.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal("0.00"),
+    )
+    default_player_price = serializers.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal("0.00"),
+    )
+    rules_summary = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        competition = self.context.get("competition")
+
+        squad_size = attrs.get(
+            "squad_size",
+            competition.squad_size if competition else None,
+        )
+        lineup_size = attrs.get(
+            "lineup_size",
+            competition.lineup_size if competition else None,
+        )
+
+        if squad_size and lineup_size and lineup_size > squad_size:
+            raise serializers.ValidationError(
+                {"lineup_size": "Lineup size cannot be greater than squad size."}
+            )
+
+        min_price = attrs.get(
+            "min_player_price",
+            competition.min_player_price if competition else None,
+        )
+        max_price = attrs.get(
+            "max_player_price",
+            competition.max_player_price if competition else None,
+        )
+        default_price = attrs.get(
+            "default_player_price",
+            competition.default_player_price if competition else None,
+        )
+
+        if min_price is not None and max_price is not None and min_price > max_price:
+            raise serializers.ValidationError(
+                {"min_player_price": "Minimum price cannot exceed maximum price."}
+            )
+
+        if (
+            min_price is not None
+            and max_price is not None
+            and default_price is not None
+            and not min_price <= default_price <= max_price
+        ):
+            raise serializers.ValidationError(
+                {
+                    "default_player_price": (
+                        "Default player price must be between minimum and maximum price."
+                    )
+                }
+            )
+
+        return attrs
+
+
+class FantasyGameweekAdminUpdateSerializer(serializers.Serializer):
+    """
+    Admin serializer for updating fantasy gameweeks.
+
+    Used by:
+    - Gameweek Setup
+    - Score & Gameweek Operations
+    """
+
+    name = serializers.CharField(max_length=120, required=False)
+    number = serializers.IntegerField(required=False, min_value=1)
+    matches = serializers.PrimaryKeyRelatedField(
+        queryset=Match.objects.all(),
+        many=True,
+        required=False,
+    )
+    start_at = serializers.DateTimeField(required=False)
+    lock_at = serializers.DateTimeField(required=False)
+    end_at = serializers.DateTimeField(required=False)
+    status = serializers.ChoiceField(
+        choices=FantasyGameweek.Status.choices,
+        required=False,
+    )
+
+    def validate(self, attrs):
+        gameweek = self.context.get("gameweek")
+
+        start_at = attrs.get("start_at", gameweek.start_at if gameweek else None)
+        lock_at = attrs.get("lock_at", gameweek.lock_at if gameweek else None)
+        end_at = attrs.get("end_at", gameweek.end_at if gameweek else None)
+
+        if start_at and lock_at and lock_at < start_at:
+            raise serializers.ValidationError(
+                {"lock_at": "Lock time cannot be before start time."}
+            )
+
+        if lock_at and end_at and end_at < lock_at:
+            raise serializers.ValidationError(
+                {"end_at": "End time cannot be before lock time."}
+            )
+
+        return attrs
+
+
+class FantasyPlayerAdminUpdateSerializer(serializers.Serializer):
+    """
+    Admin serializer for player market and player pricing updates.
+
+    Used by:
+    - Player Pricing
+    - Player Market admin table
+    """
+
+    display_name = serializers.CharField(max_length=160, required=False)
+    club = serializers.IntegerField(required=False, min_value=1)
+    position = serializers.ChoiceField(
+        choices=FantasyPlayer.Position.choices,
+        required=False,
+    )
+    previous_stats = serializers.DictField(required=False)
+    current_form = serializers.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        required=False,
+    )
+    final_price = serializers.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal("0.00"),
+    )
+    price_override_reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+    )
+    recalculate_price = serializers.BooleanField(required=False, default=False)
+    is_active = serializers.BooleanField(required=False)
+    is_available = serializers.BooleanField(required=False)
+    availability_note = serializers.CharField(
+        max_length=255,
+        required=False,
+        allow_blank=True,
+    )
+
+
+class FantasyPlayerScoreAdminUpdateSerializer(serializers.Serializer):
+    """
+    Admin serializer for updating a submitted player score.
+
+    Used by:
+    - Score & Gameweek Operations
+    """
+
+    match_id = serializers.IntegerField(required=False, allow_null=True)
+    points = serializers.DecimalField(max_digits=8, decimal_places=2, required=False)
+    breakdown = serializers.DictField(required=False)
+    status = serializers.ChoiceField(
+        choices=FantasyPlayerGameweekScore.Status.choices,
+        required=False,
+    )

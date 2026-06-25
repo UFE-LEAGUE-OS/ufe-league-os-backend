@@ -17,6 +17,10 @@ from .models import (
     FantasyTeamGameweekScore,
 )
 from .serializers import (
+    FantasyCompetitionAdminUpdateSerializer,
+    FantasyGameweekAdminUpdateSerializer,
+    FantasyPlayerAdminUpdateSerializer,
+    FantasyPlayerScoreAdminUpdateSerializer,
     FantasyCompetitionSerializer,
     FantasyGameweekSerializer,
     FantasyLeagueCreateSerializer,
@@ -35,6 +39,12 @@ from .serializers import (
     FantasyTeamSerializer,
 )
 from .services import (
+    get_fantasy_admin_dashboard_summary,
+    reject_player_score,
+    update_fantasy_competition_settings,
+    update_fantasy_gameweek_settings,
+    update_fantasy_player_admin,
+    update_fantasy_player_score_admin,
     approve_player_score,
     calculate_gameweek_scores,
     close_gameweek,
@@ -679,10 +689,38 @@ def fantasy_gameweek_leaderboard_view(request, gameweek_id):
 
 
 @extend_schema(tags=["Fantasy Admin"])
-@api_view(["POST"])
+@api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def admin_fantasy_competition_create_view(request):
+    """
+    List or create fantasy competitions.
+
+    GET:
+    - Fantasy Admin Dashboard
+    - Fantasy Competition Setup
+
+    POST:
+    - Create new fantasy competition
+    """
     require_fantasy_manager(request.user)
+
+    if request.method == "GET":
+        queryset = FantasyCompetition.objects.select_related("linked_competition").all()
+
+        sport = request.query_params.get("sport")
+        status_filter = request.query_params.get("status")
+        search = request.query_params.get("search")
+
+        if sport:
+            queryset = queryset.filter(sport=str(sport).upper())
+
+        if status_filter:
+            queryset = queryset.filter(status=str(status_filter).upper())
+
+        if search:
+            queryset = queryset.filter(name__icontains=search)
+
+        return _paginated_response(queryset, FantasyCompetitionSerializer, request)
 
     serializer = FantasyCompetitionSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -698,10 +736,35 @@ def admin_fantasy_competition_create_view(request):
 
 
 @extend_schema(tags=["Fantasy Admin"])
-@api_view(["POST"])
+@api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def admin_fantasy_gameweek_create_view(request):
+    """
+    List or create fantasy gameweeks.
+
+    Frontend screen use:
+    - Gameweek Setup
+    - Score & Gameweek Operations
+    """
     require_fantasy_manager(request.user)
+
+    if request.method == "GET":
+        queryset = (
+            FantasyGameweek.objects.select_related("fantasy_competition")
+            .prefetch_related("matches")
+            .all()
+        )
+
+        competition_id = request.query_params.get("competition")
+        status_filter = request.query_params.get("status")
+
+        if competition_id:
+            queryset = queryset.filter(fantasy_competition_id=competition_id)
+
+        if status_filter:
+            queryset = queryset.filter(status=str(status_filter).upper())
+
+        return _paginated_response(queryset, FantasyGameweekSerializer, request)
 
     serializer = FantasyGameweekSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -717,10 +780,46 @@ def admin_fantasy_gameweek_create_view(request):
 
 
 @extend_schema(tags=["Fantasy Admin"])
-@api_view(["POST"])
+@api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def admin_fantasy_player_create_view(request):
+    """
+    List or create fantasy players.
+
+    Frontend screen use:
+    - Player Pricing
+    - Player Market admin table
+    """
     require_fantasy_manager(request.user)
+
+    if request.method == "GET":
+        queryset = FantasyPlayer.objects.select_related(
+            "fantasy_competition",
+            "club",
+        ).all()
+
+        competition_id = request.query_params.get("competition")
+        club_id = request.query_params.get("club")
+        position = request.query_params.get("position")
+        available = request.query_params.get("available")
+        search = request.query_params.get("search")
+
+        if competition_id:
+            queryset = queryset.filter(fantasy_competition_id=competition_id)
+
+        if club_id:
+            queryset = queryset.filter(club_id=club_id)
+
+        if position:
+            queryset = queryset.filter(position=str(position).upper())
+
+        if available == "true":
+            queryset = queryset.filter(is_active=True, is_available=True)
+
+        if search:
+            queryset = queryset.filter(display_name__icontains=search)
+
+        return _paginated_response(queryset, FantasyPlayerSerializer, request)
 
     serializer = FantasyPlayerSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -763,21 +862,16 @@ def admin_fantasy_player_price_update_view(request, player_id):
     serializer = FantasyPlayerPriceUpdateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
-    player.final_price = serializer.validated_data["final_price"]
-    player.price_override_reason = serializer.validated_data.get(
-        "price_override_reason",
-        "",
-    )
-    player.price_source = FantasyPlayer.PriceSource.MANUAL
-    player.price_locked_at = None
-    player.save(
-        update_fields=[
-            "final_price",
-            "price_override_reason",
-            "price_source",
-            "price_locked_at",
-            "updated_at",
-        ]
+    player = update_fantasy_player_admin(
+        player=player,
+        data={
+            "final_price": serializer.validated_data["final_price"],
+            "price_override_reason": serializer.validated_data.get(
+                "price_override_reason",
+                "",
+            ),
+        },
+        updated_by=request.user,
     )
 
     return Response(
@@ -790,9 +884,15 @@ def admin_fantasy_player_price_update_view(request, player_id):
 
 
 @extend_schema(tags=["Fantasy Admin"])
-@api_view(["POST"])
+@api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def admin_gameweek_player_score_view(request, gameweek_id):
+    """
+    List or create/update player scores for a gameweek.
+
+    Frontend screen use:
+    - Score & Gameweek Operations
+    """
     require_fantasy_manager(request.user)
 
     gameweek = FantasyGameweek.objects.filter(id=gameweek_id).first()
@@ -800,6 +900,30 @@ def admin_gameweek_player_score_view(request, gameweek_id):
         return Response(
             {"detail": "Fantasy gameweek not found."},
             status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "GET":
+        queryset = (
+            FantasyPlayerGameweekScore.objects.filter(gameweek=gameweek)
+            .select_related(
+                "fantasy_player",
+                "fantasy_player__club",
+                "gameweek",
+                "match",
+                "entered_by",
+                "approved_by",
+            )
+            .order_by("fantasy_player__display_name")
+        )
+
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            queryset = queryset.filter(status=str(status_filter).upper())
+
+        return _paginated_response(
+            queryset,
+            FantasyPlayerGameweekScoreSerializer,
+            request,
         )
 
     serializer = FantasyPlayerScoreSubmitSerializer(data=request.data)
@@ -891,6 +1015,314 @@ def admin_gameweek_close_view(request, gameweek_id):
             "message": "Fantasy gameweek closed successfully.",
             "gameweek": FantasyGameweekSerializer(gameweek).data,
             "scores": FantasyTeamGameweekScoreSerializer(scores, many=True).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@extend_schema(tags=["Fantasy Admin"])
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def admin_fantasy_dashboard_view(request):
+    """
+    Fantasy Admin Dashboard summary.
+
+    Frontend screen use:
+    - Fantasy Admin Dashboard
+    """
+    require_fantasy_manager(request.user)
+
+    competition_id = request.query_params.get("competition")
+    summary = get_fantasy_admin_dashboard_summary(
+        fantasy_competition_id=competition_id,
+    )
+
+    return Response(
+        {"summary": summary},
+        status=status.HTTP_200_OK,
+    )
+
+
+@extend_schema(tags=["Fantasy Admin"])
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def admin_fantasy_competition_detail_update_view(request, competition_id):
+    """
+    Retrieve or update a fantasy competition.
+
+    Frontend screen use:
+    - Fantasy Competition Setup
+    """
+    require_fantasy_manager(request.user)
+
+    competition = (
+        FantasyCompetition.objects.select_related("linked_competition")
+        .filter(id=competition_id)
+        .first()
+    )
+
+    if competition is None:
+        return Response(
+            {"detail": "Fantasy competition not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "GET":
+        return Response(
+            {
+                "competition": FantasyCompetitionSerializer(competition).data,
+                "summary": get_fantasy_admin_dashboard_summary(
+                    fantasy_competition_id=competition.id
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    serializer = FantasyCompetitionAdminUpdateSerializer(
+        data=request.data,
+        partial=True,
+        context={"competition": competition},
+    )
+    serializer.is_valid(raise_exception=True)
+
+    competition = update_fantasy_competition_settings(
+        competition=competition,
+        data=serializer.validated_data,
+        updated_by=request.user,
+    )
+
+    return Response(
+        {
+            "message": "Fantasy competition updated successfully.",
+            "competition": FantasyCompetitionSerializer(competition).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@extend_schema(tags=["Fantasy Admin"])
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def admin_fantasy_gameweek_detail_update_view(request, gameweek_id):
+    """
+    Retrieve or update a fantasy gameweek.
+
+    Frontend screen use:
+    - Gameweek Setup
+    - Score & Gameweek Operations
+    """
+    require_fantasy_manager(request.user)
+
+    gameweek = (
+        FantasyGameweek.objects.select_related("fantasy_competition")
+        .prefetch_related("matches")
+        .filter(id=gameweek_id)
+        .first()
+    )
+
+    if gameweek is None:
+        return Response(
+            {"detail": "Fantasy gameweek not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "GET":
+        return Response(
+            {"gameweek": FantasyGameweekSerializer(gameweek).data},
+            status=status.HTTP_200_OK,
+        )
+
+    serializer = FantasyGameweekAdminUpdateSerializer(
+        data=request.data,
+        partial=True,
+        context={"gameweek": gameweek},
+    )
+    serializer.is_valid(raise_exception=True)
+
+    gameweek = update_fantasy_gameweek_settings(
+        gameweek=gameweek,
+        data=serializer.validated_data,
+        updated_by=request.user,
+    )
+
+    return Response(
+        {
+            "message": "Fantasy gameweek updated successfully.",
+            "gameweek": FantasyGameweekSerializer(gameweek).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@extend_schema(tags=["Fantasy Admin"])
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def admin_fantasy_player_detail_update_view(request, player_id):
+    """
+    Retrieve or update a fantasy player.
+
+    Frontend screen use:
+    - Player Pricing
+    - Player Market admin table
+    """
+    require_fantasy_manager(request.user)
+
+    player = (
+        FantasyPlayer.objects.select_related("fantasy_competition", "club")
+        .filter(id=player_id)
+        .first()
+    )
+
+    if player is None:
+        return Response(
+            {"detail": "Fantasy player not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "GET":
+        return Response(
+            {"player": FantasyPlayerSerializer(player).data},
+            status=status.HTTP_200_OK,
+        )
+
+    serializer = FantasyPlayerAdminUpdateSerializer(
+        data=request.data,
+        partial=True,
+    )
+    serializer.is_valid(raise_exception=True)
+
+    player = update_fantasy_player_admin(
+        player=player,
+        data=serializer.validated_data,
+        updated_by=request.user,
+    )
+
+    return Response(
+        {
+            "message": "Fantasy player updated successfully.",
+            "player": FantasyPlayerSerializer(player).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@extend_schema(tags=["Fantasy Admin"])
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def admin_fantasy_player_recalculate_price_view(request, player_id):
+    """
+    Recalculate one fantasy player's price from previous stats.
+
+    Frontend screen use:
+    - Player Pricing
+    """
+    require_fantasy_manager(request.user)
+
+    player = FantasyPlayer.objects.filter(id=player_id).first()
+
+    if player is None:
+        return Response(
+            {"detail": "Fantasy player not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    player = update_fantasy_player_admin(
+        player=player,
+        data={"recalculate_price": True},
+        updated_by=request.user,
+    )
+
+    return Response(
+        {
+            "message": "Fantasy player price recalculated successfully.",
+            "player": FantasyPlayerSerializer(player).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@extend_schema(tags=["Fantasy Admin"])
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def admin_player_score_detail_update_view(request, score_id):
+    """
+    Retrieve or update a fantasy player score.
+
+    Frontend screen use:
+    - Score & Gameweek Operations
+    """
+    require_fantasy_manager(request.user)
+
+    score = (
+        FantasyPlayerGameweekScore.objects.select_related(
+            "fantasy_player",
+            "fantasy_player__club",
+            "gameweek",
+            "match",
+            "entered_by",
+            "approved_by",
+        )
+        .filter(id=score_id)
+        .first()
+    )
+
+    if score is None:
+        return Response(
+            {"detail": "Fantasy player score not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "GET":
+        return Response(
+            {"score": FantasyPlayerGameweekScoreSerializer(score).data},
+            status=status.HTTP_200_OK,
+        )
+
+    serializer = FantasyPlayerScoreAdminUpdateSerializer(
+        data=request.data,
+        partial=True,
+    )
+    serializer.is_valid(raise_exception=True)
+
+    score = update_fantasy_player_score_admin(
+        score=score,
+        data=serializer.validated_data,
+        updated_by=request.user,
+    )
+
+    return Response(
+        {
+            "message": "Fantasy player score updated successfully.",
+            "score": FantasyPlayerGameweekScoreSerializer(score).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@extend_schema(tags=["Fantasy Admin"])
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def admin_player_score_reject_view(request, score_id):
+    """
+    Reject a fantasy player score.
+
+    Frontend screen use:
+    - Score & Gameweek Operations
+    """
+    score = FantasyPlayerGameweekScore.objects.filter(id=score_id).first()
+
+    if score is None:
+        return Response(
+            {"detail": "Fantasy player score not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    score = reject_player_score(score, rejected_by=request.user)
+
+    return Response(
+        {
+            "message": "Fantasy player score rejected successfully.",
+            "score": FantasyPlayerGameweekScoreSerializer(score).data,
         },
         status=status.HTTP_200_OK,
     )
