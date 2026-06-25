@@ -1,4 +1,4 @@
-from .models import AuditLog, User
+from .models import AuditLog, RoleApproval, User
 
 ROLE_PERMISSIONS = {
     User.Role.FAN: {
@@ -58,6 +58,110 @@ BACKEND_DASHBOARD_ROUTES = {
 }
 
 # ---------------------------------------------------------------------------
+# Sensitive roles requiring dual-admin approval
+# When a SUPER_ADMIN assigns these roles, a RoleApproval record is created
+# and another SUPER_ADMIN must approve it before the role change takes effect.
+# ---------------------------------------------------------------------------
+SENSITIVE_ROLES = {
+    User.Role.UNION_ADMIN,
+    User.Role.SUPER_ADMIN,
+}
+
+
+def is_sensitive_role(role):
+    """Return True if the given role requires dual-admin approval."""
+    return role in SENSITIVE_ROLES
+
+
+def create_role_approval(*, target_user, requested_role, requested_by, reason=""):
+    """
+    Create a pending RoleApproval request for a sensitive role assignment.
+
+    The role change is NOT applied immediately. Another SUPER_ADMIN must
+    approve via the approval endpoint.
+    """
+    approval = RoleApproval.objects.create(
+        target_user=target_user,
+        requested_role=requested_role,
+        requested_by=requested_by,
+        status=RoleApproval.Status.PENDING,
+        reason=reason,
+    )
+    log_governance_action(
+        actor=requested_by,
+        action="role_approval_requested",
+        details={
+            "target_user_email": target_user.email,
+            "requested_role": requested_role,
+            "approval_id": approval.id,
+            "reason": reason,
+        },
+    )
+    return approval
+
+
+def approve_role_approval(approval, reviewer, rejection_reason=""):
+    """
+    Approve or reject a RoleApproval request.
+
+    On APPROVED: the target user's role is updated and the change is logged.
+    On REJECTED: the request is marked as rejected, no role change occurs.
+    """
+    if approval.status != RoleApproval.Status.PENDING:
+        raise ValueError(
+            f"Cannot review a request with status '{approval.status}'."
+            " Only PENDING requests can be approved or rejected."
+        )
+
+    if rejection_reason:
+        approval.status = RoleApproval.Status.REJECTED
+        approval.rejection_reason = rejection_reason
+        approval.reviewed_by = reviewer
+        approval.save(
+            update_fields=["status", "rejection_reason", "reviewed_by", "updated_at"]
+        )
+        log_governance_action(
+            actor=reviewer,
+            action="role_approval_rejected",
+            details={
+                "target_user_email": approval.target_user.email,
+                "requested_role": approval.requested_role,
+                "approval_id": approval.id,
+                "rejection_reason": rejection_reason,
+            },
+        )
+        return approval
+
+    # APPROVED
+    previous_role = approval.target_user.role
+    approval.target_user.role = approval.requested_role
+    approval.target_user.save(update_fields=["role"])
+
+    approval.status = RoleApproval.Status.APPROVED
+    approval.reviewed_by = reviewer
+    approval.save(update_fields=["status", "reviewed_by", "updated_at"])
+
+    log_role_change(
+        target_user=approval.target_user,
+        previous_role=previous_role,
+        new_role=approval.requested_role,
+        actor=reviewer,
+        reason=f"role_approval_approved (request #{approval.id})",
+    )
+    log_governance_action(
+        actor=reviewer,
+        action="role_approval_approved",
+        details={
+            "target_user_email": approval.target_user.email,
+            "previous_role": previous_role,
+            "new_role": approval.requested_role,
+            "approval_id": approval.id,
+        },
+    )
+    return approval
+
+
+# ---------------------------------------------------------------------------
 # Role hierarchy for user creation
 # Defines which roles each admin level is allowed to create.
 # Each entry maps (admin_role -> set(creatable_roles)).
@@ -71,6 +175,8 @@ BACKEND_DASHBOARD_ROUTES = {
 #     REFEREE (match officials), and TICKETING_OFFICER.
 #   - UNION_ADMIN can create REFEREE and TICKETING_OFFICER.
 #   - CLUB_ADMIN can create TICKETING_OFFICER.
+#   - SUPER_ADMIN and UNION_ADMIN are sensitive roles requiring
+#     dual-admin approval via the RoleApproval workflow.
 # ---------------------------------------------------------------------------
 CREATABLE_ROLES = {
     User.Role.SUPER_ADMIN: {

@@ -69,6 +69,28 @@ urlpatterns = [
     path("wallet/", views_extra.wallet_view, name="wallet"),
     # Payment history
     path("payments/", views_extra.payment_history_view, name="payment-history"),
+    # Switch workspace / account
+    path(
+        "switch-workspace/",
+        views.switch_workspace_view,
+        name="switch-workspace",
+    ),
+    # Role approval workflow
+    path(
+        "role-approvals/",
+        views.role_approval_list_view,
+        name="role-approval-list",
+    ),
+    path(
+        "role-approvals/pending-count/",
+        views.role_approval_pending_count_view,
+        name="role-approval-pending-count",
+    ),
+    path(
+        "role-approvals/<int:pk>/review/",
+        views.role_approval_review_view,
+        name="role-approval-review",
+    ),
     # Personalized feed
     path("feed/", views_extra.feed_view, name="feed"),
     path(

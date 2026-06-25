@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     "governance",
     "sponsorships",
     "ticketing",
+    "memberships",
 ]
 
 MIDDLEWARE = [
