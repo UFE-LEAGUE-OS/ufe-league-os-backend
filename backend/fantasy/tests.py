@@ -1,3 +1,4 @@
+from io import StringIO
 from datetime import timedelta
 from decimal import Decimal
 
@@ -705,7 +706,10 @@ class FantasyAdminAPITests(FantasyTestMixin, APITestCase):
 
 class FantasyManagementCommandTests(APITestCase):
     def test_seed_fantasy_demo_data_command_creates_demo_records(self):
-        call_command("seed_fantasy_demo_data")
+        out = StringIO()
+        call_command("seed_fantasy_demo_data", stdout=out)
+
+        self.assertIn("Fantasy demo data created.", out.getvalue())
 
         self.assertTrue(
             FantasyCompetition.objects.filter(
@@ -730,4 +734,288 @@ class FantasyManagementCommandTests(APITestCase):
                 league_type=FantasyLeague.LeagueType.PRIVATE,
                 join_code__isnull=False,
             ).exists()
+        )
+
+
+class FantasyAPIRefinementTests(FantasyTestMixin, APITestCase):
+    def _create_team_with_squad(self, owner=None, name="Kobs Warriors Fantasy XV"):
+        owner = owner or self.fan
+
+        team = FantasyTeam.objects.create(
+            owner=owner,
+            fantasy_competition=self.fantasy_competition,
+            name=name,
+        )
+
+        FantasySquadPlayer.objects.bulk_create(
+            [
+                FantasySquadPlayer(
+                    fantasy_team=team,
+                    fantasy_player=player,
+                    price_at_selection=player.final_price,
+                )
+                for player in [self.player_1, self.player_2, self.player_3]
+            ]
+        )
+
+        return team
+
+    def test_competition_gameweeks_endpoint_supports_pagination_and_status_filter(self):
+        FantasyGameweek.objects.create(
+            fantasy_competition=self.fantasy_competition,
+            name="Gameweek 2",
+            number=2,
+            start_at=timezone.now() + timedelta(days=10),
+            lock_at=timezone.now() + timedelta(days=12),
+            end_at=timezone.now() + timedelta(days=14),
+            status=FantasyGameweek.Status.COMPLETED,
+        )
+
+        paginated_response = self.client.get(
+            f"/api/fantasy/competitions/{self.fantasy_competition.id}/gameweeks/",
+            {"limit": 1, "offset": 0},
+        )
+
+        self.assertEqual(paginated_response.status_code, 200)
+        self.assertEqual(paginated_response.data["count"], 2)
+        self.assertEqual(paginated_response.data["limit"], 1)
+        self.assertEqual(len(paginated_response.data["results"]), 1)
+
+        filtered_response = self.client.get(
+            f"/api/fantasy/competitions/{self.fantasy_competition.id}/gameweeks/",
+            {"status": FantasyGameweek.Status.OPEN},
+        )
+
+        self.assertEqual(filtered_response.status_code, 200)
+        self.assertEqual(filtered_response.data["count"], 1)
+        self.assertEqual(
+            filtered_response.data["results"][0]["status"],
+            FantasyGameweek.Status.OPEN,
+        )
+
+    def test_team_detail_endpoint_returns_authenticated_users_team(self):
+        team = self._create_team_with_squad()
+        self.client.force_authenticate(user=self.fan)
+
+        response = self.client.get(f"/api/fantasy/teams/{team.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["team"]["name"], team.name)
+        self.assertEqual(len(response.data["team"]["squad_players"]), 3)
+
+    def test_team_detail_endpoint_does_not_return_another_users_team(self):
+        other_team = self._create_team_with_squad(
+            owner=self.other_fan,
+            name="Other Fan Fantasy Team",
+        )
+        self.client.force_authenticate(user=self.fan)
+
+        response = self.client.get(f"/api/fantasy/teams/{other_team.id}/")
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_team_history_endpoint_returns_scores_and_lineups(self):
+        team = self._create_team_with_squad()
+
+        lineup = FantasyLineup.objects.create(
+            fantasy_team=team,
+            gameweek=self.gameweek,
+            captain=self.player_3,
+            vice_captain=self.player_1,
+        )
+
+        FantasyLineupPlayer.objects.bulk_create(
+            [
+                FantasyLineupPlayer(
+                    lineup=lineup,
+                    fantasy_player=player,
+                    is_starter=True,
+                    sort_order=index,
+                )
+                for index, player in enumerate(
+                    [self.player_1, self.player_2, self.player_3],
+                    start=1,
+                )
+            ]
+        )
+
+        FantasyTeamGameweekScore.objects.create(
+            fantasy_team=team,
+            gameweek=self.gameweek,
+            points=Decimal("33.00"),
+            rank=1,
+            breakdown={"players": []},
+        )
+
+        self.client.force_authenticate(user=self.fan)
+
+        response = self.client.get(f"/api/fantasy/teams/{team.id}/history/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["team"]["name"], team.name)
+        self.assertEqual(len(response.data["scores"]), 1)
+        self.assertEqual(len(response.data["lineups"]), 1)
+
+    def test_available_leagues_endpoint_returns_public_leagues_by_default(self):
+        public_league = FantasyLeague.objects.create(
+            fantasy_competition=self.fantasy_competition,
+            name="Public Rugby Fantasy League",
+            league_type=FantasyLeague.LeagueType.PUBLIC,
+            created_by=self.league_admin,
+        )
+        private_league = FantasyLeague.objects.create(
+            fantasy_competition=self.fantasy_competition,
+            name="Private KOBS Fans League",
+            league_type=FantasyLeague.LeagueType.PRIVATE,
+            created_by=self.fan,
+        )
+
+        response = self.client.get("/api/fantasy/leagues/available/")
+
+        self.assertEqual(response.status_code, 200)
+
+        league_names = {league["name"] for league in response.data["results"]}
+
+        self.assertIn(public_league.name, league_names)
+        self.assertNotIn(private_league.name, league_names)
+
+    def test_anonymous_user_cannot_list_private_available_leagues(self):
+        FantasyLeague.objects.create(
+            fantasy_competition=self.fantasy_competition,
+            name="Private KOBS Fans League",
+            league_type=FantasyLeague.LeagueType.PRIVATE,
+            created_by=self.fan,
+        )
+
+        response = self.client.get(
+            "/api/fantasy/leagues/available/",
+            {"league_type": FantasyLeague.LeagueType.PRIVATE},
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_authenticated_user_only_sees_own_or_joined_private_leagues(self):
+        team = self._create_team_with_squad(owner=self.fan)
+
+        own_private_league = FantasyLeague.objects.create(
+            fantasy_competition=self.fantasy_competition,
+            name="My Private Fantasy League",
+            league_type=FantasyLeague.LeagueType.PRIVATE,
+            created_by=self.fan,
+        )
+        joined_private_league = FantasyLeague.objects.create(
+            fantasy_competition=self.fantasy_competition,
+            name="Joined Private Fantasy League",
+            league_type=FantasyLeague.LeagueType.PRIVATE,
+            created_by=self.other_fan,
+        )
+        unrelated_private_league = FantasyLeague.objects.create(
+            fantasy_competition=self.fantasy_competition,
+            name="Unrelated Private Fantasy League",
+            league_type=FantasyLeague.LeagueType.PRIVATE,
+            created_by=self.other_fan,
+        )
+
+        FantasyLeagueMembership.objects.create(
+            fantasy_league=joined_private_league,
+            fantasy_team=team,
+        )
+
+        self.client.force_authenticate(user=self.fan)
+
+        response = self.client.get(
+            "/api/fantasy/leagues/available/",
+            {"league_type": FantasyLeague.LeagueType.PRIVATE},
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        league_names = {league["name"] for league in response.data["results"]}
+
+        self.assertIn(own_private_league.name, league_names)
+        self.assertIn(joined_private_league.name, league_names)
+        self.assertNotIn(unrelated_private_league.name, league_names)
+
+    def test_public_league_detail_can_be_viewed_without_login(self):
+        public_league = FantasyLeague.objects.create(
+            fantasy_competition=self.fantasy_competition,
+            name="Public Rugby Fantasy League",
+            league_type=FantasyLeague.LeagueType.PUBLIC,
+            created_by=self.league_admin,
+        )
+
+        response = self.client.get(f"/api/fantasy/leagues/{public_league.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["league"]["name"], public_league.name)
+
+    def test_private_league_detail_requires_creator_or_member(self):
+        private_league = FantasyLeague.objects.create(
+            fantasy_competition=self.fantasy_competition,
+            name="Private KOBS Fans League",
+            league_type=FantasyLeague.LeagueType.PRIVATE,
+            created_by=self.fan,
+        )
+
+        anonymous_response = self.client.get(
+            f"/api/fantasy/leagues/{private_league.id}/"
+        )
+        self.assertEqual(anonymous_response.status_code, 403)
+
+        self.client.force_authenticate(user=self.other_fan)
+        other_user_response = self.client.get(
+            f"/api/fantasy/leagues/{private_league.id}/"
+        )
+        self.assertEqual(other_user_response.status_code, 403)
+
+        self.client.force_authenticate(user=self.fan)
+        creator_response = self.client.get(f"/api/fantasy/leagues/{private_league.id}/")
+
+        self.assertEqual(creator_response.status_code, 200)
+        self.assertEqual(creator_response.data["league"]["name"], private_league.name)
+
+    def test_league_leaderboard_returns_overall_and_gameweek_rankings(self):
+        team = self._create_team_with_squad()
+        team.total_points = Decimal("33.00")
+        team.current_rank = 1
+        team.save(update_fields=["total_points", "current_rank", "updated_at"])
+
+        public_league = FantasyLeague.objects.create(
+            fantasy_competition=self.fantasy_competition,
+            name="Public Rugby Fantasy League",
+            league_type=FantasyLeague.LeagueType.PUBLIC,
+            created_by=self.league_admin,
+        )
+
+        FantasyLeagueMembership.objects.create(
+            fantasy_league=public_league,
+            fantasy_team=team,
+        )
+
+        FantasyTeamGameweekScore.objects.create(
+            fantasy_team=team,
+            gameweek=self.gameweek,
+            points=Decimal("33.00"),
+            rank=1,
+            breakdown={"players": []},
+        )
+
+        overall_response = self.client.get(
+            f"/api/fantasy/leagues/{public_league.id}/leaderboard/"
+        )
+
+        self.assertEqual(overall_response.status_code, 200)
+        self.assertEqual(overall_response.data["count"], 1)
+        self.assertEqual(overall_response.data["results"][0]["name"], team.name)
+
+        gameweek_response = self.client.get(
+            f"/api/fantasy/leagues/{public_league.id}/leaderboard/",
+            {"gameweek_id": self.gameweek.id},
+        )
+
+        self.assertEqual(gameweek_response.status_code, 200)
+        self.assertEqual(gameweek_response.data["count"], 1)
+        self.assertEqual(
+            gameweek_response.data["results"][0]["fantasy_team_name"],
+            team.name,
         )
