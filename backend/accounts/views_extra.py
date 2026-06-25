@@ -17,22 +17,22 @@ from accounts.permissions import IsAuthenticatedAudit
 
 from .models import NotificationPreference
 from .serializers import (
+    CombinedPaymentHistoryItemSerializer,
     FeedItemSerializer,
     FollowActionSerializer,
     FollowResponseSerializer,
     InterestPreferenceSerializer,
     NotificationPreferenceSerializer,
-    PaymentHistorySerializer,
-    WalletSerializer,
+    WalletSummarySerializer,
 )
 from .services import (
     aggregate_feed,
     follow_entity,
+    get_combined_payment_history,
     get_or_create_interest_preferences,
     get_or_create_notification_preferences,
-    get_or_create_wallet,
-    get_payment_history,
     get_user_follows,
+    get_wallet_payment_center,
     is_following,
     mark_all_feed_read,
     mark_feed_item_read,
@@ -110,14 +110,90 @@ def check_follow_view(request, content_type, object_id):
 # ---------------------------------------------------------------------------
 
 
+def _update_notification_preferences(user, request_data):
+    """
+    Shared helper for old and new notification preference endpoints.
+    """
+
+    data = request_data
+
+    if isinstance(data, dict) and "preferences" in data:
+        data = data["preferences"]
+
+    if isinstance(data, dict):
+        data = [data]
+
+    if not isinstance(data, list):
+        return None, [{"error": "Expected an object, a list, or a preferences list."}]
+
+    updated = []
+    errors = []
+
+    for pref_data in data:
+        event_type = pref_data.get("event_type")
+        if not event_type:
+            errors.append({"error": "event_type is required for each preference."})
+            continue
+
+        pref, _ = NotificationPreference.objects.get_or_create(
+            user=user,
+            event_type=event_type,
+        )
+        serializer = NotificationPreferenceSerializer(
+            pref,
+            data=pref_data,
+            partial=True,
+        )
+
+        if serializer.is_valid():
+            serializer.save()
+            updated.append(serializer.data)
+        else:
+            errors.append(serializer.errors)
+
+    return updated, errors
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticatedAudit])
+def notification_preferences_me_view(request):
+    """
+    Get or update the authenticated user's notification preferences.
+
+    GET   /api/accounts/notification-preferences/me/
+    PATCH /api/accounts/notification-preferences/me/
+    """
+    user = request.user
+
+    if request.method == "GET":
+        prefs = get_or_create_notification_preferences(user)
+        serializer = NotificationPreferenceSerializer(prefs, many=True)
+        return Response(
+            {
+                "count": len(serializer.data),
+                "preferences": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    updated, errors = _update_notification_preferences(user, request.data)
+
+    response_data = {"updated": updated or []}
+    if errors:
+        response_data["errors"] = errors
+        return Response(response_data, status=status.HTTP_207_MULTI_STATUS)
+
+    return Response(response_data, status=status.HTTP_200_OK)
+
+
 @api_view(["GET", "PUT"])
 @permission_classes([IsAuthenticatedAudit])
 def notification_preferences_view(request):
     """
-    Get or update the authenticated user's notification preferences.
+    Backwards-compatible notification preferences endpoint.
 
-    GET /api/accounts/notifications/          - List all preferences
-    PUT /api/accounts/notifications/          - Bulk update preferences
+    GET /api/accounts/notifications/
+    PUT /api/accounts/notifications/
     """
     user = request.user
 
@@ -126,32 +202,9 @@ def notification_preferences_view(request):
         serializer = NotificationPreferenceSerializer(prefs, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-    # PUT: bulk update
-    data = request.data
-    if isinstance(data, dict):
-        data = [data]
+    updated, errors = _update_notification_preferences(user, request.data)
 
-    updated = []
-    errors = []
-    for pref_data in data:
-        event_type = pref_data.get("event_type")
-        if not event_type:
-            errors.append({"error": "event_type is required for each preference."})
-            continue
-
-        pref, _ = NotificationPreference.objects.get_or_create(
-            user=user, event_type=event_type
-        )
-        serializer = NotificationPreferenceSerializer(
-            pref, data=pref_data, partial=True
-        )
-        if serializer.is_valid():
-            serializer.save()
-            updated.append(serializer.data)
-        else:
-            errors.append(serializer.errors)
-
-    response_data = {"updated": updated}
+    response_data = {"updated": updated or []}
     if errors:
         response_data["errors"] = errors
         return Response(response_data, status=status.HTTP_207_MULTI_STATUS)
@@ -197,13 +250,17 @@ def interest_preferences_view(request):
 @permission_classes([IsAuthenticatedAudit])
 def wallet_view(request):
     """
-    Get the authenticated user's wallet.
+    Get the authenticated user's MVP wallet/payment center.
 
-    GET /api/accounts/wallet/          - Get wallet
+    GET /api/accounts/wallet/
+
+    Important:
+    The MVP wallet does not store user money. It summarizes payment history,
+    purchased tickets, memberships, and sponsorship payments.
     """
-    user = request.user
-    wallet = get_or_create_wallet(user)
-    serializer = WalletSerializer(wallet)
+    limit = int(request.query_params.get("limit", 10))
+    wallet_data = get_wallet_payment_center(request.user, limit=limit)
+    serializer = WalletSummarySerializer(wallet_data)
     return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -216,28 +273,38 @@ def wallet_view(request):
 @permission_classes([IsAuthenticatedAudit])
 def payment_history_view(request):
     """
-    Get the authenticated user's payment history.
+    Get the authenticated user's combined payment history.
 
-    GET /api/accounts/payments/          - List payments
-    Query params: payment_type, status, limit, offset
+    GET /api/accounts/payments/
+
+    Query params:
+    - payment_type: TICKET_PURCHASE, MEMBERSHIP_FEE, SPONSORSHIP, REFUND
+    - status: SUCCESSFUL, PENDING, FAILED, CANCELLED, REFUNDED
+    - source: TICKETING, MEMBERSHIPS, SPONSORSHIPS, LEGACY
+    - limit
+    - offset
     """
-    user = request.user
     payment_type = request.query_params.get("payment_type")
     status_filter = request.query_params.get("status")
+    source = request.query_params.get("source")
     limit = int(request.query_params.get("limit", 50))
     offset = int(request.query_params.get("offset", 0))
 
-    items, total = get_payment_history(
-        user,
+    items, total = get_combined_payment_history(
+        request.user,
         payment_type=payment_type,
         status=status_filter,
+        source=source,
         limit=limit,
         offset=offset,
     )
-    serializer = PaymentHistorySerializer(items, many=True)
+
+    serializer = CombinedPaymentHistoryItemSerializer(items, many=True)
     return Response(
         {
             "count": total,
+            "limit": limit,
+            "offset": offset,
             "results": serializer.data,
         },
         status=status.HTTP_200_OK,
