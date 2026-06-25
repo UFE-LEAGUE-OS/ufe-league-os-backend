@@ -8,7 +8,7 @@ from django.db import models
 
 class TicketType(models.Model):
     """
-    Ticket type/category for a match.
+    Ticket category for a match.
 
     Examples:
     - Ordinary
@@ -29,7 +29,6 @@ class TicketType(models.Model):
         on_delete=models.CASCADE,
         related_name="ticket_types",
     )
-
     name = models.CharField(max_length=120)
     description = models.TextField(blank=True)
 
@@ -81,8 +80,7 @@ class TicketType(models.Model):
 
     @property
     def remaining_quantity(self):
-        remaining = self.quantity_available - self.quantity_sold
-        return max(remaining, 0)
+        return max(self.quantity_available - self.quantity_sold, 0)
 
     @property
     def is_sold_out(self):
@@ -94,10 +92,10 @@ class TicketType(models.Model):
 
 class TicketOrder(models.Model):
     """
-    A fan's ticket purchase order.
+    A fan ticket purchase order.
 
-    Payment integration will come later. For now, this model prepares the
-    structure for pending/paid/cancelled/refunded ticket orders.
+    Tickets are not issued when this order is created. Tickets are only issued
+    after the backend verifies the Flutterwave payment.
     """
 
     class Status(models.TextChoices):
@@ -106,6 +104,10 @@ class TicketOrder(models.Model):
         CANCELLED = "CANCELLED", "Cancelled"
         REFUNDED = "REFUNDED", "Refunded"
         FAILED = "FAILED", "Failed"
+
+    class PaymentProvider(models.TextChoices):
+        MANUAL = "MANUAL", "Manual"
+        FLUTTERWAVE = "FLUTTERWAVE", "Flutterwave"
 
     buyer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -126,9 +128,18 @@ class TicketOrder(models.Model):
         default=Status.PENDING,
     )
 
+    provider = models.CharField(
+        max_length=20,
+        choices=PaymentProvider.choices,
+        default=PaymentProvider.FLUTTERWAVE,
+    )
     payment_reference = models.CharField(max_length=120, blank=True)
     provider_transaction_id = models.CharField(max_length=120, blank=True)
+    provider_status = models.CharField(max_length=120, blank=True)
     provider_response = models.JSONField(default=dict, blank=True)
+
+    checkout_url = models.URLField(blank=True)
+    checkout_initialized_at = models.DateTimeField(blank=True, null=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     paid_at = models.DateTimeField(blank=True, null=True)
@@ -140,17 +151,59 @@ class TicketOrder(models.Model):
             models.Index(fields=["buyer", "status"]),
             models.Index(fields=["status", "created_at"]),
             models.Index(fields=["payment_reference"]),
+            models.Index(fields=["provider", "provider_status"]),
         ]
 
     def __str__(self):
         return f"Ticket Order #{self.id} - {self.buyer.email} - {self.status}"
+
+    @property
+    def is_payable(self):
+        return self.status == self.Status.PENDING
+
+
+class TicketOrderItem(models.Model):
+    """
+    A purchased quantity of one ticket type inside a ticket order.
+    """
+
+    order = models.ForeignKey(
+        TicketOrder,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    ticket_type = models.ForeignKey(
+        TicketType,
+        on_delete=models.PROTECT,
+        related_name="order_items",
+    )
+    quantity = models.PositiveIntegerField(default=1)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    total_price = models.DecimalField(max_digits=12, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+        indexes = [
+            models.Index(fields=["order", "ticket_type"]),
+            models.Index(fields=["ticket_type"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["order", "ticket_type"],
+                name="unique_ticket_type_per_ticket_order",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.quantity} x {self.ticket_type.name} for order #{self.order_id}"
 
 
 class Ticket(models.Model):
     """
     A single issued ticket.
 
-    Each ticket gets a unique ticket_code that will later be encoded into a QR code.
+    ticket_code will later be encoded into a QR code.
     """
 
     class Status(models.TextChoices):
@@ -164,19 +217,16 @@ class Ticket(models.Model):
         on_delete=models.CASCADE,
         related_name="tickets",
     )
-
     ticket_type = models.ForeignKey(
         TicketType,
         on_delete=models.PROTECT,
         related_name="tickets",
     )
-
     match = models.ForeignKey(
         "dashboards.Match",
         on_delete=models.CASCADE,
         related_name="tickets",
     )
-
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -220,8 +270,6 @@ class Ticket(models.Model):
 class TicketValidationLog(models.Model):
     """
     Records ticket scan/check-in attempts.
-
-    This supports audit trails for match-day ticket validation.
     """
 
     class Result(models.TextChoices):
@@ -238,7 +286,6 @@ class TicketValidationLog(models.Model):
         on_delete=models.SET_NULL,
         related_name="validation_logs",
     )
-
     match = models.ForeignKey(
         "dashboards.Match",
         null=True,
@@ -246,7 +293,6 @@ class TicketValidationLog(models.Model):
         on_delete=models.SET_NULL,
         related_name="ticket_validation_logs",
     )
-
     scanned_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,

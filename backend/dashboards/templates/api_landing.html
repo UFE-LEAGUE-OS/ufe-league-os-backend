@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>{{ api.name }}</title>
+
+        <style>
+            :root {
+                --bg: #030712;
+                --panel: rgba(15, 23, 42, 0.72);
+                --panel-soft: rgba(15, 23, 42, 0.46);
+                --border: rgba(255, 255, 255, 0.1);
+                --text: #ffffff;
+                --muted: #cbd5e1;
+                --purple: #8b5cf6;
+                --purple-dark: #6d28d9;
+                --orange: #f97316;
+                --pink: #ec4899;
+                --green: #22c55e;
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            body {
+                margin: 0;
+                min-height: 100vh;
+                font-family:
+                    Inter,
+                    ui-sans-serif,
+                    system-ui,
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    "Segoe UI",
+                    sans-serif;
+                color: var(--text);
+                background:
+                    radial-gradient(
+                        circle at 15% 10%,
+                        rgba(139, 92, 246, 0.2),
+                        transparent 28%
+                    ),
+                    radial-gradient(
+                        circle at 80% 20%,
+                        rgba(249, 115, 22, 0.18),
+                        transparent 30%
+                    ),
+                    linear-gradient(
+                        135deg,
+                        #030712 0%,
+                        #020617 48%,
+                        #0f172a 100%
+                    );
+            }
+
+            a {
+                color: inherit;
+                text-decoration: none;
+            }
+
+            .page {
+                width: min(1180px, calc(100% - 32px));
+                margin: 0 auto;
+                padding: 28px 0 42px;
+            }
+
+            .nav {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 18px;
+                padding: 16px 0 34px;
+            }
+
+            .brand {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                font-weight: 900;
+                letter-spacing: -0.03em;
+                text-transform: uppercase;
+            }
+
+            .brand-mark {
+                width: 42px;
+                height: 42px;
+                border-radius: 14px;
+                display: grid;
+                place-items: center;
+                background: linear-gradient(
+                    135deg,
+                    rgba(139, 92, 246, 0.95),
+                    rgba(249, 115, 22, 0.92)
+                );
+                box-shadow: 0 16px 40px rgba(139, 92, 246, 0.28);
+                font-size: 21px;
+            }
+
+            .brand-text {
+                display: grid;
+                gap: 2px;
+            }
+
+            .brand-title {
+                font-size: 18px;
+                line-height: 1;
+            }
+
+            .brand-subtitle {
+                color: var(--muted);
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 0.08em;
+            }
+
+            .nav-actions {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .nav-link,
+            .button {
+                min-height: 40px;
+                padding: 0 16px;
+                border-radius: 999px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 13px;
+                font-weight: 800;
+                border: 1px solid var(--border);
+                background: rgba(15, 23, 42, 0.5);
+                color: #e5e7eb;
+                transition:
+                    transform 0.18s ease,
+                    background 0.18s ease,
+                    border-color 0.18s ease;
+            }
+
+            .nav-link:hover,
+            .button:hover {
+                transform: translateY(-2px);
+                border-color: rgba(139, 92, 246, 0.7);
+                background: rgba(139, 92, 246, 0.18);
+            }
+
+            .button-primary {
+                border-color: transparent;
+                background: linear-gradient(
+                    90deg,
+                    var(--purple),
+                    var(--purple-dark)
+                );
+                color: #ffffff;
+                box-shadow: 0 16px 34px rgba(139, 92, 246, 0.3);
+            }
+
+            .hero {
+                position: relative;
+                overflow: hidden;
+                border: 1px solid var(--border);
+                border-radius: 30px;
+                padding: clamp(28px, 5vw, 58px);
+                background:
+                    linear-gradient(
+                        135deg,
+                        rgba(15, 23, 42, 0.92),
+                        rgba(15, 23, 42, 0.38)
+                    ),
+                    radial-gradient(
+                        circle at 80% 20%,
+                        rgba(139, 92, 246, 0.34),
+                        transparent 32%
+                    ),
+                    radial-gradient(
+                        circle at 78% 86%,
+                        rgba(249, 115, 22, 0.22),
+                        transparent 35%
+                    );
+                box-shadow: 0 30px 90px rgba(0, 0, 0, 0.38);
+            }
+
+            .hero::after {
+                content: "";
+                position: absolute;
+                inset: auto -80px -160px auto;
+                width: 420px;
+                height: 420px;
+                border-radius: 999px;
+                background: rgba(139, 92, 246, 0.18);
+                filter: blur(28px);
+                pointer-events: none;
+            }
+
+            .hero-grid {
+                position: relative;
+                z-index: 2;
+                display: grid;
+                grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+                gap: clamp(24px, 5vw, 54px);
+                align-items: center;
+            }
+
+            .eyebrow {
+                width: fit-content;
+                margin-bottom: 18px;
+                padding: 8px 12px;
+                border-radius: 999px;
+                background: rgba(34, 197, 94, 0.12);
+                border: 1px solid rgba(34, 197, 94, 0.26);
+                color: #bbf7d0;
+                font-size: 12px;
+                font-weight: 900;
+                letter-spacing: 0.1em;
+                text-transform: uppercase;
+            }
+
+            h1 {
+                margin: 0;
+                max-width: 720px;
+                font-size: clamp(42px, 7vw, 78px);
+                line-height: 0.96;
+                letter-spacing: -0.06em;
+                text-transform: uppercase;
+            }
+
+            .gradient-text {
+                display: block;
+                margin-top: 10px;
+                background: linear-gradient(
+                    90deg,
+                    var(--orange),
+                    var(--pink),
+                    var(--purple)
+                );
+                -webkit-background-clip: text;
+                background-clip: text;
+                color: transparent;
+            }
+
+            .description {
+                max-width: 680px;
+                margin: 24px 0 0;
+                color: #dbeafe;
+                font-size: clamp(15px, 1.5vw, 18px);
+                line-height: 1.65;
+            }
+
+            .hero-actions {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 12px;
+                margin-top: 30px;
+            }
+
+            .status-card {
+                border: 1px solid var(--border);
+                border-radius: 24px;
+                padding: 22px;
+                background: rgba(2, 6, 23, 0.42);
+                backdrop-filter: blur(14px);
+            }
+
+            .status-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 16px;
+                padding: 14px 0;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+
+            .status-row:last-child {
+                border-bottom: 0;
+            }
+
+            .status-label {
+                color: var(--muted);
+                font-size: 12px;
+                font-weight: 800;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+            }
+
+            .status-value {
+                font-size: 14px;
+                font-weight: 900;
+                text-align: right;
+            }
+
+            .status-pill {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                padding: 7px 10px;
+                border-radius: 999px;
+                background: rgba(34, 197, 94, 0.12);
+                color: #bbf7d0;
+                border: 1px solid rgba(34, 197, 94, 0.24);
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                font-size: 11px;
+            }
+
+            .status-dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 999px;
+                background: var(--green);
+                box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.12);
+            }
+
+            .section {
+                margin-top: 28px;
+            }
+
+            .section-header {
+                display: flex;
+                align-items: end;
+                justify-content: space-between;
+                gap: 16px;
+                margin-bottom: 16px;
+            }
+
+            .section-title {
+                margin: 0;
+                font-size: 20px;
+                font-weight: 900;
+                letter-spacing: -0.03em;
+            }
+
+            .section-subtitle {
+                margin: 6px 0 0;
+                color: var(--muted);
+                font-size: 14px;
+            }
+
+            .cards {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 14px;
+            }
+
+            .card {
+                min-height: 168px;
+                padding: 18px;
+                border-radius: 20px;
+                border: 1px solid var(--border);
+                background: linear-gradient(
+                    135deg,
+                    rgba(15, 23, 42, 0.72),
+                    rgba(15, 23, 42, 0.36)
+                );
+                transition:
+                    transform 0.18s ease,
+                    border-color 0.18s ease,
+                    background 0.18s ease;
+            }
+
+            .card:hover {
+                transform: translateY(-4px);
+                border-color: rgba(139, 92, 246, 0.58);
+                background: linear-gradient(
+                    135deg,
+                    rgba(139, 92, 246, 0.2),
+                    rgba(15, 23, 42, 0.5)
+                );
+            }
+
+            .card-icon {
+                width: 38px;
+                height: 38px;
+                margin-bottom: 18px;
+                border-radius: 13px;
+                display: grid;
+                place-items: center;
+                background: rgba(139, 92, 246, 0.16);
+                color: #ddd6fe;
+                font-size: 19px;
+            }
+
+            .card-title {
+                margin: 0;
+                font-size: 16px;
+                font-weight: 900;
+            }
+
+            .card-desc {
+                margin: 8px 0 16px;
+                color: var(--muted);
+                font-size: 13px;
+                line-height: 1.5;
+            }
+
+            .card-label {
+                color: #a78bfa;
+                font-size: 12px;
+                font-weight: 900;
+                word-break: break-word;
+            }
+
+            .footer {
+                margin-top: 28px;
+                padding: 20px 0 0;
+                color: rgba(203, 213, 225, 0.78);
+                font-size: 13px;
+                text-align: center;
+            }
+
+            @media (max-width: 920px) {
+                .hero-grid {
+                    grid-template-columns: 1fr;
+                }
+
+                .cards {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+            }
+
+            @media (max-width: 640px) {
+                .page {
+                    width: min(100% - 22px, 1180px);
+                    padding-top: 14px;
+                }
+
+                .nav {
+                    align-items: flex-start;
+                    flex-direction: column;
+                }
+
+                .nav-actions {
+                    width: 100%;
+                }
+
+                .nav-link,
+                .button {
+                    flex: 1;
+                }
+
+                .hero {
+                    border-radius: 22px;
+                }
+
+                h1 {
+                    font-size: 38px;
+                }
+
+                .hero-actions {
+                    display: grid;
+                    grid-template-columns: 1fr;
+                }
+
+                .cards {
+                    grid-template-columns: 1fr;
+                }
+
+                .section-header {
+                    align-items: flex-start;
+                    flex-direction: column;
+                }
+            }
+        </style>
+    </head>
+
+    <body>
+        <main class="page">
+            <nav class="nav" aria-label="API navigation">
+                <a class="brand" href="/">
+                    <span class="brand-mark">⚡</span>
+                    <span class="brand-text">
+                        <span class="brand-title">League OS</span>
+                        <span class="brand-subtitle">Backend API</span>
+                    </span>
+                </a>
+
+                <div class="nav-actions">
+                    <a class="nav-link" href="{{ api.documentation.swagger }}"
+                        >Docs</a
+                    >
+                    <a class="nav-link" href="{{ api.health }}">Health</a>
+                    <a
+                        class="button button-primary"
+                        href="{{ api.staging_frontend }}"
+                    >
+                        Open Frontend
+                    </a>
+                </div>
+            </nav>
+
+            <section class="hero">
+                <div class="hero-grid">
+                    <div>
+                        <div class="eyebrow">
+                            <span class="status-dot"></span>
+                            API {{ api.status }}
+                        </div>
+
+                        <h1>
+                            League OS
+                            <span class="gradient-text">Backend API</span>
+                        </h1>
+
+                        <p class="description">{{ api.description }}</p>
+
+                        <div class="hero-actions">
+                            <a
+                                class="button button-primary"
+                                href="{{ api.documentation.swagger }}"
+                            >
+                                View API Docs
+                            </a>
+                            <a class="button" href="{{ api.health }}">
+                                Check Health
+                            </a>
+                            <a
+                                class="button"
+                                href="{{ api.documentation.openapi_schema }}"
+                            >
+                                View Schema
+                            </a>
+                        </div>
+                    </div>
+
+                    <aside class="status-card" aria-label="API status summary">
+                        <div class="status-row">
+                            <span class="status-label">Status</span>
+                            <span class="status-value status-pill">
+                                <span class="status-dot"></span>
+                                {{ api.status }}
+                            </span>
+                        </div>
+
+                        <div class="status-row">
+                            <span class="status-label">Version</span>
+                            <span class="status-value">{{ api.version }}</span>
+                        </div>
+
+                        <div class="status-row">
+                            <span class="status-label">Docs</span>
+                            <span class="status-value">Swagger UI</span>
+                        </div>
+
+                        <div class="status-row">
+                            <span class="status-label">Frontend</span>
+                            <span class="status-value">Render staging</span>
+                        </div>
+                    </aside>
+                </div>
+            </section>
+
+            <section class="section">
+                <div class="section-header">
+                    <div>
+                        <h2 class="section-title">Quick Access</h2>
+                        <p class="section-subtitle">
+                            Common League OS backend endpoints and documentation
+                            links.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="cards">
+                    {% for link in api.quick_links %}
+                    <a class="card" href="{{ link.url }}">
+                        <div class="card-icon">↗</div>
+                        <h3 class="card-title">{{ link.title }}</h3>
+                        <p class="card-desc">{{ link.description }}</p>
+                        <span class="card-label">{{ link.label }}</span>
+                    </a>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <footer class="footer">
+                League OS Backend API · Built for fan engagement, competitions,
+                sponsorships, ticketing, memberships, and sports operations.
+            </footer>
+        </main>
+    </body>
+</html>
