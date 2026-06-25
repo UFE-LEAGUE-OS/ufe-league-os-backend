@@ -12,6 +12,8 @@ from .models import (
     FantasySquadPlayer,
     FantasyTeam,
     FantasyTeamGameweekScore,
+    FantasyTransfer,
+    FantasyTransferWindow,
 )
 
 
@@ -169,6 +171,52 @@ class FantasyPlayerGameweekScoreAdmin(admin.ModelAdmin):
     )
     list_filter = ("status", "gameweek")
     search_fields = ("fantasy_player__display_name", "entered_by__email")
+
+
+@admin.register(FantasyTransferWindow)
+class FantasyTransferWindowAdmin(admin.ModelAdmin):
+    list_display = (
+        "name",
+        "fantasy_competition",
+        "gameweek",
+        "opens_at",
+        "closes_at",
+        "is_active",
+        "free_transfers",
+        "max_transfers_per_window",
+        "points_cost_per_extra_transfer",
+    )
+    list_filter = ("fantasy_competition", "is_active", "gameweek")
+    search_fields = ("name", "fantasy_competition__name")
+
+
+@admin.register(FantasyTransfer)
+class FantasyTransferAdmin(admin.ModelAdmin):
+    list_display = (
+        "fantasy_team",
+        "transfer_type",
+        "status",
+        "player_out",
+        "player_in",
+        "points_cost",
+        "transfer_window",
+        "gameweek",
+        "requested_by",
+        "created_at",
+    )
+    list_filter = (
+        "transfer_type",
+        "status",
+        "fantasy_competition",
+        "transfer_window",
+        "gameweek",
+    )
+    search_fields = (
+        "fantasy_team__name",
+        "player_out__display_name",
+        "player_in__display_name",
+        "requested_by__email",
+    )
 
 
 @admin.register(FantasyTeamGameweekScore)

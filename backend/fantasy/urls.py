@@ -168,4 +168,29 @@ urlpatterns = [
         views.admin_player_score_reject_view,
         name="fantasy-admin-player-score-reject",
     ),
+    path(
+        "transfer-windows/",
+        views.fantasy_transfer_window_list_view,
+        name="fantasy-transfer-window-list",
+    ),
+    path(
+        "teams/<int:team_id>/transfers/preview/",
+        views.fantasy_team_transfer_preview_view,
+        name="fantasy-team-transfer-preview",
+    ),
+    path(
+        "teams/<int:team_id>/transfers/",
+        views.fantasy_team_transfer_list_create_view,
+        name="fantasy-team-transfer-list-create",
+    ),
+    path(
+        "admin/transfer-windows/",
+        views.admin_transfer_window_list_create_view,
+        name="fantasy-admin-transfer-window-list-create",
+    ),
+    path(
+        "admin/transfer-windows/<int:transfer_window_id>/",
+        views.admin_transfer_window_detail_update_view,
+        name="fantasy-admin-transfer-window-detail-update",
+    ),
 ]

@@ -5,6 +5,8 @@ from rest_framework import serializers
 from dashboards.models import Match
 
 from .models import (
+    FantasyTransfer,
+    FantasyTransferWindow,
     FantasyCompetition,
     FantasyGameweek,
     FantasyLeague,
@@ -715,3 +717,176 @@ class FantasyPlayerScoreAdminUpdateSerializer(serializers.Serializer):
         choices=FantasyPlayerGameweekScore.Status.choices,
         required=False,
     )
+
+
+class FantasyTransferWindowSerializer(serializers.ModelSerializer):
+    fantasy_competition_name = serializers.CharField(
+        source="fantasy_competition.name",
+        read_only=True,
+    )
+    gameweek_name = serializers.CharField(
+        source="gameweek.name",
+        read_only=True,
+    )
+    is_open = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = FantasyTransferWindow
+        fields = [
+            "id",
+            "fantasy_competition",
+            "fantasy_competition_name",
+            "gameweek",
+            "gameweek_name",
+            "name",
+            "opens_at",
+            "closes_at",
+            "is_active",
+            "is_open",
+            "free_transfers",
+            "max_transfers_per_window",
+            "points_cost_per_extra_transfer",
+            "allow_trades",
+            "allow_transfers_after_lineup_lock",
+            "notes",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "fantasy_competition_name",
+            "gameweek_name",
+            "is_open",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class FantasyTransferWindowAdminSerializer(FantasyTransferWindowSerializer):
+    def validate(self, attrs):
+        opens_at = attrs.get(
+            "opens_at",
+            self.instance.opens_at if self.instance else None,
+        )
+        closes_at = attrs.get(
+            "closes_at",
+            self.instance.closes_at if self.instance else None,
+        )
+
+        if opens_at and closes_at and closes_at <= opens_at:
+            raise serializers.ValidationError(
+                {"closes_at": "Transfer window close time must be after open time."}
+            )
+
+        free_transfers = attrs.get(
+            "free_transfers",
+            self.instance.free_transfers if self.instance else None,
+        )
+        max_transfers = attrs.get(
+            "max_transfers_per_window",
+            self.instance.max_transfers_per_window if self.instance else None,
+        )
+
+        if (
+            free_transfers is not None
+            and max_transfers is not None
+            and free_transfers > max_transfers
+        ):
+            raise serializers.ValidationError(
+                {
+                    "free_transfers": (
+                        "Free transfers cannot be greater than max transfers per window."
+                    )
+                }
+            )
+
+        return attrs
+
+
+class FantasyTransferSerializer(serializers.ModelSerializer):
+    fantasy_team_name = serializers.CharField(
+        source="fantasy_team.name",
+        read_only=True,
+    )
+    transfer_window_name = serializers.CharField(
+        source="transfer_window.name",
+        read_only=True,
+    )
+    gameweek_name = serializers.CharField(
+        source="gameweek.name",
+        read_only=True,
+    )
+    player_out_name = serializers.CharField(
+        source="player_out.display_name",
+        read_only=True,
+    )
+    player_in_name = serializers.CharField(
+        source="player_in.display_name",
+        read_only=True,
+    )
+    requested_by_email = serializers.EmailField(
+        source="requested_by.email",
+        read_only=True,
+    )
+    transfer_type_label = serializers.CharField(
+        source="get_transfer_type_display",
+        read_only=True,
+    )
+    status_label = serializers.CharField(
+        source="get_status_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = FantasyTransfer
+        fields = [
+            "id",
+            "fantasy_team",
+            "fantasy_team_name",
+            "fantasy_competition",
+            "transfer_window",
+            "transfer_window_name",
+            "gameweek",
+            "gameweek_name",
+            "player_out",
+            "player_out_name",
+            "player_in",
+            "player_in_name",
+            "transfer_type",
+            "transfer_type_label",
+            "status",
+            "status_label",
+            "points_cost",
+            "requested_by",
+            "requested_by_email",
+            "reason",
+            "created_at",
+            "cancelled_at",
+        ]
+        read_only_fields = fields
+
+
+class FantasyTransferCreateSerializer(serializers.Serializer):
+    player_out_id = serializers.PrimaryKeyRelatedField(
+        queryset=FantasyPlayer.objects.all(),
+        source="player_out",
+    )
+    player_in_id = serializers.PrimaryKeyRelatedField(
+        queryset=FantasyPlayer.objects.all(),
+        source="player_in",
+    )
+    transfer_window_id = serializers.PrimaryKeyRelatedField(
+        queryset=FantasyTransferWindow.objects.all(),
+        source="transfer_window",
+        required=False,
+        allow_null=True,
+    )
+    transfer_type = serializers.ChoiceField(
+        choices=FantasyTransfer.TransferType.choices,
+        default=FantasyTransfer.TransferType.TRANSFER,
+    )
+    reason = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class FantasyTransferPreviewSerializer(FantasyTransferCreateSerializer):
+    pass

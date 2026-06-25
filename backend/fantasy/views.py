@@ -1,4 +1,5 @@
 from django.db.models import Q
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -6,6 +7,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from .models import (
+    FantasyTransferWindow,
     FantasyCompetition,
     FantasyGameweek,
     FantasyLeague,
@@ -17,6 +19,11 @@ from .models import (
     FantasyTeamGameweekScore,
 )
 from .serializers import (
+    FantasyTransferCreateSerializer,
+    FantasyTransferPreviewSerializer,
+    FantasyTransferSerializer,
+    FantasyTransferWindowAdminSerializer,
+    FantasyTransferWindowSerializer,
     FantasyCompetitionAdminUpdateSerializer,
     FantasyGameweekAdminUpdateSerializer,
     FantasyPlayerAdminUpdateSerializer,
@@ -39,6 +46,8 @@ from .serializers import (
     FantasyTeamSerializer,
 )
 from .services import (
+    perform_fantasy_transfer,
+    preview_fantasy_transfer,
     get_fantasy_admin_dashboard_summary,
     reject_player_score,
     update_fantasy_competition_settings,
@@ -1323,6 +1332,239 @@ def admin_player_score_reject_view(request, score_id):
         {
             "message": "Fantasy player score rejected successfully.",
             "score": FantasyPlayerGameweekScoreSerializer(score).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@extend_schema(tags=["Fantasy"])
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def fantasy_transfer_window_list_view(request):
+    """
+    List active transfer windows.
+
+    Frontend screen use:
+    - Squad Builder
+    - Transfer Centre
+    """
+    queryset = FantasyTransferWindow.objects.select_related(
+        "fantasy_competition",
+        "gameweek",
+    ).filter(is_active=True)
+
+    competition_id = request.query_params.get("competition")
+    open_only = request.query_params.get("open")
+
+    if competition_id:
+        queryset = queryset.filter(fantasy_competition_id=competition_id)
+
+    if open_only == "true":
+        now = timezone.now()
+        queryset = queryset.filter(opens_at__lte=now, closes_at__gte=now)
+
+    queryset = queryset.order_by("opens_at")
+
+    return _paginated_response(queryset, FantasyTransferWindowSerializer, request)
+
+
+@extend_schema(tags=["Fantasy"])
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def fantasy_team_transfer_list_create_view(request, team_id):
+    """
+    List or create fantasy transfers for an authenticated user's team.
+
+    Frontend screen use:
+    - Transfer Centre
+    - My Fantasy Team Dashboard
+    """
+    team = (
+        FantasyTeam.objects.filter(id=team_id, owner=request.user)
+        .select_related("fantasy_competition")
+        .first()
+    )
+
+    if team is None:
+        return Response(
+            {"detail": "Fantasy team not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "GET":
+        queryset = (
+            team.transfers.select_related(
+                "fantasy_team",
+                "fantasy_competition",
+                "transfer_window",
+                "gameweek",
+                "player_out",
+                "player_in",
+                "requested_by",
+            )
+            .all()
+            .order_by("-created_at")
+        )
+
+        return _paginated_response(queryset, FantasyTransferSerializer, request)
+
+    serializer = FantasyTransferCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    transfer = perform_fantasy_transfer(
+        fantasy_team=team,
+        player_out=serializer.validated_data["player_out"],
+        player_in=serializer.validated_data["player_in"],
+        transfer_window=serializer.validated_data.get("transfer_window"),
+        transfer_type=serializer.validated_data["transfer_type"],
+        requested_by=request.user,
+        reason=serializer.validated_data.get("reason", ""),
+    )
+
+    return Response(
+        {
+            "message": "Fantasy transfer completed successfully.",
+            "transfer": FantasyTransferSerializer(transfer).data,
+            "team": FantasyTeamSerializer(team).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@extend_schema(tags=["Fantasy"])
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def fantasy_team_transfer_preview_view(request, team_id):
+    """
+    Preview a transfer before confirming it.
+
+    Frontend screen use:
+    - Transfer Centre
+    - Squad Builder
+    """
+    team = (
+        FantasyTeam.objects.filter(id=team_id, owner=request.user)
+        .select_related("fantasy_competition")
+        .first()
+    )
+
+    if team is None:
+        return Response(
+            {"detail": "Fantasy team not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    serializer = FantasyTransferPreviewSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    preview = preview_fantasy_transfer(
+        fantasy_team=team,
+        player_out=serializer.validated_data["player_out"],
+        player_in=serializer.validated_data["player_in"],
+        transfer_window=serializer.validated_data.get("transfer_window"),
+        transfer_type=serializer.validated_data["transfer_type"],
+    )
+
+    return Response(
+        {"preview": preview},
+        status=status.HTTP_200_OK,
+    )
+
+
+@extend_schema(tags=["Fantasy Admin"])
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def admin_transfer_window_list_create_view(request):
+    """
+    List or create fantasy transfer windows.
+
+    Frontend screen use:
+    - Fantasy Competition Setup
+    - Transfer Rules Admin
+    """
+    require_fantasy_manager(request.user)
+
+    if request.method == "GET":
+        queryset = FantasyTransferWindow.objects.select_related(
+            "fantasy_competition",
+            "gameweek",
+        ).all()
+
+        competition_id = request.query_params.get("competition")
+        active = request.query_params.get("active")
+
+        if competition_id:
+            queryset = queryset.filter(fantasy_competition_id=competition_id)
+
+        if active == "true":
+            queryset = queryset.filter(is_active=True)
+
+        queryset = queryset.order_by("opens_at")
+
+        return _paginated_response(queryset, FantasyTransferWindowSerializer, request)
+
+    serializer = FantasyTransferWindowAdminSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    transfer_window = serializer.save()
+
+    return Response(
+        {
+            "message": "Fantasy transfer window created successfully.",
+            "transfer_window": FantasyTransferWindowSerializer(transfer_window).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@extend_schema(tags=["Fantasy Admin"])
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def admin_transfer_window_detail_update_view(request, transfer_window_id):
+    """
+    Retrieve or update a fantasy transfer window.
+
+    Frontend screen use:
+    - Transfer Rules Admin
+    """
+    require_fantasy_manager(request.user)
+
+    transfer_window = (
+        FantasyTransferWindow.objects.select_related(
+            "fantasy_competition",
+            "gameweek",
+        )
+        .filter(id=transfer_window_id)
+        .first()
+    )
+
+    if transfer_window is None:
+        return Response(
+            {"detail": "Fantasy transfer window not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "GET":
+        return Response(
+            {
+                "transfer_window": FantasyTransferWindowSerializer(
+                    transfer_window,
+                ).data
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    serializer = FantasyTransferWindowAdminSerializer(
+        transfer_window,
+        data=request.data,
+        partial=True,
+    )
+    serializer.is_valid(raise_exception=True)
+    transfer_window = serializer.save()
+
+    return Response(
+        {
+            "message": "Fantasy transfer window updated successfully.",
+            "transfer_window": FantasyTransferWindowSerializer(transfer_window).data,
         },
         status=status.HTTP_200_OK,
     )

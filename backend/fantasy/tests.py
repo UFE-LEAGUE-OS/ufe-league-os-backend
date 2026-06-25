@@ -10,6 +10,8 @@ from accounts.models import Club, User
 from dashboards.models import Competition, League, Match, Union
 
 from .models import (
+    FantasyTransfer,
+    FantasyTransferWindow,
     FantasyCompetition,
     FantasyGameweek,
     FantasyLeague,
@@ -1241,3 +1243,275 @@ class FantasyAdminOperationsRefinementTests(FantasyTestMixin, APITestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+
+
+class FantasyTransferTradeRulesEngineTests(FantasyTestMixin, APITestCase):
+    def _create_transfer_window(
+        self,
+        free_transfers=1,
+        max_transfers_per_window=3,
+        allow_trades=False,
+        opens_at=None,
+        closes_at=None,
+    ):
+        now = timezone.now()
+
+        return FantasyTransferWindow.objects.create(
+            fantasy_competition=self.fantasy_competition,
+            gameweek=self.gameweek,
+            name="Gameweek 1 Transfer Window",
+            opens_at=opens_at or now - timedelta(hours=1),
+            closes_at=closes_at or now + timedelta(days=1),
+            is_active=True,
+            free_transfers=free_transfers,
+            max_transfers_per_window=max_transfers_per_window,
+            points_cost_per_extra_transfer=Decimal("4.00"),
+            allow_trades=allow_trades,
+            allow_transfers_after_lineup_lock=False,
+        )
+
+    def _create_team_with_squad(self):
+        team = FantasyTeam.objects.create(
+            owner=self.fan,
+            fantasy_competition=self.fantasy_competition,
+            name="Kobs Warriors Fantasy XV",
+        )
+
+        FantasySquadPlayer.objects.bulk_create(
+            [
+                FantasySquadPlayer(
+                    fantasy_team=team,
+                    fantasy_player=player,
+                    price_at_selection=player.final_price,
+                    is_active=True,
+                )
+                for player in [self.player_1, self.player_2, self.player_3]
+            ]
+        )
+
+        return team
+
+    def test_admin_can_create_and_update_transfer_window(self):
+        self.client.force_authenticate(user=self.league_admin)
+
+        now = timezone.now()
+
+        create_response = self.client.post(
+            "/api/fantasy/admin/transfer-windows/",
+            {
+                "fantasy_competition": self.fantasy_competition.id,
+                "gameweek": self.gameweek.id,
+                "name": "Admin Created Transfer Window",
+                "opens_at": (now - timedelta(hours=1)).isoformat(),
+                "closes_at": (now + timedelta(days=2)).isoformat(),
+                "free_transfers": 1,
+                "max_transfers_per_window": 3,
+                "points_cost_per_extra_transfer": "4.00",
+                "allow_trades": False,
+                "allow_transfers_after_lineup_lock": False,
+            },
+            format="json",
+        )
+
+        self.assertEqual(create_response.status_code, 201)
+
+        transfer_window_id = create_response.data["transfer_window"]["id"]
+
+        update_response = self.client.patch(
+            f"/api/fantasy/admin/transfer-windows/{transfer_window_id}/",
+            {
+                "free_transfers": 2,
+                "max_transfers_per_window": 4,
+                "notes": "Updated transfer rules.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(update_response.status_code, 200)
+
+        transfer_window = FantasyTransferWindow.objects.get(id=transfer_window_id)
+        self.assertEqual(transfer_window.free_transfers, 2)
+        self.assertEqual(transfer_window.max_transfers_per_window, 4)
+        self.assertEqual(transfer_window.notes, "Updated transfer rules.")
+
+    def test_public_can_list_open_transfer_windows(self):
+        open_window = self._create_transfer_window()
+        now = timezone.now()
+
+        FantasyTransferWindow.objects.create(
+            fantasy_competition=self.fantasy_competition,
+            gameweek=self.gameweek,
+            name="Closed Transfer Window",
+            opens_at=now - timedelta(days=4),
+            closes_at=now - timedelta(days=2),
+            is_active=True,
+            free_transfers=1,
+            max_transfers_per_window=3,
+            points_cost_per_extra_transfer=Decimal("4.00"),
+        )
+
+        response = self.client.get(
+            "/api/fantasy/transfer-windows/",
+            {
+                "competition": self.fantasy_competition.id,
+                "open": "true",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], open_window.id)
+
+    def test_fan_can_preview_transfer(self):
+        team = self._create_team_with_squad()
+        transfer_window = self._create_transfer_window()
+
+        self.client.force_authenticate(user=self.fan)
+
+        response = self.client.post(
+            f"/api/fantasy/teams/{team.id}/transfers/preview/",
+            {
+                "player_out_id": self.player_2.id,
+                "player_in_id": self.player_4.id,
+                "transfer_window_id": transfer_window.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["preview"]["can_transfer"])
+        self.assertEqual(
+            Decimal(str(response.data["preview"]["points_cost"])),
+            Decimal("0.00"),
+        )
+
+    def test_fan_can_complete_free_and_paid_transfers(self):
+        team = self._create_team_with_squad()
+        transfer_window = self._create_transfer_window(
+            free_transfers=1,
+            max_transfers_per_window=3,
+        )
+
+        self.client.force_authenticate(user=self.fan)
+
+        first_response = self.client.post(
+            f"/api/fantasy/teams/{team.id}/transfers/",
+            {
+                "player_out_id": self.player_2.id,
+                "player_in_id": self.player_4.id,
+                "transfer_window_id": transfer_window.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(first_response.status_code, 201)
+
+        first_transfer = FantasyTransfer.objects.get(
+            id=first_response.data["transfer"]["id"]
+        )
+        self.assertEqual(first_transfer.points_cost, Decimal("0.00"))
+
+        active_player_ids = set(
+            team.squad_players.filter(is_active=True).values_list(
+                "fantasy_player_id",
+                flat=True,
+            )
+        )
+        self.assertIn(self.player_4.id, active_player_ids)
+        self.assertNotIn(self.player_2.id, active_player_ids)
+
+        second_response = self.client.post(
+            f"/api/fantasy/teams/{team.id}/transfers/",
+            {
+                "player_out_id": self.player_1.id,
+                "player_in_id": self.player_2.id,
+                "transfer_window_id": transfer_window.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(second_response.status_code, 201)
+
+        second_transfer = FantasyTransfer.objects.get(
+            id=second_response.data["transfer"]["id"]
+        )
+        self.assertEqual(second_transfer.points_cost, Decimal("4.00"))
+
+        team.refresh_from_db()
+        self.assertEqual(team.total_points, Decimal("-4.00"))
+
+    def test_max_transfer_limit_blocks_extra_transfer(self):
+        team = self._create_team_with_squad()
+        transfer_window = self._create_transfer_window(
+            free_transfers=1,
+            max_transfers_per_window=1,
+        )
+
+        self.client.force_authenticate(user=self.fan)
+
+        first_response = self.client.post(
+            f"/api/fantasy/teams/{team.id}/transfers/",
+            {
+                "player_out_id": self.player_2.id,
+                "player_in_id": self.player_4.id,
+                "transfer_window_id": transfer_window.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(first_response.status_code, 201)
+
+        second_response = self.client.post(
+            f"/api/fantasy/teams/{team.id}/transfers/",
+            {
+                "player_out_id": self.player_1.id,
+                "player_in_id": self.player_2.id,
+                "transfer_window_id": transfer_window.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(second_response.status_code, 400)
+        self.assertIn("transfer_window", second_response.data)
+
+    def test_budget_rule_blocks_transfer(self):
+        team = self._create_team_with_squad()
+        transfer_window = self._create_transfer_window()
+
+        self.player_4.final_price = Decimal("95.00")
+        self.player_4.save(update_fields=["final_price", "updated_at"])
+
+        self.client.force_authenticate(user=self.fan)
+
+        response = self.client.post(
+            f"/api/fantasy/teams/{team.id}/transfers/",
+            {
+                "player_out_id": self.player_2.id,
+                "player_in_id": self.player_4.id,
+                "transfer_window_id": transfer_window.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("budget", response.data)
+
+    def test_trade_type_requires_trade_enabled_window(self):
+        team = self._create_team_with_squad()
+        transfer_window = self._create_transfer_window(allow_trades=False)
+
+        self.client.force_authenticate(user=self.fan)
+
+        response = self.client.post(
+            f"/api/fantasy/teams/{team.id}/transfers/",
+            {
+                "player_out_id": self.player_2.id,
+                "player_in_id": self.player_4.id,
+                "transfer_window_id": transfer_window.id,
+                "transfer_type": FantasyTransfer.TransferType.TRADE,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("transfer_type", response.data)

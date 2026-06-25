@@ -9,6 +9,8 @@ from accounts.models import User
 from dashboards.models import Match
 
 from .models import (
+    FantasyTransfer,
+    FantasyTransferWindow,
     FantasyCompetition,
     FantasyGameweek,
     FantasyLeague,
@@ -804,3 +806,355 @@ def reject_player_score(score, rejected_by):
     score.approved_at = timezone.now()
     score.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
     return score
+
+
+def get_open_transfer_window(fantasy_competition, transfer_window=None):
+    """
+    Resolve the active transfer window for a competition.
+
+    If a specific transfer window is supplied, it must belong to the competition
+    and must currently be open.
+    """
+    now = timezone.now()
+
+    if transfer_window is not None:
+        if transfer_window.fantasy_competition_id != fantasy_competition.id:
+            raise ValidationError(
+                {
+                    "transfer_window_id": "Transfer window belongs to another competition."
+                }
+            )
+
+        if not transfer_window.is_active:
+            raise ValidationError(
+                {"transfer_window_id": "Transfer window is not active."}
+            )
+
+        if not transfer_window.opens_at <= now <= transfer_window.closes_at:
+            raise ValidationError(
+                {"transfer_window_id": "Transfer window is not currently open."}
+            )
+
+        return transfer_window
+
+    window = (
+        FantasyTransferWindow.objects.filter(
+            fantasy_competition=fantasy_competition,
+            is_active=True,
+            opens_at__lte=now,
+            closes_at__gte=now,
+        )
+        .select_related("fantasy_competition", "gameweek")
+        .order_by("closes_at")
+        .first()
+    )
+
+    if window is None:
+        raise ValidationError(
+            {
+                "transfer_window": "There is no open transfer window for this competition."
+            }
+        )
+
+    return window
+
+
+def get_transfer_count_for_window(fantasy_team, transfer_window):
+    return FantasyTransfer.objects.filter(
+        fantasy_team=fantasy_team,
+        transfer_window=transfer_window,
+        status=FantasyTransfer.Status.COMPLETED,
+    ).count()
+
+
+def calculate_transfer_points_cost(fantasy_team, transfer_window):
+    """
+    Calculate the points cost for the next transfer.
+
+    Example:
+    - free_transfers = 1
+    - first transfer costs 0
+    - second transfer costs 4
+    - third transfer costs 4
+    """
+    completed_transfers = get_transfer_count_for_window(
+        fantasy_team=fantasy_team,
+        transfer_window=transfer_window,
+    )
+
+    next_transfer_number = completed_transfers + 1
+
+    if next_transfer_number <= transfer_window.free_transfers:
+        return Decimal("0.00")
+
+    return transfer_window.points_cost_per_extra_transfer
+
+
+def get_total_transfer_points_cost(fantasy_team):
+    return fantasy_team.transfers.filter(
+        status=FantasyTransfer.Status.COMPLETED,
+    ).aggregate(total=Sum("points_cost"))["total"] or Decimal("0.00")
+
+
+def refresh_fantasy_team_total_points(fantasy_team):
+    gameweek_points_total = fantasy_team.gameweek_scores.aggregate(total=Sum("points"))[
+        "total"
+    ] or Decimal("0.00")
+    transfer_points_cost = get_total_transfer_points_cost(fantasy_team)
+
+    fantasy_team.total_points = gameweek_points_total - transfer_points_cost
+    fantasy_team.save(update_fields=["total_points", "updated_at"])
+    return fantasy_team
+
+
+def rerank_fantasy_competition_teams(fantasy_competition):
+    ranked_teams = list(
+        FantasyTeam.objects.filter(fantasy_competition=fantasy_competition).order_by(
+            "-total_points",
+            "name",
+        )
+    )
+
+    for index, team in enumerate(ranked_teams, start=1):
+        team.current_rank = index
+        team.save(update_fields=["current_rank", "updated_at"])
+
+    return ranked_teams
+
+
+def validate_fantasy_transfer(
+    fantasy_team,
+    player_out,
+    player_in,
+    transfer_window=None,
+    transfer_type=FantasyTransfer.TransferType.TRANSFER,
+):
+    competition = fantasy_team.fantasy_competition
+
+    resolved_window = get_open_transfer_window(
+        fantasy_competition=competition,
+        transfer_window=transfer_window,
+    )
+
+    if (
+        transfer_type == FantasyTransfer.TransferType.TRADE
+        and not resolved_window.allow_trades
+    ):
+        raise ValidationError(
+            {"transfer_type": "Trades are not allowed in this transfer window."}
+        )
+
+    if (
+        resolved_window.gameweek
+        and resolved_window.gameweek.is_locked
+        and not resolved_window.allow_transfers_after_lineup_lock
+    ):
+        raise ValidationError(
+            {"transfer_window": "Transfers are not allowed after lineup lock."}
+        )
+
+    completed_transfers = get_transfer_count_for_window(
+        fantasy_team=fantasy_team,
+        transfer_window=resolved_window,
+    )
+
+    if completed_transfers >= resolved_window.max_transfers_per_window:
+        raise ValidationError(
+            {
+                "transfer_window": (
+                    "Maximum transfers for this transfer window have already been used."
+                )
+            }
+        )
+
+    if player_out.id == player_in.id:
+        raise ValidationError(
+            {"player_in_id": "Incoming player must be different from outgoing player."}
+        )
+
+    if player_out.fantasy_competition_id != competition.id:
+        raise ValidationError(
+            {"player_out_id": "Outgoing player belongs to another competition."}
+        )
+
+    if player_in.fantasy_competition_id != competition.id:
+        raise ValidationError(
+            {"player_in_id": "Incoming player belongs to another competition."}
+        )
+
+    if not player_in.is_active or not player_in.is_available:
+        raise ValidationError({"player_in_id": "Incoming player is not available."})
+
+    active_squad = list(
+        fantasy_team.squad_players.filter(is_active=True).select_related(
+            "fantasy_player",
+            "fantasy_player__club",
+        )
+    )
+
+    active_player_ids = {row.fantasy_player_id for row in active_squad}
+
+    if player_out.id not in active_player_ids:
+        raise ValidationError(
+            {"player_out_id": "Outgoing player is not in your active squad."}
+        )
+
+    if player_in.id in active_player_ids:
+        raise ValidationError(
+            {"player_in_id": "Incoming player is already in your active squad."}
+        )
+
+    players_after_transfer = [
+        row.fantasy_player
+        for row in active_squad
+        if row.fantasy_player_id != player_out.id
+    ]
+    players_after_transfer.append(player_in)
+
+    budget_used = sum(
+        (player.final_price for player in players_after_transfer),
+        Decimal("0.00"),
+    )
+
+    if budget_used > competition.budget:
+        raise ValidationError(
+            {
+                "budget": (
+                    f"Budget exceeded. Used {budget_used}, "
+                    f"available {competition.budget}."
+                )
+            }
+        )
+
+    club_counts = {}
+    for player in players_after_transfer:
+        club_counts[player.club_id] = club_counts.get(player.club_id, 0) + 1
+
+    over_limit_clubs = [
+        club_id
+        for club_id, count in club_counts.items()
+        if count > competition.max_players_per_club
+    ]
+
+    if over_limit_clubs:
+        raise ValidationError(
+            {
+                "club_limit": (
+                    f"Cannot select more than {competition.max_players_per_club} "
+                    "players from the same club."
+                )
+            }
+        )
+
+    points_cost = calculate_transfer_points_cost(
+        fantasy_team=fantasy_team,
+        transfer_window=resolved_window,
+    )
+
+    return {
+        "transfer_window": resolved_window,
+        "points_cost": points_cost,
+        "budget_used": budget_used,
+        "budget_remaining": competition.budget - budget_used,
+        "completed_transfers": completed_transfers,
+        "remaining_transfers": (
+            resolved_window.max_transfers_per_window - completed_transfers - 1
+        ),
+    }
+
+
+def preview_fantasy_transfer(
+    fantasy_team,
+    player_out,
+    player_in,
+    transfer_window=None,
+    transfer_type=FantasyTransfer.TransferType.TRANSFER,
+):
+    result = validate_fantasy_transfer(
+        fantasy_team=fantasy_team,
+        player_out=player_out,
+        player_in=player_in,
+        transfer_window=transfer_window,
+        transfer_type=transfer_type,
+    )
+
+    return {
+        "can_transfer": True,
+        "transfer_window_id": result["transfer_window"].id,
+        "transfer_window_name": result["transfer_window"].name,
+        "points_cost": result["points_cost"],
+        "budget_used": result["budget_used"],
+        "budget_remaining": result["budget_remaining"],
+        "remaining_transfers": result["remaining_transfers"],
+    }
+
+
+def perform_fantasy_transfer(
+    fantasy_team,
+    player_out,
+    player_in,
+    requested_by,
+    transfer_window=None,
+    transfer_type=FantasyTransfer.TransferType.TRANSFER,
+    reason="",
+):
+    """
+    Perform a fantasy transfer.
+
+    MVP trade interpretation:
+    - TRANSFER is the normal fan squad swap.
+    - TRADE is reserved for future trade-style logic but still uses the same
+      player_out/player_in swap structure for now.
+    """
+    result = validate_fantasy_transfer(
+        fantasy_team=fantasy_team,
+        player_out=player_out,
+        player_in=player_in,
+        transfer_window=transfer_window,
+        transfer_type=transfer_type,
+    )
+
+    resolved_window = result["transfer_window"]
+    points_cost = result["points_cost"]
+
+    with transaction.atomic():
+        squad_row = FantasySquadPlayer.objects.filter(
+            fantasy_team=fantasy_team,
+            fantasy_player=player_out,
+            is_active=True,
+        ).first()
+
+        if squad_row is None:
+            raise ValidationError(
+                {"player_out_id": "Outgoing player is not in your active squad."}
+            )
+
+        squad_row.is_active = False
+        squad_row.removed_at = timezone.now()
+        squad_row.save(update_fields=["is_active", "removed_at"])
+
+        FantasySquadPlayer.objects.create(
+            fantasy_team=fantasy_team,
+            fantasy_player=player_in,
+            price_at_selection=player_in.final_price,
+            is_active=True,
+        )
+
+        transfer = FantasyTransfer.objects.create(
+            fantasy_team=fantasy_team,
+            fantasy_competition=fantasy_team.fantasy_competition,
+            transfer_window=resolved_window,
+            gameweek=resolved_window.gameweek,
+            player_out=player_out,
+            player_in=player_in,
+            transfer_type=transfer_type,
+            status=FantasyTransfer.Status.COMPLETED,
+            points_cost=points_cost,
+            requested_by=requested_by,
+            reason=reason or "",
+        )
+
+        refresh_fantasy_team_total_points(fantasy_team)
+        rerank_fantasy_competition_teams(fantasy_team.fantasy_competition)
+
+    return transfer
