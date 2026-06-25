@@ -1019,3 +1019,225 @@ class FantasyAPIRefinementTests(FantasyTestMixin, APITestCase):
             gameweek_response.data["results"][0]["fantasy_team_name"],
             team.name,
         )
+
+
+class FantasyAdminOperationsRefinementTests(FantasyTestMixin, APITestCase):
+    def test_fan_cannot_access_fantasy_admin_dashboard(self):
+        self.client.force_authenticate(user=self.fan)
+
+        response = self.client.get("/api/fantasy/admin/dashboard/")
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_league_admin_dashboard_returns_summary(self):
+        self.client.force_authenticate(user=self.league_admin)
+
+        response = self.client.get(
+            "/api/fantasy/admin/dashboard/",
+            {"competition": self.fantasy_competition.id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["summary"]["competitions_count"], 1)
+        self.assertEqual(response.data["summary"]["gameweeks_count"], 1)
+        self.assertEqual(response.data["summary"]["players_count"], 4)
+        self.assertEqual(response.data["summary"]["available_players_count"], 4)
+
+    def test_league_admin_can_list_and_update_fantasy_competition(self):
+        self.client.force_authenticate(user=self.league_admin)
+
+        list_response = self.client.get(
+            "/api/fantasy/admin/competitions/",
+            {"search": "Nile", "limit": 10, "offset": 0},
+        )
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.data["count"], 1)
+
+        update_response = self.client.patch(
+            f"/api/fantasy/admin/competitions/{self.fantasy_competition.id}/",
+            {
+                "name": "Nile Special Rugby Fantasy Updated",
+                "status": FantasyCompetition.Status.LOCKED,
+                "budget": "120.00",
+                "squad_size": 3,
+                "lineup_size": 2,
+                "rules_summary": "Updated admin rules.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(update_response.status_code, 200)
+
+        self.fantasy_competition.refresh_from_db()
+        self.assertEqual(
+            self.fantasy_competition.name,
+            "Nile Special Rugby Fantasy Updated",
+        )
+        self.assertEqual(
+            self.fantasy_competition.status,
+            FantasyCompetition.Status.LOCKED,
+        )
+        self.assertEqual(self.fantasy_competition.budget, Decimal("120.00"))
+        self.assertEqual(self.fantasy_competition.lineup_size, 2)
+
+    def test_competition_update_rejects_lineup_size_larger_than_squad_size(self):
+        self.client.force_authenticate(user=self.league_admin)
+
+        response = self.client.patch(
+            f"/api/fantasy/admin/competitions/{self.fantasy_competition.id}/",
+            {
+                "squad_size": 3,
+                "lineup_size": 4,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("lineup_size", response.data)
+
+    def test_league_admin_can_update_gameweek_settings(self):
+        self.client.force_authenticate(user=self.league_admin)
+
+        response = self.client.patch(
+            f"/api/fantasy/admin/gameweeks/{self.gameweek.id}/",
+            {
+                "name": "Updated Gameweek 1",
+                "status": FantasyGameweek.Status.SCORING,
+                "matches": [self.match.id],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        self.gameweek.refresh_from_db()
+        self.assertEqual(self.gameweek.name, "Updated Gameweek 1")
+        self.assertEqual(self.gameweek.status, FantasyGameweek.Status.SCORING)
+        self.assertEqual(self.gameweek.matches.count(), 1)
+
+    def test_league_admin_can_update_player_and_recalculate_price(self):
+        self.client.force_authenticate(user=self.league_admin)
+
+        update_response = self.client.patch(
+            f"/api/fantasy/admin/players/{self.player_1.id}/",
+            {
+                "display_name": "Ian Munyani Updated",
+                "is_available": False,
+                "availability_note": "Injury watch.",
+                "previous_stats": {
+                    "appearances": 15,
+                    "tries": 7,
+                    "try_assists": 5,
+                    "tackles": 80,
+                    "metres_carried": 500,
+                    "clean_breaks": 12,
+                    "player_of_match": 3,
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(update_response.status_code, 200)
+
+        self.player_1.refresh_from_db()
+        self.assertEqual(self.player_1.display_name, "Ian Munyani Updated")
+        self.assertFalse(self.player_1.is_available)
+        self.assertEqual(self.player_1.availability_note, "Injury watch.")
+
+        recalculate_response = self.client.post(
+            f"/api/fantasy/admin/players/{self.player_1.id}/recalculate-price/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(recalculate_response.status_code, 200)
+
+        self.player_1.refresh_from_db()
+        self.assertEqual(self.player_1.price_source, FantasyPlayer.PriceSource.AUTO)
+        self.assertGreaterEqual(
+            self.player_1.final_price,
+            self.fantasy_competition.min_player_price,
+        )
+        self.assertLessEqual(
+            self.player_1.final_price,
+            self.fantasy_competition.max_player_price,
+        )
+
+    def test_admin_can_list_update_and_reject_player_score(self):
+        score = FantasyPlayerGameweekScore.objects.create(
+            fantasy_player=self.player_1,
+            gameweek=self.gameweek,
+            match=self.match,
+            points=Decimal("8.00"),
+            breakdown={"appearance": 2, "try": 5, "assist": 1},
+            status=FantasyPlayerGameweekScore.Status.SUBMITTED,
+            entered_by=self.referee,
+        )
+
+        self.client.force_authenticate(user=self.league_admin)
+
+        list_response = self.client.get(
+            f"/api/fantasy/admin/gameweeks/{self.gameweek.id}/player-scores/",
+            {"status": FantasyPlayerGameweekScore.Status.SUBMITTED},
+        )
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.data["count"], 1)
+
+        detail_response = self.client.get(
+            f"/api/fantasy/admin/player-scores/{score.id}/"
+        )
+
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.data["score"]["id"], score.id)
+
+        update_response = self.client.patch(
+            f"/api/fantasy/admin/player-scores/{score.id}/",
+            {
+                "points": "7.50",
+                "breakdown": {"appearance": 2, "try": 5, "penalty": "-0.50"},
+                "status": FantasyPlayerGameweekScore.Status.DRAFT,
+            },
+            format="json",
+        )
+
+        self.assertEqual(update_response.status_code, 200)
+
+        score.refresh_from_db()
+        self.assertEqual(score.points, Decimal("7.50"))
+        self.assertEqual(score.status, FantasyPlayerGameweekScore.Status.DRAFT)
+
+        reject_response = self.client.post(
+            f"/api/fantasy/admin/player-scores/{score.id}/reject/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(reject_response.status_code, 200)
+
+        score.refresh_from_db()
+        self.assertEqual(score.status, FantasyPlayerGameweekScore.Status.REJECTED)
+        self.assertEqual(score.approved_by, self.league_admin)
+        self.assertIsNotNone(score.approved_at)
+
+    def test_referee_cannot_reject_player_score(self):
+        score = FantasyPlayerGameweekScore.objects.create(
+            fantasy_player=self.player_1,
+            gameweek=self.gameweek,
+            match=self.match,
+            points=Decimal("8.00"),
+            breakdown={"appearance": 2, "try": 5, "assist": 1},
+            status=FantasyPlayerGameweekScore.Status.SUBMITTED,
+            entered_by=self.referee,
+        )
+
+        self.client.force_authenticate(user=self.referee)
+
+        response = self.client.post(
+            f"/api/fantasy/admin/player-scores/{score.id}/reject/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)

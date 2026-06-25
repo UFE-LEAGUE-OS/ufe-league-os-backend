@@ -133,4 +133,39 @@ urlpatterns = [
         views.admin_gameweek_close_view,
         name="fantasy-admin-gameweek-close",
     ),
+    path(
+        "admin/dashboard/",
+        views.admin_fantasy_dashboard_view,
+        name="fantasy-admin-dashboard",
+    ),
+    path(
+        "admin/competitions/<int:competition_id>/",
+        views.admin_fantasy_competition_detail_update_view,
+        name="fantasy-admin-competition-detail-update",
+    ),
+    path(
+        "admin/gameweeks/<int:gameweek_id>/",
+        views.admin_fantasy_gameweek_detail_update_view,
+        name="fantasy-admin-gameweek-detail-update",
+    ),
+    path(
+        "admin/players/<int:player_id>/",
+        views.admin_fantasy_player_detail_update_view,
+        name="fantasy-admin-player-detail-update",
+    ),
+    path(
+        "admin/players/<int:player_id>/recalculate-price/",
+        views.admin_fantasy_player_recalculate_price_view,
+        name="fantasy-admin-player-recalculate-price",
+    ),
+    path(
+        "admin/player-scores/<int:score_id>/",
+        views.admin_player_score_detail_update_view,
+        name="fantasy-admin-player-score-detail-update",
+    ),
+    path(
+        "admin/player-scores/<int:score_id>/reject/",
+        views.admin_player_score_reject_view,
+        name="fantasy-admin-player-score-reject",
+    ),
 ]
