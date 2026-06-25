@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
-from django.db.models import Q, UniqueConstraint
+from django.db.models import UniqueConstraint
 
 
 class Sport(models.Model):
