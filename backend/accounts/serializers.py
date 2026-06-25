@@ -5,6 +5,7 @@ from rest_framework import serializers
 
 from .google_auth import verify_google_id_token, InvalidGoogleTokenError
 from .models import (
+    Notification,
     Club,
     Follow,
     NotificationPreference,
@@ -630,6 +631,41 @@ class NotificationPreferenceSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "user", "event_label", "created_at", "updated_at"]
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    event_label = serializers.CharField(
+        source="get_event_type_display",
+        read_only=True,
+    )
+    category_label = serializers.CharField(
+        source="get_category_display",
+        read_only=True,
+    )
+    priority_label = serializers.CharField(
+        source="get_priority_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = Notification
+        fields = [
+            "id",
+            "event_type",
+            "event_label",
+            "category",
+            "category_label",
+            "priority",
+            "priority_label",
+            "title",
+            "message",
+            "action_url",
+            "metadata",
+            "is_read",
+            "read_at",
+            "created_at",
+        ]
+        read_only_fields = fields
 
 
 class BulkNotificationPreferenceSerializer(serializers.Serializer):

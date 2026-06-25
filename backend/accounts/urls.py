@@ -113,4 +113,24 @@ urlpatterns = [
         views_extra.feed_unread_count_view,
         name="feed-unread-count",
     ),
+    path(
+        "notifications/inbox/",
+        views_extra.notification_inbox_view,
+        name="notification-inbox",
+    ),
+    path(
+        "notifications/unread-count/",
+        views_extra.notification_unread_count_view,
+        name="notification-unread-count",
+    ),
+    path(
+        "notifications/<int:notification_id>/mark-read/",
+        views_extra.notification_mark_read_view,
+        name="notification-mark-read",
+    ),
+    path(
+        "notifications/mark-all-read/",
+        views_extra.notification_mark_all_read_view,
+        name="notification-mark-all-read",
+    ),
 ]

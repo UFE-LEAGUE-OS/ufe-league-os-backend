@@ -17,3 +17,4 @@ channels-redis==4.3.0
 daphne==4.2.2
 drf-spectacular==0.28.0
 google-auth[requests]>=2.29,<3.0
+qrcode[pil]>=8.0,<9.0

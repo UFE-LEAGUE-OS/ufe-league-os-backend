@@ -41,6 +41,15 @@ class TicketTypeSerializer(serializers.ModelSerializer):
             "remaining_quantity",
         ]
 
+    def get_qr_image_url(self, obj):
+        request = self.context.get("request")
+        path = f"/api/ticketing/tickets/{obj.id}/qr/"
+
+        if request:
+            return request.build_absolute_uri(path)
+
+        return path
+
     def get_match_label(self, obj):
         return str(obj.match)
 
@@ -128,6 +137,7 @@ class TicketSerializer(serializers.ModelSerializer):
     match_id = serializers.IntegerField(source="match.id", read_only=True)
     match_label = serializers.SerializerMethodField()
     qr_payload = serializers.CharField(read_only=True)
+    qr_image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Ticket
@@ -135,6 +145,7 @@ class TicketSerializer(serializers.ModelSerializer):
             "id",
             "ticket_code",
             "qr_payload",
+            "qr_image_url",
             "order",
             "ticket_type",
             "ticket_type_name",
@@ -150,6 +161,15 @@ class TicketSerializer(serializers.ModelSerializer):
 
     def get_match_label(self, obj):
         return str(obj.match)
+
+    def get_qr_image_url(self, obj):
+        request = self.context.get("request")
+        path = f"/api/ticketing/tickets/{obj.id}/qr/"
+
+        if request:
+            return request.build_absolute_uri(path)
+
+        return path
 
 
 class TicketValidationSerializer(serializers.Serializer):
