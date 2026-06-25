@@ -1,7 +1,6 @@
 from datetime import timedelta
 from uuid import uuid4
 
-from django.conf import settings
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
@@ -59,7 +58,7 @@ def membership_plans_view(request):
             status=status.HTTP_200_OK,
         )
 
-    if not request.user.role in [User.Role.CLUB_ADMIN, User.Role.SUPER_ADMIN]:
+    if request.user.role not in [User.Role.CLUB_ADMIN, User.Role.SUPER_ADMIN]:
         return Response(
             {"detail": "You do not have permission to create membership plans."},
             status=status.HTTP_403_FORBIDDEN,
@@ -325,7 +324,6 @@ def membership_initiate_payment_view(request):
 
     payment_method = request.data.get("payment_method")
     provider = request.data.get("provider")
-    phone_number = request.data.get("phone_number")
     checkout_url = request.data.get("checkout_url", "")
     transaction_reference = request.data.get("transaction_reference") or str(uuid4())
 
@@ -378,7 +376,6 @@ def membership_initiate_payment_view(request):
 @api_view(["POST"])
 @csrf_exempt
 def membership_payment_webhook_view(request):
-    provider = request.data.get("provider")
     transaction_reference = request.data.get("transaction_reference")
     status_value = request.data.get("status")
     provider_status = request.data.get("provider_status", "")

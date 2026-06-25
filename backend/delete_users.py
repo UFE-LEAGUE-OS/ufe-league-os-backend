@@ -9,7 +9,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
 django.setup()
 
-from accounts.models import User
+from accounts.models import User  # noqa: E402
 
 
 def delete_users_by_email(emails):
@@ -33,7 +33,7 @@ def delete_users_by_email(emails):
             not_found.append(email)
             print(f"Not found: {email}")
 
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Deleted: {len(deleted)} user(s)")
     print(f"  Not found: {len(not_found)} user(s)")
 

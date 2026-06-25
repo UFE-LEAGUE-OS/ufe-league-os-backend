@@ -9,7 +9,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
 django.setup()
 
-from accounts.models import User
+from accounts.models import User  # noqa: E402
 
 users = User.objects.all().order_by("email")
 
