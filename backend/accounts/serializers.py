@@ -39,6 +39,33 @@ def normalize_phone_number(phone_number):
     return value
 
 
+class UserSummarySerializer(serializers.ModelSerializer):
+    """Minimal serializer for user representation in related resources."""
+
+    full_name = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "full_name",
+            "role",
+            "avatar",
+        )
+        read_only_fields = (
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "full_name",
+            "role",
+            "avatar",
+        )
+
+
 class UserSerializer(serializers.ModelSerializer):
     """Serializer for returning safe user data to the frontend."""
 
