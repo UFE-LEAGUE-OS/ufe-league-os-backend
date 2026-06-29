@@ -338,6 +338,12 @@ FLUTTERWAVE_TIMEOUT_SECONDS = config(
     cast=int,
 )
 
+TICKETING_DEMO_CHECKOUT_ENABLED = config(
+    "TICKETING_DEMO_CHECKOUT_ENABLED",
+    default=False,
+    cast=bool,
+)
+
 TICKET_RESERVATION_MINUTES = config(
     "TICKET_RESERVATION_MINUTES",
     default=10,
