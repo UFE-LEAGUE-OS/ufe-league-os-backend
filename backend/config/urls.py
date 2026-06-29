@@ -9,7 +9,11 @@ from django.http import JsonResponse
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
-from config.views import api_landing_view
+from config.views import (
+    api_landing_view,
+    landing_page_view,
+    global_flutterwave_webhook_view,
+)
 
 
 def health_check_view(request):
@@ -23,9 +27,20 @@ def health_check_view(request):
 
 
 urlpatterns = [
+    path("", landing_page_view, name="landing-page"),
     path("admin/", admin.site.urls),
     path("api/", api_landing_view, name="api-landing"),
     path("api/health/", health_check_view, name="health-check"),
+    path(
+        "webhook/flutterwave",
+        global_flutterwave_webhook_view,
+        name="global-flutterwave-webhook-no-slash",
+    ),
+    path(
+        "webhook/flutterwave/",
+        global_flutterwave_webhook_view,
+        name="global-flutterwave-webhook",
+    ),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
         "api/docs/",
@@ -36,6 +51,10 @@ urlpatterns = [
     path("api/dashboards/", include("dashboards.urls")),
     path("api/governance/", include("governance.urls")),
     path("api/sponsorships/", include("sponsorships.urls")),
+    path("api/memberships/", include("memberships.urls")),
+    path("api/ticketing/", include("ticketing.urls")),
+    path("api/fantasy/", include("fantasy.urls")),
+    path("api/engagements/", include("engagements.urls")),
 ]
 
 if settings.DEBUG:

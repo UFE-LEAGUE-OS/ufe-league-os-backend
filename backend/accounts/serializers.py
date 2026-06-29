@@ -5,10 +5,12 @@ from rest_framework import serializers
 
 from .google_auth import verify_google_id_token, InvalidGoogleTokenError
 from .models import (
+    Notification,
     Club,
     Follow,
     NotificationPreference,
     InterestPreference,
+    RoleApproval,
     Wallet,
     PaymentHistory,
     FeedItem,
@@ -35,6 +37,33 @@ def normalize_phone_number(phone_number):
         return f"+{value}"
 
     return value
+
+
+class UserSummarySerializer(serializers.ModelSerializer):
+    """Minimal serializer for user representation in related resources."""
+
+    full_name = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "full_name",
+            "role",
+            "avatar",
+        )
+        read_only_fields = (
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "full_name",
+            "role",
+            "avatar",
+        )
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -613,19 +642,57 @@ class FollowListSerializer(serializers.Serializer):
 class NotificationPreferenceSerializer(serializers.ModelSerializer):
     """Serializer for notification preferences."""
 
+    event_label = serializers.CharField(source="get_event_type_display", read_only=True)
+
     class Meta:
         model = NotificationPreference
         fields = [
             "id",
             "user",
             "event_type",
+            "event_label",
             "email_enabled",
             "push_enabled",
             "sms_enabled",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "user", "created_at", "updated_at"]
+        read_only_fields = ["id", "user", "event_label", "created_at", "updated_at"]
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    event_label = serializers.CharField(
+        source="get_event_type_display",
+        read_only=True,
+    )
+    category_label = serializers.CharField(
+        source="get_category_display",
+        read_only=True,
+    )
+    priority_label = serializers.CharField(
+        source="get_priority_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = Notification
+        fields = [
+            "id",
+            "event_type",
+            "event_label",
+            "category",
+            "category_label",
+            "priority",
+            "priority_label",
+            "title",
+            "message",
+            "action_url",
+            "metadata",
+            "is_read",
+            "read_at",
+            "created_at",
+        ]
+        read_only_fields = fields
 
 
 class BulkNotificationPreferenceSerializer(serializers.Serializer):
@@ -654,7 +721,16 @@ class InterestPreferenceSerializer(serializers.ModelSerializer):
 
 
 class WalletSerializer(serializers.ModelSerializer):
-    """Serializer for user's wallet."""
+    """
+    Serializer for the user's MVP wallet/payment center.
+
+    The MVP wallet does not store money. The balance remains 0.00 and the
+    API exposes stored_balance_enabled=false so the frontend can show the
+    correct product meaning.
+    """
+
+    stored_balance_enabled = serializers.BooleanField(read_only=True)
+    balance_note = serializers.CharField(read_only=True)
 
     class Meta:
         model = Wallet
@@ -664,14 +740,33 @@ class WalletSerializer(serializers.ModelSerializer):
             "balance",
             "currency",
             "is_active",
+            "stored_balance_enabled",
+            "balance_note",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "user", "balance", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "user",
+            "balance",
+            "stored_balance_enabled",
+            "balance_note",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class PaymentHistorySerializer(serializers.ModelSerializer):
-    """Serializer for payment history records."""
+    """Serializer for legacy/manual payment history records."""
+
+    payment_type_label = serializers.CharField(
+        source="get_payment_type_display",
+        read_only=True,
+    )
+    status_label = serializers.CharField(
+        source="get_status_display",
+        read_only=True,
+    )
 
     class Meta:
         model = PaymentHistory
@@ -679,16 +774,188 @@ class PaymentHistorySerializer(serializers.ModelSerializer):
             "id",
             "user",
             "payment_type",
+            "payment_type_label",
             "amount",
             "currency",
             "status",
+            "status_label",
             "reference",
             "description",
             "metadata",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "user", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "user",
+            "payment_type_label",
+            "status_label",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class WalletSummarySerializer(serializers.Serializer):
+    """
+    Response serializer for the MVP wallet/payment center.
+
+    This is not a stored-money wallet. It summarizes what the fan has paid for.
+    """
+
+    stored_balance_enabled = serializers.BooleanField()
+    balance = serializers.DecimalField(max_digits=12, decimal_places=2)
+    balance_note = serializers.CharField()
+    currency = serializers.CharField()
+    total_spent = serializers.DecimalField(max_digits=14, decimal_places=2)
+    successful_payments_count = serializers.IntegerField()
+    pending_payments_count = serializers.IntegerField()
+    failed_payments_count = serializers.IntegerField()
+    refunded_payments_count = serializers.IntegerField()
+    tickets_count = serializers.IntegerField()
+    memberships_count = serializers.IntegerField()
+    sponsorships_count = serializers.IntegerField()
+    recent_payments = serializers.ListField()
+    tickets = serializers.ListField()
+    memberships = serializers.ListField()
+    sponsorships = serializers.ListField()
+
+
+class CombinedPaymentHistoryItemSerializer(serializers.Serializer):
+    """Serializer for combined payment history across tickets, memberships, sponsorships."""
+
+    id = serializers.CharField()
+    source = serializers.CharField()
+    source_id = serializers.IntegerField(required=False)
+    payment_type = serializers.CharField()
+    payment_type_label = serializers.CharField()
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    currency = serializers.CharField()
+    status = serializers.CharField()
+    status_label = serializers.CharField()
+    reference = serializers.CharField(allow_blank=True)
+    description = serializers.CharField(allow_blank=True)
+    metadata = serializers.DictField()
+    created_at = serializers.DateTimeField(required=False)
+
+
+# ---------------------------------------------------------------------------
+# Role Approval Serializers
+# ---------------------------------------------------------------------------
+
+
+class RoleApprovalListSerializer(serializers.ModelSerializer):
+    """Serializer for listing role approval requests."""
+
+    target_user_email = serializers.EmailField(
+        source="target_user.email", read_only=True
+    )
+    target_user_name = serializers.SerializerMethodField()
+    requested_by_email = serializers.EmailField(
+        source="requested_by.email", read_only=True
+    )
+    requested_by_name = serializers.SerializerMethodField()
+    reviewed_by_email = serializers.EmailField(
+        source="reviewed_by.email", read_only=True, default=None
+    )
+    reviewed_by_name = serializers.SerializerMethodField()
+    requested_role_display = serializers.CharField(
+        source="get_requested_role_display", read_only=True
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = RoleApproval
+        fields = [
+            "id",
+            "target_user",
+            "target_user_email",
+            "target_user_name",
+            "requested_role",
+            "requested_role_display",
+            "requested_by",
+            "requested_by_email",
+            "requested_by_name",
+            "reviewed_by",
+            "reviewed_by_email",
+            "reviewed_by_name",
+            "status",
+            "status_display",
+            "reason",
+            "rejection_reason",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "target_user",
+            "target_user_email",
+            "target_user_name",
+            "requested_role",
+            "requested_role_display",
+            "requested_by",
+            "requested_by_email",
+            "requested_by_name",
+            "reviewed_by",
+            "reviewed_by_email",
+            "reviewed_by_name",
+            "status",
+            "status_display",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_target_user_name(self, obj):
+        return obj.target_user.full_name or obj.target_user.email
+
+    def get_requested_by_name(self, obj):
+        return obj.requested_by.full_name or obj.requested_by.email
+
+    def get_reviewed_by_name(self, obj):
+        if obj.reviewed_by:
+            return obj.reviewed_by.full_name or obj.reviewed_by.email
+        return None
+
+
+class RoleApprovalReviewSerializer(serializers.Serializer):
+    """Serializer for approving or rejecting a role approval request."""
+
+    action = serializers.ChoiceField(choices=["approve", "reject"])
+    rejection_reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Required if action is 'reject'.",
+    )
+
+    def validate(self, attrs):
+        if attrs["action"] == "reject" and not attrs.get("rejection_reason"):
+            raise serializers.ValidationError(
+                {
+                    "rejection_reason": "Rejection reason is required when rejecting a request."
+                }
+            )
+        return attrs
+
+
+# ---------------------------------------------------------------------------
+# Switch Workspace Serializer
+# ---------------------------------------------------------------------------
+
+
+class SwitchWorkspaceSerializer(serializers.Serializer):
+    """Serializer for switching the active workspace/role context."""
+
+    role = serializers.ChoiceField(choices=User.Role.choices)
+
+    def validate_role(self, value):
+        user = self.context.get("user")
+        if not user:
+            raise serializers.ValidationError("User context is required.")
+
+        if value not in user.roles:
+            raise serializers.ValidationError(
+                f"You do not have access to the '{value}' workspace."
+            )
+        return value
 
 
 # ---------------------------------------------------------------------------

@@ -63,6 +63,9 @@ INSTALLED_APPS = [
     "governance",
     "sponsorships",
     "ticketing",
+    "memberships",
+    "fantasy",
+    "engagements",
 ]
 
 MIDDLEWARE = [
@@ -297,9 +300,31 @@ FLUTTERWAVE_REDIRECT_URL = config(
     default="http://localhost:8000/api/sponsorships/flutterwave/verify/",
 )
 
+# Sponsorship Payment
 FLUTTERWAVE_PAYMENT_TITLE = config(
     "FLUTTERWAVE_PAYMENT_TITLE",
     default="League OS Sponsorship Payment",
+)
+
+FLUTTERWAVE_TICKET_PAYMENT_TITLE = config(
+    "FLUTTERWAVE_TICKET_PAYMENT_TITLE",
+    default="League OS Match Ticket Payment",
+)
+
+# Ticket Payment
+FLUTTERWAVE_TICKET_REDIRECT_URL = config(
+    "FLUTTERWAVE_TICKET_REDIRECT_URL",
+    default="http://localhost:8000/api/ticketing/flutterwave/verify/",
+)
+
+FLUTTERWAVE_MEMBERSHIP_PAYMENT_TITLE = config(
+    "FLUTTERWAVE_MEMBERSHIP_PAYMENT_TITLE",
+    default="League OS Membership Payment",
+)
+
+FLUTTERWAVE_MEMBERSHIP_REDIRECT_URL = config(
+    "FLUTTERWAVE_MEMBERSHIP_REDIRECT_URL",
+    default="http://localhost:8000/api/memberships/flutterwave/verify/",
 )
 
 FLUTTERWAVE_PAYMENT_LOGO_URL = config(
@@ -313,6 +338,18 @@ FLUTTERWAVE_TIMEOUT_SECONDS = config(
     cast=int,
 )
 
+TICKETING_DEMO_CHECKOUT_ENABLED = config(
+    "TICKETING_DEMO_CHECKOUT_ENABLED",
+    default=False,
+    cast=bool,
+)
+
+TICKET_RESERVATION_MINUTES = config(
+    "TICKET_RESERVATION_MINUTES",
+    default=10,
+    cast=int,
+)
+
 # Channels / WebSocket configuration
 # ---------------------------------------------------------------------------
 
@@ -323,3 +360,9 @@ CHANNEL_LAYERS = {
         "BACKEND": "channels.layers.InMemoryChannelLayer",
     },
 }
+
+MEMBERSHIP_DEMO_CHECKOUT_ENABLED = config(
+    "MEMBERSHIP_DEMO_CHECKOUT_ENABLED",
+    default=False,
+    cast=bool,
+)

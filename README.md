@@ -1,485 +1,109 @@
 # UFE League OS Backend
 
-Django REST backend for **League OS**, a multi-tenant sports fan engagement, ticketing, membership, sponsorship, and league management platform.
+Django REST backend for **League OS**, a multi-role sports platform for fan engagement, public sports data, ticketing, sponsorships, governance, and role-based dashboards.
 
-The backend provides authentication, email OTP verification, profile management, avatar upload, and role-based dashboard endpoints for different sports platform users.
+The backend currently supports:
 
----
+- User registration, login, Google authentication, OTP verification, password reset, profile management, avatar management, preferences, follows, wallet/payment history, and personalized feed endpoints.
+- Role-based dashboards for fans, club admins, league admins, union admins, super admins, referees, ticketing officers, and sponsors.
+- Public browse endpoints for fixtures, results, standings, clubs, unions, leagues, competitions, and match details.
+- Sports governance configuration for sport variants, competition formats, rules, and league standards.
+- Sponsorship accounts, packages, agreements, payment schedules, Flutterwave sponsorship checkout, payment confirmation, workflow events, and revenue distribution logic.
+- Match ticket purchase flow under **FAN-004**, including ticket type listing, ticket order creation, Flutterwave checkout initialization, payment verification, ticket issuing, fan ticket listing, and ticket validation/check-in.
 
-## Current Backend Foundation Status
+## Quick Links
 
-The backend foundation currently includes:
-
-* Dockerized Django development environment
-* PostgreSQL database
-* Django REST Framework API setup
-* Custom user model with role support
-* Email or phone number login
-* JWT authentication
-* Email OTP verification
-* Authenticated profile update API
-* Avatar upload and removal
-* Role-based dashboard endpoints
-* Automated backend tests
-* GitHub Actions CI workflow
-
----
+| Area | Local URL |
+|---|---|
+| Backend landing page | <http://localhost:8000/> |
+| API JSON landing page | <http://localhost:8000/api/> |
+| Health check | <http://localhost:8000/api/health/> |
+| Swagger/OpenAPI docs | <http://localhost:8000/api/docs/> |
+| OpenAPI schema | <http://localhost:8000/api/schema/> |
+| Django admin | <http://localhost:8000/admin/> |
 
 ## Tech Stack
 
-* Python 3.12
-* Django
-* Django REST Framework
-* PostgreSQL
-* Docker
-* Docker Compose
-* JWT Authentication
-* GitHub Actions CI
-* Black
-* Ruff
+- Python 3.12
+- Django 5.2.14
+- Django REST Framework
+- PostgreSQL 16
+- Docker and Docker Compose
+- Simple JWT authentication
+- Django Channels / Daphne
+- drf-spectacular Swagger/OpenAPI documentation
+- Flutterwave payment integration
+- Black formatting
+- Ruff linting
+- GitHub Actions CI
 
----
+## Documentation Map
 
-## User Roles
+Read these files depending on your role:
 
-The backend currently supports the following user roles:
-
-* Fan / Member
-* Club Admin
-* League Admin
-* Union Admin
-* Super Admin
-* Referee / Match Official
-* Ticketing Officer
-* Sponsor
-
----
+| Role | Start Here |
+|---|---|
+| New backend developer | `docs/01-backend-overview.md`, then `docs/02-local-development.md` |
+| Frontend developer | `docs/05-api-reference.md`, `docs/06-frontend-integration-guide.md` |
+| QA tester | `docs/08-qa-test-plan.md`, `docs/10-troubleshooting.md` |
+| DevOps engineer | `docs/03-environment-variables.md`, `docs/07-devops-deployment-guide.md` |
+| Product owner / project reviewer | `docs/01-backend-overview.md`, `docs/11-current-feature-status.md` |
+| Payment integration reviewer | `docs/09-flutterwave-payment-flows.md` |
 
 ## Local Setup
-
-Clone the repository:
 
 ```bash
 git clone https://github.com/UFE-LEAGUE-OS/ufe-league-os-backend.git
 cd ufe-league-os-backend
-```
-
-Copy the environment file:
-
-```bash
 cp .env.example .env
-```
-
-Start the Docker containers:
-
-```bash
 docker compose up -d --build
-```
-
-Check that the containers are running:
-
-```bash
-docker compose ps
-```
-
-Run database migrations:
-
-```bash
 docker compose exec backend python manage.py migrate
-```
-
-Run the automated tests:
-
-```bash
 docker compose exec backend python manage.py test
 ```
 
-Check the health endpoint:
+## Standard Quality Checks
 
-```bash
-curl -i http://localhost:8000/api/health/
-```
-
-Expected response:
-
-```json
-{
-  "status": "OK",
-  "service": "League OS Backend API",
-  "version": "sprint-1-foundation"
-}
-```
-
----
-
-## Environment Variables
-
-The project uses `.env` for local environment configuration.
-
-Create your local `.env` file from the example:
-
-```bash
-cp .env.example .env
-```
-
-Important local Docker setting:
-
-```env
-DB_HOST=db
-```
-
-In GitHub Actions CI, the database host is different:
-
-```env
-DB_HOST=localhost
-```
-
-This difference is correct because Docker Compose and GitHub Actions use different network setups.
-
----
-
-## Useful Development Commands
-
-Run Django system checks:
+Run these before every commit or pull request:
 
 ```bash
 docker compose exec backend python manage.py check
-```
-
-Check for missing migrations:
-
-```bash
 docker compose exec backend python manage.py makemigrations --check --dry-run
-```
-
-Run migrations:
-
-```bash
-docker compose exec backend python manage.py migrate
-```
-
-Run tests:
-
-```bash
+docker compose exec backend black --check .
+docker compose exec backend ruff check .
 docker compose exec backend python manage.py test
 ```
 
-Format code with Black:
+If Black fails:
 
 ```bash
 docker compose exec backend black .
+docker compose exec backend black --check .
 ```
 
-Check linting with Ruff:
+If Ruff has fixable issues:
 
 ```bash
+docker compose exec backend ruff check . --fix
 docker compose exec backend ruff check .
 ```
 
-View backend logs:
+## Branch and PR Workflow
+
+Use feature branches. Do not commit directly to `develop`.
 
 ```bash
-docker compose logs -f backend
+git switch develop
+git pull origin develop
+git switch -c feat/short-feature-name
+
+# work, test, commit
+
+git push -u origin feat/short-feature-name
 ```
 
-Build the Docker image:
+Open a pull request with:
 
-```bash
-docker build -t ufe-league-os-backend:test .
-```
+- Base branch: `develop`
+- Compare branch: your feature branch
 
----
-
-## API Endpoints
-
-### Health
-
-| Method | Endpoint       | Description          |
-| ------ | -------------- | -------------------- |
-| GET    | `/api/health/` | Backend health check |
-
----
-
-### Accounts
-
-| Method | Endpoint                        | Description                          |
-| ------ | ------------------------------- | ------------------------------------ |
-| POST   | `/api/accounts/register/`       | Register a new fan account           |
-| POST   | `/api/accounts/verify-otp/`     | Verify email OTP                     |
-| POST   | `/api/accounts/resend-otp/`     | Resend email OTP                     |
-| POST   | `/api/accounts/login/`          | Login with email or phone number     |
-| GET    | `/api/accounts/me/`             | Get authenticated user               |
-| GET    | `/api/accounts/profile/`        | Get authenticated user profile       |
-| PATCH  | `/api/accounts/profile/`        | Update user profile or upload avatar |
-| DELETE | `/api/accounts/profile/avatar/` | Remove user avatar                   |
-
----
-
-### Dashboards
-
-| Method | Endpoint                             | Description                                |
-| ------ | ------------------------------------ | ------------------------------------------ |
-| GET    | `/api/dashboards/me/`                | Resolve the authenticated user's dashboard |
-| GET    | `/api/dashboards/fan/`               | Fan dashboard                              |
-| GET    | `/api/dashboards/club-admin/`        | Club admin dashboard                       |
-| GET    | `/api/dashboards/league-admin/`      | League admin dashboard                     |
-| GET    | `/api/dashboards/union-admin/`       | Union admin dashboard                      |
-| GET    | `/api/dashboards/super-admin/`       | Super admin dashboard                      |
-| GET    | `/api/dashboards/referee/`           | Referee dashboard                          |
-| GET    | `/api/dashboards/ticketing-officer/` | Ticketing officer dashboard                |
-| GET    | `/api/dashboards/sponsor/`           | Sponsor dashboard                          |
-
----
-
-## Authentication
-
-Login uses an `identifier` field.
-
-The identifier can be either an email address or a phone number.
-
-Example email login:
-
-```json
-{
-  "identifier": "fan@example.com",
-  "password": "StrongPass123"
-}
-```
-
-Example phone login:
-
-```json
-{
-  "identifier": "+256700000000",
-  "password": "StrongPass123"
-}
-```
-
-Successful login returns:
-
-* access token
-* refresh token
-* user role
-* frontend dashboard route
-* backend dashboard route
-* authenticated user details
-
-Protected endpoints require this header:
-
-```text
-Authorization: Bearer <access_token>
-```
-
----
-
-## Email OTP in Development
-
-The project uses Django's console email backend during local development.
-
-When a user registers, the OTP is printed in the backend logs.
-
-To view the OTP:
-
-```bash
-docker compose logs --tail=100 backend
-```
-
-Look for a line like:
-
-```text
-Your League OS verification code is: 123456
-```
-
-Use that code to verify the user through:
-
-```text
-POST /api/accounts/verify-otp/
-```
-
----
-
-## Profile and Avatar Upload
-
-Authenticated users can update their profile using:
-
-```text
-PATCH /api/accounts/profile/
-```
-
-Allowed profile update fields:
-
-* first_name
-* last_name
-* phone_number
-* avatar
-
-Avatar upload rules:
-
-* Maximum size: 2MB
-* Allowed formats: JPEG, PNG, WEBP, GIF
-
-To remove an avatar:
-
-```text
-DELETE /api/accounts/profile/avatar/
-```
-
----
-
-## Role-Based Dashboards
-
-The dashboard resolver endpoint is:
-
-```text
-GET /api/dashboards/me/
-```
-
-It returns the correct dashboard information for the authenticated user's role.
-
-Example response fields:
-
-```json
-{
-  "role": "FAN",
-  "frontend_dashboard_route": "/dashboard/fan",
-  "backend_dashboard_route": "/api/dashboards/fan/",
-  "dashboard": {
-    "title": "Fan Dashboard"
-  }
-}
-```
-
-Users can only access the dashboard endpoint for their own role.
-
-For example:
-
-* A FAN can access `/api/dashboards/fan/`
-* A FAN cannot access `/api/dashboards/club-admin/`
-* Wrong-role access returns `403 Forbidden`
-* Unauthenticated access returns `401 Unauthorized`
-
----
-
-## API Testing Documentation
-
-Authentication and Postman testing guide:
-
-- [Authentication API Testing Guide](docs/auth_api_testing_postman.md)
-
-## Testing with Postman
-
-Recommended Postman flow:
-
-1. Health Check
-2. Register User
-3. Copy OTP from backend logs
-4. Verify OTP
-5. Login with Email
-6. Login with Phone
-7. Get Current User
-8. Get Profile
-9. Update Profile
-10. Upload Avatar
-11. Remove Avatar
-12. Test role-based dashboard access
-
-Use a Postman environment with:
-
-| Variable        | Value                    |
-| --------------- | ------------------------ |
-| `base_url`      | `http://localhost:8000`  |
-| `email`         | saved after registration |
-| `phone`         | saved after registration |
-| `otp_code`      | copied from backend logs |
-| `access_token`  | saved after login        |
-| `refresh_token` | saved after login        |
-
----
-
-## GitHub Actions CI
-
-The repository includes a GitHub Actions workflow at:
-
-```text
-.github/workflows/backend-ci.yml
-```
-
-The CI workflow runs on pushes to:
-
-* `main`
-* `develop`
-* `feature/**`
-
-It also runs on pull requests into:
-
-* `main`
-* `develop`
-
-The CI checks:
-
-* Black formatting
-* Ruff linting
-* Django system check
-* Missing migrations
-* Database migrations
-* Automated tests
-* Docker image build
-
----
-
-## Final Local Check Before Pushing
-
-Before pushing changes, run:
-
-```bash
-docker compose exec backend black .
-docker compose exec backend ruff check .
-docker compose exec backend python manage.py check
-docker compose exec backend python manage.py makemigrations --check --dry-run
-docker compose exec backend python manage.py migrate
-docker compose exec backend python manage.py test
-docker build -t ufe-league-os-backend:test .
-git status
-```
-
-Expected result:
-
-* Black passes
-* Ruff passes
-* Django check passes
-* No missing migrations
-* Tests pass
-* Docker image builds
-* Working tree is clean or only expected files are modified
-
----
-
-## Git Workflow
-
-Do not work directly on `main`.
-
-Recommended branch flow:
-
-```text
-main
-develop
-feature/backend-foundation
-```
-
-Current backend foundation work should be completed on:
-
-```text
-feature/backend-foundation
-```
-
-After checks pass, open a pull request into:
-
-```text
-develop
-```
-
----
-
-## License
-
-Internal project for UFE League OS development.
+Include test evidence in the PR description.

@@ -1,6 +1,12 @@
 from django.contrib import admin
 
-from .models import Ticket, TicketOrder, TicketType, TicketValidationLog
+from .models import (
+    Ticket,
+    TicketOrder,
+    TicketOrderItem,
+    TicketType,
+    TicketValidationLog,
+)
 
 
 @admin.register(TicketType)
@@ -18,6 +24,13 @@ class TicketTypeAdmin(admin.ModelAdmin):
     search_fields = ("name", "match__home_club__name", "match__away_club__name")
 
 
+class TicketOrderItemInline(admin.TabularInline):
+    model = TicketOrderItem
+    extra = 0
+    readonly_fields = ("ticket_type", "quantity", "unit_price", "total_price")
+    can_delete = False
+
+
 @admin.register(TicketOrder)
 class TicketOrderAdmin(admin.ModelAdmin):
     list_display = (
@@ -26,11 +39,42 @@ class TicketOrderAdmin(admin.ModelAdmin):
         "total_amount",
         "currency",
         "status",
+        "provider",
+        "provider_status",
+        "reservation_expires_at",
+        "reservation_released_at",
         "created_at",
         "paid_at",
     )
-    list_filter = ("status", "currency")
+    list_filter = ("status", "currency", "provider")
     search_fields = ("buyer__email", "payment_reference", "provider_transaction_id")
+    readonly_fields = (
+        "payment_reference",
+        "provider_transaction_id",
+        "provider_status",
+        "provider_response",
+        "checkout_url",
+        "checkout_initialized_at",
+        "reservation_expires_at",
+        "reservation_released_at",
+        "created_at",
+        "paid_at",
+        "updated_at",
+    )
+    inlines = [TicketOrderItemInline]
+
+
+@admin.register(TicketOrderItem)
+class TicketOrderItemAdmin(admin.ModelAdmin):
+    list_display = (
+        "order",
+        "ticket_type",
+        "quantity",
+        "unit_price",
+        "total_price",
+        "created_at",
+    )
+    search_fields = ("order__payment_reference", "ticket_type__name")
 
 
 @admin.register(Ticket)

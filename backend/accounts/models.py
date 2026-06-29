@@ -241,8 +241,18 @@ class NotificationPreference(models.Model):
         SCORE_UPDATE = "SCORE_UPDATE", "Score Update"
         FOLLOWED_TEAM_NEWS = "FOLLOWED_TEAM_NEWS", "Followed Team News"
         STANDINGS_CHANGE = "STANDINGS_CHANGE", "Standings Change"
+
+        TICKET_UPDATES = "TICKET_UPDATES", "Ticket Updates"
         TICKET_OFFER = "TICKET_OFFER", "Ticket Offer"
+
+        MEMBERSHIP_UPDATES = "MEMBERSHIP_UPDATES", "Membership Updates"
+        SPONSORSHIP_UPDATES = "SPONSORSHIP_UPDATES", "Sponsorship Updates"
+        FANTASY_UPDATES = "FANTASY_UPDATES", "Fantasy Updates"
+
+        LEAGUE_NEWS = "LEAGUE_NEWS", "League News"
+        CLUB_NEWS = "CLUB_NEWS", "Club News"
         GENERAL_NEWS = "GENERAL_NEWS", "General News"
+        MARKETING_UPDATES = "MARKETING_UPDATES", "Marketing Updates"
 
     user = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="notification_preferences"
@@ -260,6 +270,70 @@ class NotificationPreference(models.Model):
 
     def __str__(self):
         return f"{self.user.email} - {self.event_type}"
+
+
+class Notification(models.Model):
+    """
+    In-app notification shown in the frontend notification inbox.
+
+    NotificationPreference controls whether a user wants a category/channel.
+    This model stores the actual notifications the frontend displays.
+    """
+
+    class Category(models.TextChoices):
+        TICKET = "TICKET", "Ticket"
+        PAYMENT = "PAYMENT", "Payment"
+        MEMBERSHIP = "MEMBERSHIP", "Membership"
+        SPONSORSHIP = "SPONSORSHIP", "Sponsorship"
+        FANTASY = "FANTASY", "Fantasy"
+        MATCH = "MATCH", "Match"
+        CLUB = "CLUB", "Club"
+        SYSTEM = "SYSTEM", "System"
+
+    class Priority(models.TextChoices):
+        LOW = "LOW", "Low"
+        NORMAL = "NORMAL", "Normal"
+        HIGH = "HIGH", "High"
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    event_type = models.CharField(
+        max_length=30,
+        choices=NotificationPreference.EventType.choices,
+    )
+    category = models.CharField(
+        max_length=30,
+        choices=Category.choices,
+        default=Category.SYSTEM,
+    )
+    priority = models.CharField(
+        max_length=20,
+        choices=Priority.choices,
+        default=Priority.NORMAL,
+    )
+    title = models.CharField(max_length=200)
+    message = models.TextField(blank=True)
+    action_url = models.CharField(max_length=500, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "is_read", "created_at"]),
+            models.Index(fields=["user", "category", "created_at"]),
+            models.Index(fields=["event_type"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} - {self.title}"
 
 
 class InterestPreference(models.Model):
@@ -321,6 +395,20 @@ class Wallet(models.Model):
 
     def __str__(self):
         return f"{self.user.email} wallet ({self.currency} {self.balance})"
+
+    @property
+    def stored_balance_enabled(self):
+        """
+        League OS MVP does not store user money in the wallet.
+
+        The wallet is currently a payment center showing payment summaries,
+        purchased tickets, paid memberships, and sponsorship payments.
+        """
+        return False
+
+    @property
+    def balance_note(self):
+        return "League OS wallet does not currently store user funds."
 
 
 class PaymentHistory(models.Model):
@@ -410,3 +498,76 @@ class FeedItem(models.Model):
 
     def __str__(self):
         return f"{self.user.email} - {self.item_type} - {self.title}"
+
+
+class RoleApproval(models.Model):
+    """
+    Tracks pending approval requests for sensitive role assignments.
+
+    When a SUPER_ADMIN assigns a sensitive role (UNION_ADMIN, SUPER_ADMIN),
+    the change is not applied immediately. Instead, a RoleApproval record is
+    created in PENDING status. Another SUPER_ADMIN must approve it before
+    the role change takes effect.
+
+    Status lifecycle:
+        PENDING  →  APPROVED  (role applied)
+        PENDING  →  REJECTED  (role denied)
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+
+    # The user whose role is being changed
+    target_user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="role_approval_requests",
+    )
+    # The role being requested for the target user
+    requested_role = models.CharField(max_length=30, choices=User.Role.choices)
+    # The admin who initiated the request
+    requested_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="role_approval_requests_made",
+    )
+    # The admin who approved/rejected the request
+    reviewed_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="role_approval_reviews",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    reason = models.TextField(
+        blank=True,
+        help_text="Reason for the role change request",
+    )
+    rejection_reason = models.TextField(
+        blank=True,
+        help_text="Reason provided by the reviewer for rejection",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Role Approval Request"
+        verbose_name_plural = "Role Approval Requests"
+        indexes = [
+            models.Index(fields=["status", "-created_at"]),
+            models.Index(fields=["target_user", "status"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"RoleApproval({self.target_user.email} -> {self.requested_role}"
+            f" [{self.status}])"
+        )

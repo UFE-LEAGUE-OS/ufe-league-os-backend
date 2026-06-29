@@ -4,6 +4,7 @@ from . import views
 from . import views_extra
 
 urlpatterns = [
+    path("config/", views.config_view, name="config"),
     path("roles/", views.roles_view, name="roles"),
     path("register/", views.register_view, name="register"),
     path("login/", views.login_view, name="login"),
@@ -54,6 +55,11 @@ urlpatterns = [
     ),
     # Notification preferences
     path(
+        "notification-preferences/me/",
+        views_extra.notification_preferences_me_view,
+        name="notification-preferences-me",
+    ),
+    path(
         "notifications/",
         views_extra.notification_preferences_view,
         name="notification-preferences",
@@ -68,6 +74,28 @@ urlpatterns = [
     path("wallet/", views_extra.wallet_view, name="wallet"),
     # Payment history
     path("payments/", views_extra.payment_history_view, name="payment-history"),
+    # Switch workspace / account
+    path(
+        "switch-workspace/",
+        views.switch_workspace_view,
+        name="switch-workspace",
+    ),
+    # Role approval workflow
+    path(
+        "role-approvals/",
+        views.role_approval_list_view,
+        name="role-approval-list",
+    ),
+    path(
+        "role-approvals/pending-count/",
+        views.role_approval_pending_count_view,
+        name="role-approval-pending-count",
+    ),
+    path(
+        "role-approvals/<int:pk>/review/",
+        views.role_approval_review_view,
+        name="role-approval-review",
+    ),
     # Personalized feed
     path("feed/", views_extra.feed_view, name="feed"),
     path(
@@ -84,5 +112,25 @@ urlpatterns = [
         "feed/unread-count/",
         views_extra.feed_unread_count_view,
         name="feed-unread-count",
+    ),
+    path(
+        "notifications/inbox/",
+        views_extra.notification_inbox_view,
+        name="notification-inbox",
+    ),
+    path(
+        "notifications/unread-count/",
+        views_extra.notification_unread_count_view,
+        name="notification-unread-count",
+    ),
+    path(
+        "notifications/<int:notification_id>/mark-read/",
+        views_extra.notification_mark_read_view,
+        name="notification-mark-read",
+    ),
+    path(
+        "notifications/mark-all-read/",
+        views_extra.notification_mark_all_read_view,
+        name="notification-mark-all-read",
     ),
 ]

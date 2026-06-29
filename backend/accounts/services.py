@@ -1,12 +1,15 @@
 """Services for accounts app - OTP handling, feed aggregation, wallet operations."""
 
 from datetime import timedelta
+from decimal import Decimal
 
 from django.conf import settings
 from django.core.mail import send_mail
 from django.utils import timezone
+from django.db.models import Q
 
 from .models import (
+    Notification,
     EmailOTP,
     FeedItem,
     Follow,
@@ -396,21 +399,588 @@ def get_or_create_interest_preferences(user):
 
 
 def get_or_create_wallet(user):
-    """Get or create a wallet for a user."""
+    """Get or create a wallet/payment center profile for a user."""
     wallet, _created = Wallet.objects.get_or_create(user=user)
     return wallet
 
 
-def get_payment_history(user, payment_type=None, status=None, limit=50, offset=0):
-    """Get payment history for a user with optional filters."""
-    queryset = PaymentHistory.objects.filter(user=user)
+def normalize_payment_status(status_value):
+    """
+    Normalize payment statuses from different apps into one frontend-friendly set.
+    """
+
+    value = str(status_value or "").strip().upper()
+
+    if value in {"PAID", "CONFIRMED", "COMPLETED", "SUCCESSFUL", "SUCCESS"}:
+        return "SUCCESSFUL"
+
+    if value in {"PENDING", "PENDING_PAYMENT", "PROCESSING"}:
+        return "PENDING"
+
+    if value in {"FAILED", "REJECTED"}:
+        return "FAILED"
+
+    if value in {"CANCELLED", "CANCELED"}:
+        return "CANCELLED"
+
+    if value in {"REFUNDED", "PARTIALLY_REFUNDED"}:
+        return "REFUNDED"
+
+    return value or "UNKNOWN"
+
+
+def payment_status_label(status_value):
+    """Human-readable label for normalized payment statuses."""
+
+    labels = {
+        "SUCCESSFUL": "Successful",
+        "PENDING": "Pending",
+        "FAILED": "Failed",
+        "CANCELLED": "Cancelled",
+        "REFUNDED": "Refunded",
+        "UNKNOWN": "Unknown",
+    }
+    return labels.get(status_value, status_value.replace("_", " ").title())
+
+
+def _safe_decimal(value):
+    if value is None:
+        return Decimal("0.00")
+    return Decimal(value).quantize(Decimal("0.01"))
+
+
+def _sort_payment_items(items):
+    return sorted(
+        items,
+        key=lambda item: item.get("created_at")
+        or timezone.datetime.min.replace(tzinfo=timezone.get_current_timezone()),
+        reverse=True,
+    )
+
+
+def _build_legacy_payment_items(user):
+    items = []
+
+    for payment in PaymentHistory.objects.filter(user=user):
+        normalized_status = normalize_payment_status(payment.status)
+
+        items.append(
+            {
+                "id": f"legacy-{payment.id}",
+                "source": "LEGACY",
+                "source_id": payment.id,
+                "payment_type": payment.payment_type,
+                "payment_type_label": payment.get_payment_type_display(),
+                "amount": _safe_decimal(payment.amount),
+                "currency": payment.currency,
+                "status": normalized_status,
+                "status_label": payment_status_label(normalized_status),
+                "reference": payment.reference,
+                "description": payment.description,
+                "metadata": payment.metadata or {},
+                "created_at": payment.created_at,
+            }
+        )
+
+    return items
+
+
+def _build_ticket_payment_items(user):
+    items = []
+
+    try:
+        from ticketing.models import TicketOrder
+    except ImportError:
+        return items
+
+    orders = (
+        TicketOrder.objects.filter(buyer=user)
+        .prefetch_related("items", "items__ticket_type", "tickets")
+        .order_by("-created_at")
+    )
+
+    for order in orders:
+        normalized_status = normalize_payment_status(order.status)
+
+        description_parts = []
+        for item in order.items.all():
+            try:
+                description_parts.append(
+                    f"{item.ticket_type.match} - {item.ticket_type.name} x {item.quantity}"
+                )
+            except AttributeError:
+                description_parts.append(f"{item.ticket_type.name} x {item.quantity}")
+
+        description = "; ".join(description_parts) or f"Ticket order #{order.id}"
+
+        items.append(
+            {
+                "id": f"ticket-order-{order.id}",
+                "source": "TICKETING",
+                "source_id": order.id,
+                "payment_type": "TICKET_PURCHASE",
+                "payment_type_label": "Ticket Purchase",
+                "amount": _safe_decimal(order.total_amount),
+                "currency": order.currency,
+                "status": normalized_status,
+                "status_label": payment_status_label(normalized_status),
+                "reference": order.payment_reference,
+                "description": description,
+                "metadata": {
+                    "provider": order.provider,
+                    "provider_status": order.provider_status,
+                    "tickets_count": order.tickets.count(),
+                    "paid_at": order.paid_at.isoformat() if order.paid_at else None,
+                },
+                "created_at": order.created_at,
+            }
+        )
+
+    return items
+
+
+def _build_membership_payment_items(user):
+    items = []
+
+    try:
+        from memberships.models import MembershipPayment
+    except ImportError:
+        return items
+
+    payments = (
+        MembershipPayment.objects.filter(subscription__user=user)
+        .select_related(
+            "subscription",
+            "subscription__club",
+            "subscription__plan",
+            "subscription_plan",
+        )
+        .order_by("-created_at")
+    )
+
+    for payment in payments:
+        normalized_status = normalize_payment_status(payment.status)
+        plan = payment.subscription_plan or payment.subscription.plan
+        club = payment.subscription.club
+
+        items.append(
+            {
+                "id": f"membership-payment-{payment.id}",
+                "source": "MEMBERSHIPS",
+                "source_id": payment.id,
+                "payment_type": "MEMBERSHIP_FEE",
+                "payment_type_label": "Membership Fee",
+                "amount": _safe_decimal(payment.amount_paid),
+                "currency": payment.currency,
+                "status": normalized_status,
+                "status_label": payment_status_label(normalized_status),
+                "reference": payment.transaction_reference,
+                "description": f"{club.name} - {plan.name}",
+                "metadata": {
+                    "club_id": club.id,
+                    "club": club.name,
+                    "plan_id": plan.id,
+                    "plan": plan.name,
+                    "subscription_id": payment.subscription_id,
+                    "subscription_status": payment.subscription.status,
+                    "provider": payment.provider,
+                    "paid_at": payment.paid_at.isoformat() if payment.paid_at else None,
+                },
+                "created_at": payment.created_at,
+            }
+        )
+
+    return items
+
+
+def _build_sponsorship_payment_items(user):
+    items = []
+
+    try:
+        from sponsorships.models import SponsorPayment
+    except ImportError:
+        return items
+
+    payments = (
+        SponsorPayment.objects.filter(
+            Q(agreement__sponsor_account__owner=user)
+            | Q(agreement__sponsor_account__members__user=user)
+            & Q(agreement__sponsor_account__members__is_active=True)
+        )
+        .select_related(
+            "agreement",
+            "agreement__sponsor_account",
+            "agreement__sponsor_package",
+        )
+        .distinct()
+        .order_by("-created_at")
+    )
+
+    for payment in payments:
+        normalized_status = normalize_payment_status(payment.status)
+        agreement = payment.agreement
+        sponsor_account = agreement.sponsor_account
+        sponsor_package = agreement.sponsor_package
+
+        items.append(
+            {
+                "id": f"sponsor-payment-{payment.id}",
+                "source": "SPONSORSHIPS",
+                "source_id": payment.id,
+                "payment_type": "SPONSORSHIP",
+                "payment_type_label": "Sponsorship",
+                "amount": _safe_decimal(payment.amount_paid),
+                "currency": payment.currency,
+                "status": normalized_status,
+                "status_label": payment_status_label(normalized_status),
+                "reference": payment.transaction_reference,
+                "description": f"{sponsor_account.name} - {sponsor_package.name}",
+                "metadata": {
+                    "sponsor_account_id": sponsor_account.id,
+                    "sponsor_account": sponsor_account.name,
+                    "sponsor_type": sponsor_account.sponsor_type,
+                    "agreement_id": agreement.id,
+                    "agreement_status": agreement.status,
+                    "sponsor_package_id": sponsor_package.id,
+                    "sponsor_package": sponsor_package.name,
+                    "provider": payment.provider,
+                    "paid_at": payment.paid_at.isoformat() if payment.paid_at else None,
+                    "confirmed_at": (
+                        payment.confirmed_at.isoformat()
+                        if payment.confirmed_at
+                        else None
+                    ),
+                },
+                "created_at": payment.created_at,
+            }
+        )
+
+    return items
+
+
+def _build_ticket_wallet_items(user):
+    tickets = []
+
+    try:
+        from ticketing.models import Ticket
+    except ImportError:
+        return tickets
+
+    queryset = (
+        Ticket.objects.filter(owner=user)
+        .select_related("order", "ticket_type", "match")
+        .order_by("-issued_at")
+    )
+
+    for ticket in queryset:
+        tickets.append(
+            {
+                "id": ticket.id,
+                "match": str(ticket.match),
+                "match_id": ticket.match_id,
+                "match_date": ticket.match.match_date,
+                "venue": ticket.match.venue,
+                "ticket_type": ticket.ticket_type.name,
+                "amount_paid": _safe_decimal(ticket.ticket_type.price),
+                "currency": ticket.ticket_type.currency,
+                "status": ticket.status,
+                "payment_status": ticket.order.status,
+                "ticket_code": str(ticket.ticket_code),
+                "qr_payload": ticket.qr_payload,
+                "issued_at": ticket.issued_at,
+                "used_at": ticket.used_at,
+            }
+        )
+
+    return tickets
+
+
+def _build_membership_wallet_items(user):
+    memberships = []
+
+    try:
+        from memberships.models import MembershipSubscription
+    except ImportError:
+        return memberships
+
+    queryset = (
+        MembershipSubscription.objects.filter(user=user)
+        .select_related("club", "plan")
+        .order_by("-created_at")
+    )
+
+    for subscription in queryset:
+        latest_payment = subscription.payments.order_by("-created_at").first()
+
+        memberships.append(
+            {
+                "id": subscription.id,
+                "club": subscription.club.name,
+                "club_id": subscription.club_id,
+                "membership_tier": subscription.plan.tier,
+                "membership_plan": subscription.plan.name,
+                "amount_paid": (
+                    _safe_decimal(latest_payment.amount_paid)
+                    if latest_payment
+                    else Decimal("0.00")
+                ),
+                "currency": subscription.plan.currency,
+                "status": subscription.status,
+                "payment_status": latest_payment.status if latest_payment else None,
+                "valid_from": subscription.starts_at,
+                "valid_until": subscription.ends_at,
+            }
+        )
+
+    return memberships
+
+
+def _build_sponsorship_wallet_items(user):
+    sponsorships = []
+
+    try:
+        from sponsorships.models import SponsorPayment
+    except ImportError:
+        return sponsorships
+
+    queryset = (
+        SponsorPayment.objects.filter(
+            Q(agreement__sponsor_account__owner=user)
+            | Q(agreement__sponsor_account__members__user=user)
+            & Q(agreement__sponsor_account__members__is_active=True)
+        )
+        .select_related(
+            "agreement",
+            "agreement__sponsor_account",
+            "agreement__sponsor_package",
+        )
+        .distinct()
+        .order_by("-created_at")
+    )
+
+    for payment in queryset:
+        agreement = payment.agreement
+        sponsor_account = agreement.sponsor_account
+        sponsor_package = agreement.sponsor_package
+
+        sponsorships.append(
+            {
+                "id": payment.id,
+                "sponsor_account": sponsor_account.name,
+                "sponsor_type": sponsor_account.sponsor_type,
+                "campaign": sponsor_package.name,
+                "amount_paid": _safe_decimal(payment.amount_paid),
+                "currency": payment.currency,
+                "status": payment.status,
+                "provider": payment.provider,
+                "reference": payment.transaction_reference,
+                "paid_at": payment.paid_at,
+                "created_at": payment.created_at,
+            }
+        )
+
+    return sponsorships
+
+
+def get_combined_payment_history(
+    user,
+    payment_type=None,
+    status=None,
+    source=None,
+    limit=50,
+    offset=0,
+):
+    """
+    Get combined payment history across legacy payment records, tickets,
+    memberships, and sponsorships.
+    """
+
+    items = []
+    items.extend(_build_legacy_payment_items(user))
+    items.extend(_build_ticket_payment_items(user))
+    items.extend(_build_membership_payment_items(user))
+    items.extend(_build_sponsorship_payment_items(user))
 
     if payment_type:
-        queryset = queryset.filter(payment_type=payment_type)
+        items = [
+            item
+            for item in items
+            if item["payment_type"].upper() == str(payment_type).upper()
+        ]
 
     if status:
-        queryset = queryset.filter(status=status)
+        items = [
+            item
+            for item in items
+            if item["status"].upper() == str(status).upper()
+            or item["status"].upper() == normalize_payment_status(status)
+        ]
+
+    if source:
+        items = [
+            item for item in items if item["source"].upper() == str(source).upper()
+        ]
+
+    items = _sort_payment_items(items)
+    total = len(items)
+
+    return items[offset : offset + limit], total
+
+
+def get_payment_history(user, payment_type=None, status=None, limit=50, offset=0):
+    """
+    Backwards-compatible payment history service.
+
+    Now returns the combined MVP payment history instead of only legacy records.
+    """
+    return get_combined_payment_history(
+        user=user,
+        payment_type=payment_type,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+
+
+def get_wallet_payment_center(user, limit=10):
+    """
+    Build the MVP wallet/payment center response.
+
+    The MVP wallet does not store money. It summarizes payments and paid items.
+    """
+
+    wallet = get_or_create_wallet(user)
+    payment_items, _total = get_combined_payment_history(user, limit=1000, offset=0)
+
+    successful_items = [
+        item for item in payment_items if item["status"] == "SUCCESSFUL"
+    ]
+    pending_items = [item for item in payment_items if item["status"] == "PENDING"]
+    failed_items = [item for item in payment_items if item["status"] == "FAILED"]
+    refunded_items = [item for item in payment_items if item["status"] == "REFUNDED"]
+
+    tickets = _build_ticket_wallet_items(user)
+    memberships = _build_membership_wallet_items(user)
+    sponsorships = _build_sponsorship_wallet_items(user)
+
+    total_spent = sum(
+        (_safe_decimal(item["amount"]) for item in successful_items),
+        Decimal("0.00"),
+    )
+
+    return {
+        "stored_balance_enabled": wallet.stored_balance_enabled,
+        "balance": _safe_decimal(wallet.balance),
+        "balance_note": wallet.balance_note,
+        "currency": wallet.currency,
+        "total_spent": total_spent,
+        "successful_payments_count": len(successful_items),
+        "pending_payments_count": len(pending_items),
+        "failed_payments_count": len(failed_items),
+        "refunded_payments_count": len(refunded_items),
+        "tickets_count": len(tickets),
+        "memberships_count": len(memberships),
+        "sponsorships_count": len(sponsorships),
+        "recent_payments": payment_items[:limit],
+        "tickets": tickets[:limit],
+        "memberships": memberships[:limit],
+        "sponsorships": sponsorships[:limit],
+    }
+
+
+def user_allows_notification(user, event_type, channel="push"):
+    """
+    Check whether a user allows a notification event/channel.
+
+    For the frontend inbox, we treat push_enabled as the in-app notification toggle.
+    """
+    pref, _created = NotificationPreference.objects.get_or_create(
+        user=user,
+        event_type=event_type,
+    )
+
+    if channel == "email":
+        return pref.email_enabled
+
+    if channel == "sms":
+        return pref.sms_enabled
+
+    return pref.push_enabled
+
+
+def create_in_app_notification(
+    user,
+    event_type,
+    title,
+    message="",
+    category=Notification.Category.SYSTEM,
+    priority=Notification.Priority.NORMAL,
+    action_url="",
+    metadata=None,
+):
+    """
+    Create an in-app notification if the user's in-app/push preference allows it.
+    """
+    metadata = metadata or {}
+
+    if not user_allows_notification(user, event_type, channel="push"):
+        return None
+
+    return Notification.objects.create(
+        user=user,
+        event_type=event_type,
+        category=category,
+        priority=priority,
+        title=title,
+        message=message,
+        action_url=action_url,
+        metadata=metadata,
+    )
+
+
+def list_user_notifications(
+    user,
+    limit=50,
+    offset=0,
+    unread_only=False,
+    category=None,
+):
+    queryset = Notification.objects.filter(user=user).order_by("-created_at")
+
+    if unread_only:
+        queryset = queryset.filter(is_read=False)
+
+    if category:
+        queryset = queryset.filter(category=str(category).upper())
 
     total = queryset.count()
-    items = queryset.order_by("-created_at")[offset : offset + limit]
+    items = queryset[offset : offset + limit]
+
     return items, total
+
+
+def get_unread_notification_count(user):
+    return Notification.objects.filter(user=user, is_read=False).count()
+
+
+def mark_notification_read(user, notification_id):
+    notification = Notification.objects.filter(id=notification_id, user=user).first()
+
+    if notification is None:
+        return None
+
+    if not notification.is_read:
+        notification.is_read = True
+        notification.read_at = timezone.now()
+        notification.save(update_fields=["is_read", "read_at"])
+
+    return notification
+
+
+def mark_all_notifications_read(user):
+    now = timezone.now()
+
+    return Notification.objects.filter(user=user, is_read=False).update(
+        is_read=True,
+        read_at=now,
+    )
