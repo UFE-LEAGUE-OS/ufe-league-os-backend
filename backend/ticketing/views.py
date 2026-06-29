@@ -39,6 +39,10 @@ from .services.orders import (
     mark_ticket_order_payment_failed,
     validate_ticket_code,
 )
+from .services.presentation_demo import (
+    demo_checkout_is_enabled,
+    ensure_presentation_demo_ticketing_match,
+)
 
 TICKET_VALIDATION_ROLES = {
     User.Role.TICKETING_OFFICER,
@@ -111,6 +115,9 @@ def serialize_tickets(tickets, request):
 def match_ticket_types_view(request, match_id):
     match = Match.objects.filter(id=match_id).first()
 
+    if match is None and demo_checkout_is_enabled():
+        match = ensure_presentation_demo_ticketing_match(match_id)
+
     if match is None:
         return Response(
             {"detail": "Match not found."},
@@ -126,6 +133,16 @@ def match_ticket_types_view(request, match_id):
     include_inactive = request.query_params.get("include_inactive") == "true"
     if not include_inactive:
         ticket_types = ticket_types.filter(status=TicketType.Status.ACTIVE)
+
+    if not ticket_types.exists() and demo_checkout_is_enabled():
+        match = ensure_presentation_demo_ticketing_match(match_id)
+        ticket_types = TicketType.objects.select_related(
+            "match",
+            "match__home_club",
+            "match__away_club",
+        ).filter(match=match)
+        if not include_inactive:
+            ticket_types = ticket_types.filter(status=TicketType.Status.ACTIVE)
 
     return Response(
         {
