@@ -23,6 +23,11 @@ urlpatterns = [
         name="membership-initiate-payment",
     ),
     path(
+        "flutterwave/verify/",
+        views.membership_flutterwave_verify_view,
+        name="membership-flutterwave-verify",
+    ),
+    path(
         "payment-webhook/",
         views.membership_payment_webhook_view,
         name="membership-payment-webhook",
