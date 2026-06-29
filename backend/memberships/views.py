@@ -6,10 +6,11 @@ from django.views.decorators.csrf import csrf_exempt
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.models import Club, User
+from sponsorships.flutterwave import FlutterwaveError
 
 from .models import (
     MembershipCard,
@@ -22,6 +23,11 @@ from .serializers import (
     MembershipPaymentSerializer,
     MembershipPlanSerializer,
     MembershipSubscriptionSerializer,
+)
+from .services.flutterwave_gateway import (
+    initialize_membership_flutterwave_payment,
+    make_membership_payment_reference,
+    verify_and_confirm_membership_payment,
 )
 
 
@@ -312,24 +318,60 @@ def membership_payments_view(request):
 @permission_classes([IsAuthenticated])
 def membership_initiate_payment_view(request):
     subscription_id = request.data.get("subscription")
-    subscription = MembershipSubscription.objects.filter(
-        id=subscription_id, user=request.user
-    ).first()
+    plan_id = request.data.get("plan")
+
+    subscription = None
+
+    if subscription_id:
+        subscription = (
+            MembershipSubscription.objects.select_related(
+                "plan",
+                "club",
+                "user",
+            )
+            .filter(id=subscription_id, user=request.user)
+            .first()
+        )
+
+    if subscription is None and plan_id:
+        plan = (
+            MembershipPlan.objects.select_related("club")
+            .filter(
+                id=plan_id,
+                is_active=True,
+                is_visible=True,
+            )
+            .first()
+        )
+
+        if plan is None:
+            return Response(
+                {"detail": "Selected membership plan is not available."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        subscription, _ = MembershipSubscription.objects.get_or_create(
+            user=request.user,
+            plan=plan,
+            status=MembershipSubscription.Status.PENDING_PAYMENT,
+            defaults={"club": plan.club},
+        )
 
     if subscription is None:
         return Response(
-            {"detail": "Membership subscription not found."},
-            status=status.HTTP_404_NOT_FOUND,
+            {"detail": "Membership subscription or plan is required."},
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
-    payment_method = request.data.get("payment_method")
-    provider = request.data.get("provider")
-    checkout_url = request.data.get("checkout_url", "")
-    transaction_reference = request.data.get("transaction_reference") or str(uuid4())
+    existing_active = MembershipSubscription.objects.filter(
+        user=request.user,
+        plan=subscription.plan,
+        status=MembershipSubscription.Status.ACTIVE,
+    ).first()
 
-    if not payment_method:
+    if existing_active:
         return Response(
-            {"detail": "Payment method is required."},
+            {"detail": "You already have an active subscription for this plan."},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -338,45 +380,131 @@ def membership_initiate_payment_view(request):
         subscription_plan=subscription.plan,
         amount_paid=subscription.plan.price_amount,
         currency=subscription.plan.currency,
-        payment_method=payment_method,
-        provider=provider or MembershipPayment.PaymentProvider.MANUAL,
-        transaction_reference=transaction_reference,
-        checkout_url=checkout_url,
-        status=(
-            MembershipPayment.Status.CONFIRMED
-            if payment_method == MembershipPayment.PaymentMethod.MANUAL
-            else MembershipPayment.Status.PENDING
-        ),
-        paid_at=(
-            timezone.now()
-            if payment_method == MembershipPayment.PaymentMethod.MANUAL
-            else None
-        ),
+        payment_method=MembershipPayment.PaymentMethod.FLUTTERWAVE,
+        provider=MembershipPayment.PaymentProvider.FLUTTERWAVE,
+        transaction_reference=make_membership_payment_reference(subscription),
+        status=MembershipPayment.Status.PENDING,
     )
 
-    if payment.status == MembershipPayment.Status.CONFIRMED:
-        subscription.status = MembershipSubscription.Status.ACTIVE
-        subscription.starts_at = timezone.now()
-        subscription.ends_at = timezone.now() + timedelta(days=30)
-        subscription.save(
-            update_fields=["status", "starts_at", "ends_at", "updated_at"]
+    try:
+        flutterwave_response = initialize_membership_flutterwave_payment(
+            payment,
+            request=request,
+        )
+    except FlutterwaveError as exc:
+        payment.status = MembershipPayment.Status.FAILED
+        payment.provider_status = "checkout_initialization_failed"
+        payment.provider_response = {"error": str(exc)}
+        payment.save(
+            update_fields=[
+                "status",
+                "provider_status",
+                "provider_response",
+                "updated_at",
+            ]
+        )
+        return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    payment.checkout_url = flutterwave_response.get("data", {}).get("link", "")
+    payment.provider_status = flutterwave_response.get(
+        "status",
+        "checkout_initialized",
+    )
+    payment.provider_response = flutterwave_response
+    payment.save(
+        update_fields=[
+            "checkout_url",
+            "provider_status",
+            "provider_response",
+            "updated_at",
+        ]
+    )
+
+    return Response(
+        {
+            "message": "Flutterwave membership checkout initialized successfully.",
+            "payment": MembershipPaymentSerializer(
+                payment,
+                context={"request": request},
+            ).data,
+            "subscription": MembershipSubscriptionSerializer(
+                subscription,
+                context={"request": request},
+            ).data,
+            "tx_ref": payment.transaction_reference,
+            "checkout_url": payment.checkout_url,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def membership_flutterwave_verify_view(request):
+    tx_ref = request.query_params.get("tx_ref") or request.query_params.get("reference")
+
+    if not tx_ref:
+        return Response(
+            {"detail": "tx_ref is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        payment, error_message = verify_and_confirm_membership_payment(tx_ref)
+    except FlutterwaveError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    if payment is None:
+        return Response(
+            {"detail": "Membership payment not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if error_message:
+        return Response(
+            {
+                "message": "Flutterwave membership payment verification failed.",
+                "detail": error_message,
+                "payment": MembershipPaymentSerializer(
+                    payment,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
     return Response(
         {
-            "message": "Membership payment initiated successfully.",
+            "message": "Flutterwave membership payment verified successfully.",
             "payment": MembershipPaymentSerializer(
-                payment, context={"request": request}
+                payment,
+                context={"request": request},
             ).data,
+            "subscription": MembershipSubscriptionSerializer(
+                payment.subscription,
+                context={"request": request},
+            ).data,
+            "card": (
+                MembershipCardSerializer(
+                    payment.subscription.membership_card,
+                    context={"request": request},
+                ).data
+                if hasattr(payment.subscription, "membership_card")
+                else None
+            ),
         },
-        status=status.HTTP_201_CREATED,
+        status=status.HTTP_200_OK,
     )
 
 
 @api_view(["POST"])
 @csrf_exempt
 def membership_payment_webhook_view(request):
-    transaction_reference = request.data.get("transaction_reference")
+    transaction_reference = (
+        request.data.get("transaction_reference")
+        or request.data.get("tx_ref")
+        or request.data.get("reference")
+    )
     status_value = request.data.get("status")
     provider_status = request.data.get("provider_status", "")
     provider_response = request.data.get("provider_response", {})

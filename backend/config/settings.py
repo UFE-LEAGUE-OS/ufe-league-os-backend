@@ -317,6 +317,16 @@ FLUTTERWAVE_TICKET_REDIRECT_URL = config(
     default="http://localhost:8000/api/ticketing/flutterwave/verify/",
 )
 
+FLUTTERWAVE_MEMBERSHIP_PAYMENT_TITLE = config(
+    "FLUTTERWAVE_MEMBERSHIP_PAYMENT_TITLE",
+    default="League OS Membership Payment",
+)
+
+FLUTTERWAVE_MEMBERSHIP_REDIRECT_URL = config(
+    "FLUTTERWAVE_MEMBERSHIP_REDIRECT_URL",
+    default="http://localhost:8000/api/memberships/flutterwave/verify/",
+)
+
 FLUTTERWAVE_PAYMENT_LOGO_URL = config(
     "FLUTTERWAVE_PAYMENT_LOGO_URL",
     default="",

@@ -9,7 +9,11 @@ from django.http import JsonResponse
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
-from config.views import api_landing_view, landing_page_view
+from config.views import (
+    api_landing_view,
+    landing_page_view,
+    global_flutterwave_webhook_view,
+)
 
 
 def health_check_view(request):
@@ -27,6 +31,16 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/", api_landing_view, name="api-landing"),
     path("api/health/", health_check_view, name="health-check"),
+    path(
+        "webhook/flutterwave",
+        global_flutterwave_webhook_view,
+        name="global-flutterwave-webhook-no-slash",
+    ),
+    path(
+        "webhook/flutterwave/",
+        global_flutterwave_webhook_view,
+        name="global-flutterwave-webhook",
+    ),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
         "api/docs/",
