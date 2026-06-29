@@ -29,6 +29,10 @@ from .services.flutterwave_gateway import (
     make_membership_payment_reference,
     verify_and_confirm_membership_payment,
 )
+from .services.presentation_demo import (
+    demo_membership_checkout_is_enabled,
+    ensure_presentation_demo_membership_plan,
+)
 
 
 def _get_active_subscription_for_user(user):
@@ -319,6 +323,7 @@ def membership_payments_view(request):
 def membership_initiate_payment_view(request):
     subscription_id = request.data.get("subscription")
     plan_id = request.data.get("plan")
+    demo_plan_code = request.data.get("demo_plan_code") or request.data.get("tier_id")
 
     subscription = None
 
@@ -350,6 +355,19 @@ def membership_initiate_payment_view(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        subscription, _ = MembershipSubscription.objects.get_or_create(
+            user=request.user,
+            plan=plan,
+            status=MembershipSubscription.Status.PENDING_PAYMENT,
+            defaults={"club": plan.club},
+        )
+
+    if (
+        subscription is None
+        and demo_plan_code
+        and demo_membership_checkout_is_enabled()
+    ):
+        plan = ensure_presentation_demo_membership_plan(demo_plan_code)
         subscription, _ = MembershipSubscription.objects.get_or_create(
             user=request.user,
             plan=plan,
