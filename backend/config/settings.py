@@ -360,3 +360,9 @@ CHANNEL_LAYERS = {
         "BACKEND": "channels.layers.InMemoryChannelLayer",
     },
 }
+
+MEMBERSHIP_DEMO_CHECKOUT_ENABLED = config(
+    "MEMBERSHIP_DEMO_CHECKOUT_ENABLED",
+    default=False,
+    cast=bool,
+)
