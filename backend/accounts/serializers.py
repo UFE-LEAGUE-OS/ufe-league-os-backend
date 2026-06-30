@@ -70,6 +70,8 @@ class UserSerializer(serializers.ModelSerializer):
     """Serializer for returning safe user data to the frontend."""
 
     full_name = serializers.CharField(read_only=True)
+    username = serializers.CharField(source="public_handle", read_only=True)
+    favorite_sport = serializers.CharField(source="favourite_sport", read_only=True)
     role_display = serializers.CharField(source="get_role_display", read_only=True)
     avatar_url = serializers.SerializerMethodField()
     is_sponsor = serializers.BooleanField(read_only=True)
@@ -86,6 +88,13 @@ class UserSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "full_name",
+            "username",
+            "location",
+            "date_of_birth",
+            "gender",
+            "favourite_sport",
+            "favorite_sport",
+            "bio",
             "role",
             "role_display",
             "roles",
@@ -522,6 +531,16 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating the authenticated user's profile."""
 
+    username = serializers.CharField(
+        source="public_handle",
+        required=False,
+        allow_blank=True,
+    )
+    favorite_sport = serializers.CharField(
+        source="favourite_sport",
+        required=False,
+        allow_blank=True,
+    )
     avatar = serializers.ImageField(
         required=False,
         allow_null=True,
@@ -533,8 +552,31 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "phone_number",
+            "username",
+            "location",
+            "date_of_birth",
+            "gender",
+            "favourite_sport",
+            "favorite_sport",
+            "bio",
             "avatar",
         )
+
+    def validate_username(self, value):
+        value = (value or "").strip().lower()
+
+        if not value:
+            return ""
+
+        existing_user = User.objects.filter(public_handle__iexact=value)
+
+        if self.instance:
+            existing_user = existing_user.exclude(pk=self.instance.pk)
+
+        if existing_user.exists():
+            raise serializers.ValidationError("This username is already taken.")
+
+        return value
 
     def validate_phone_number(self, value):
         if value in ("", None):
@@ -571,14 +613,25 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def update(self, instance, validated_data):
-        first_name = validated_data.get("first_name")
-        last_name = validated_data.get("last_name")
+        simple_fields = (
+            "first_name",
+            "last_name",
+            "public_handle",
+            "location",
+            "date_of_birth",
+            "gender",
+            "favourite_sport",
+            "bio",
+        )
 
-        if first_name is not None:
-            instance.first_name = first_name.strip()
+        for field in simple_fields:
+            if field in validated_data:
+                value = validated_data[field]
 
-        if last_name is not None:
-            instance.last_name = last_name.strip()
+                if isinstance(value, str):
+                    value = value.strip()
+
+                setattr(instance, field, value)
 
         if "phone_number" in validated_data:
             instance.phone_number = validated_data["phone_number"]
