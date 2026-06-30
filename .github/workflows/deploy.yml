@@ -1,0 +1,51 @@
+name: Deploy to DigitalOcean
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Choose status while deploy keys are pending. Choose deploy after server Git authentication is fixed."
+        required: true
+        default: "status"
+        type: choice
+        options:
+          - status
+          - deploy
+
+concurrency:
+  group: league-os-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: DigitalOcean Deployment
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Prepare SSH key
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/league_os_deploy_key
+          chmod 600 ~/.ssh/league_os_deploy_key
+          ssh-keyscan -H "${{ secrets.DROPLET_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Run remote command
+        shell: bash
+        run: |
+          if [ "${{ github.event.inputs.task }}" = "deploy" ]; then
+            REMOTE_COMMAND='cd /opt/league-os && ./deploy.sh'
+          else
+            REMOTE_COMMAND='cd /opt/league-os && docker compose -f docker-compose.prod.yml ps && curl -fsS http://localhost/api/health/'
+          fi
+
+          ssh -i ~/.ssh/league_os_deploy_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }}" \
+            "$REMOTE_COMMAND"
+
+      - name: Public health check
+        shell: bash
+        run: |
+          curl -fsS "http://${{ secrets.DROPLET_HOST }}/api/health/"
