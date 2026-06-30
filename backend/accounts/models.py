@@ -22,11 +22,27 @@ class User(AbstractUser):
         INDIVIDUAL = "INDIVIDUAL", "Individual Sponsor"
         CORPORATE = "CORPORATE", "Corporate Sponsor"
 
+    class Gender(models.TextChoices):
+        MALE = "Male", "Male"
+        FEMALE = "Female", "Female"
+        PREFER_NOT_TO_SAY = "Prefer not to say", "Prefer not to say"
+
     username = None
 
     email = models.EmailField(unique=True)
 
     phone_number = models.CharField(max_length=20, unique=True, blank=True, null=True)
+
+    public_handle = models.SlugField(max_length=80, blank=True)
+    location = models.CharField(max_length=150, blank=True)
+    date_of_birth = models.DateField(blank=True, null=True)
+    gender = models.CharField(
+        max_length=30,
+        choices=Gender.choices,
+        default=Gender.PREFER_NOT_TO_SAY,
+    )
+    favourite_sport = models.CharField(max_length=50, blank=True)
+    bio = models.TextField(blank=True)
 
     role = models.CharField(max_length=30, choices=Role.choices, default=Role.FAN)
 
