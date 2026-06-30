@@ -1,6 +1,10 @@
 name: Deploy to DigitalOcean
 
 on:
+  push:
+    branches:
+      - main
+
   workflow_dispatch:
     inputs:
       task:
@@ -33,9 +37,11 @@ jobs:
       - name: Run remote command
         shell: bash
         run: |
-          if [ "${{ github.event.inputs.task }}" = "deploy" ]; then
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.task }}" = "deploy" ]; then
+            echo "Running deployment script on DigitalOcean..."
             REMOTE_COMMAND='cd /opt/league-os && ./deploy.sh'
           else
+            echo "Checking DigitalOcean deployment status..."
             REMOTE_COMMAND='cd /opt/league-os && docker compose -f docker-compose.prod.yml ps && curl -fsS http://localhost/api/health/'
           fi
 
