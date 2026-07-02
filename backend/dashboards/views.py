@@ -382,7 +382,7 @@ def public_fixtures_view(request):
         )
 
     queryset = queryset.order_by("match_date")
-    serializer = MatchListSerializer(queryset, many=True)
+    serializer = MatchListSerializer(queryset, many=True, context={"request": request})
     return Response(serializer.data)
 
 
@@ -413,7 +413,7 @@ def public_results_view(request):
         )
 
     queryset = queryset.order_by("-match_date")[:limit]
-    serializer = MatchListSerializer(queryset, many=True)
+    serializer = MatchListSerializer(queryset, many=True, context={"request": request})
     return Response(serializer.data)
 
 
@@ -448,7 +448,7 @@ def public_clubs_view(request):
     No authentication required.
     """
     queryset = Club.objects.all().order_by("name")
-    serializer = ClubListSerializer(queryset, many=True)
+    serializer = ClubListSerializer(queryset, many=True, context={"request": request})
     return Response(serializer.data)
 
 
@@ -521,7 +521,7 @@ def public_match_detail_view(request, match_id):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    serializer = MatchDetailSerializer(match)
+    serializer = MatchDetailSerializer(match, context={"request": request})
     return Response(serializer.data)
 
 

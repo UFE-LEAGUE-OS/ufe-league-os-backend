@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "drf_spectacular",
     "channels",
+    "storages",
     # Local apps
     "accounts",
     "dashboards",
@@ -162,8 +163,49 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+USE_S3_MEDIA = config("USE_S3_MEDIA", default=False, cast=bool)
+
+if USE_S3_MEDIA:
+    AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_ACCESS_KEY")
+    AWS_STORAGE_BUCKET_NAME = config("AWS_STORAGE_BUCKET_NAME")
+    AWS_S3_REGION_NAME = config("AWS_S3_REGION_NAME", default="fra1")
+    AWS_S3_ENDPOINT_URL = config(
+        "AWS_S3_ENDPOINT_URL",
+        default=f"https://{AWS_S3_REGION_NAME}.digitaloceanspaces.com",
+    )
+    AWS_S3_CUSTOM_DOMAIN = config(
+        "AWS_S3_CUSTOM_DOMAIN",
+        default=f"{AWS_STORAGE_BUCKET_NAME}.{AWS_S3_REGION_NAME}.digitaloceanspaces.com",
+    )
+    AWS_QUERYSTRING_AUTH = config("AWS_QUERYSTRING_AUTH", default=False, cast=bool)
+    AWS_S3_FILE_OVERWRITE = False
+    AWS_DEFAULT_ACL = config("AWS_DEFAULT_ACL", default="public-read")
+
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3.S3Storage",
+            "OPTIONS": {
+                "access_key": AWS_ACCESS_KEY_ID,
+                "secret_key": AWS_SECRET_ACCESS_KEY,
+                "bucket_name": AWS_STORAGE_BUCKET_NAME,
+                "region_name": AWS_S3_REGION_NAME,
+                "endpoint_url": AWS_S3_ENDPOINT_URL,
+                "custom_domain": AWS_S3_CUSTOM_DOMAIN,
+                "querystring_auth": AWS_QUERYSTRING_AUTH,
+                "file_overwrite": AWS_S3_FILE_OVERWRITE,
+                "default_acl": AWS_DEFAULT_ACL,
+            },
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
+
+    MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/"
+else:
+    MEDIA_URL = "/media/"
+    MEDIA_ROOT = BASE_DIR / "media"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
