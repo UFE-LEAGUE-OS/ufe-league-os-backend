@@ -4,12 +4,48 @@ from accounts.models import Club
 from .models import Union, League, Competition, Match, Standing
 
 
+def build_file_url(request, file_field):
+    if not file_field:
+        return ""
+
+    try:
+        url = file_field.url
+    except ValueError:
+        return ""
+
+    return request.build_absolute_uri(url) if request else url
+
+
 class ClubListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for public club listing."""
 
+    logo_url = serializers.SerializerMethodField()
+    banner_url = serializers.SerializerMethodField()
+    sport_display = serializers.CharField(source="get_sport_display", read_only=True)
+
     class Meta:
         model = Club
-        fields = ["id", "name", "slug", "created_at"]
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "short_name",
+            "sport",
+            "sport_display",
+            "logo",
+            "logo_url",
+            "banner",
+            "banner_url",
+            "primary_color",
+            "secondary_color",
+            "created_at",
+        ]
+
+    def get_logo_url(self, obj):
+        return build_file_url(self.context.get("request"), obj.logo)
+
+    def get_banner_url(self, obj):
+        return build_file_url(self.context.get("request"), obj.banner)
 
 
 class UnionSerializer(serializers.ModelSerializer):
@@ -80,6 +116,8 @@ class MatchListSerializer(serializers.ModelSerializer):
     away_club_name = serializers.CharField(source="away_club.name", read_only=True)
     home_club_slug = serializers.SlugField(source="home_club.slug", read_only=True)
     away_club_slug = serializers.SlugField(source="away_club.slug", read_only=True)
+    home_club_logo_url = serializers.SerializerMethodField()
+    away_club_logo_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Match
@@ -90,9 +128,11 @@ class MatchListSerializer(serializers.ModelSerializer):
             "home_club",
             "home_club_name",
             "home_club_slug",
+            "home_club_logo_url",
             "away_club",
             "away_club_name",
             "away_club_slug",
+            "away_club_logo_url",
             "status",
             "match_date",
             "venue",
@@ -108,6 +148,12 @@ class MatchListSerializer(serializers.ModelSerializer):
             "is_featured",
             "created_at",
         ]
+
+    def get_home_club_logo_url(self, obj):
+        return build_file_url(self.context.get("request"), obj.home_club.logo)
+
+    def get_away_club_logo_url(self, obj):
+        return build_file_url(self.context.get("request"), obj.away_club.logo)
 
 
 class MatchDetailSerializer(serializers.ModelSerializer):
@@ -132,9 +178,11 @@ class MatchDetailSerializer(serializers.ModelSerializer):
             "home_club",
             "home_club_name",
             "home_club_slug",
+            "home_club_logo_url",
             "away_club",
             "away_club_name",
             "away_club_slug",
+            "away_club_logo_url",
             "status",
             "match_date",
             "venue",
