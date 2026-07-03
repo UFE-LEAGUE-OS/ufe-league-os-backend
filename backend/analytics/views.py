@@ -6,9 +6,7 @@ from rest_framework.response import Response
 from accounts.permissions import IsSuperAdmin
 
 from .models import ReportAccessLog
-from .serializers import (
-    ReportAccessLogSerializer,
-)
+from .serializers import ReportAccessLogSerializer
 
 
 @api_view(["GET"])
@@ -20,49 +18,70 @@ def platform_summary_view(request):
     from ticketing.models import TicketOrder, Ticket
     from sponsorships.models import SponsorAccount, SponsorshipAgreement
 
-    summary = {
-        "users": {
-            "total": User.objects.count(),
-            "active_last_30_days": User.objects.filter(
+    data = [
+        {"metric": "Total Users", "value": User.objects.count(), "category": "users"},
+        {
+            "metric": "Active Users (30 days)",
+            "value": User.objects.filter(
                 last_login__gte=timezone.now() - timedelta(days=30)
             ).count(),
-            "verified": User.objects.filter(is_email_verified=True).count(),
+            "category": "users",
         },
-        "memberships": {
-            "total_active": Membership.objects.filter(
-                status=Membership.Status.ACTIVE
-            ).count(),
-            "total_expired": Membership.objects.filter(
+        {
+            "metric": "Verified Users",
+            "value": User.objects.filter(is_email_verified=True).count(),
+            "category": "users",
+        },
+        {
+            "metric": "Active Memberships",
+            "value": Membership.objects.filter(status=Membership.Status.ACTIVE).count(),
+            "category": "memberships",
+        },
+        {
+            "metric": "Expired Memberships",
+            "value": Membership.objects.filter(
                 status=Membership.Status.EXPIRED
             ).count(),
+            "category": "memberships",
         },
-        "ticketing": {
-            "orders_pending": TicketOrder.objects.filter(
+        {
+            "metric": "Pending Ticket Orders",
+            "value": TicketOrder.objects.filter(
                 status=TicketOrder.Status.PENDING
             ).count(),
-            "orders_paid": TicketOrder.objects.filter(
-                status=TicketOrder.Status.PAID
-            ).count(),
-            "tickets_issued": Ticket.objects.count(),
+            "category": "ticketing",
         },
-        "sponsorships": {
-            "active_accounts": SponsorAccount.objects.filter(is_active=True).count(),
-            "active_agreements": SponsorshipAgreement.objects.filter(
+        {
+            "metric": "Paid Ticket Orders",
+            "value": TicketOrder.objects.filter(status=TicketOrder.Status.PAID).count(),
+            "category": "ticketing",
+        },
+        {
+            "metric": "Tickets Issued",
+            "value": Ticket.objects.count(),
+            "category": "ticketing",
+        },
+        {
+            "metric": "Active Sponsor Accounts",
+            "value": SponsorAccount.objects.filter(is_active=True).count(),
+            "category": "sponsorships",
+        },
+        {
+            "metric": "Active Sponsorship Agreements",
+            "value": SponsorshipAgreement.objects.filter(
                 status=SponsorshipAgreement.Status.ACTIVE
             ).count(),
+            "category": "sponsorships",
         },
-        "generated_at": timezone.now(),
-    }
+    ]
 
-    ReportAccessLog.objects.create(
-        user=request.user,
-        report_type=ReportAccessLog.ReportType.PLATFORM_SUMMARY,
-        action=ReportAccessLog.ActionType.VIEW,
-        ip_address=getattr(request, "META", {}).get("REMOTE_ADDR", ""),
-        user_agent=request.META.get("HTTP_USER_AGENT", ""),
+    return Response(
+        {
+            "data": data,
+            "generated_at": timezone.now(),
+            "total_records": len(data),
+        }
     )
-
-    return Response(summary)
 
 
 @api_view(["GET"])
@@ -87,31 +106,28 @@ def user_growth_view(request):
         end_date = timezone.now().date()
 
     users = User.objects.filter(date_joined__date__range=[start_date, end_date])
-    total = users.count()
 
-    growth_data = {
-        "period": period,
-        "start_date": start_date,
-        "end_date": end_date,
-        "total_users": total,
-        "new_users": total,
-        "data": [],
-    }
+    if period == "daily":
+        users = users.extra(select={"period": "DATE_TRUNC('day', date_joined)"})
+    elif period == "weekly":
+        users = users.extra(select={"period": "DATE_TRUNC('week', date_joined)"})
+    else:
+        users = users.extra(select={"period": "DATE_TRUNC('month', date_joined)"})
 
-    ReportAccessLog.objects.create(
-        user=request.user,
-        report_type=ReportAccessLog.ReportType.USER_GROWTH,
-        action=ReportAccessLog.ActionType.VIEW,
-        filters_applied={
-            "start_date": str(start_date),
-            "end_date": str(end_date),
-            "period": period,
-        },
-        ip_address=getattr(request, "META", {}).get("REMOTE_ADDR", ""),
-        user_agent=request.META.get("HTTP_USER_AGENT", ""),
+    growth_data = [{"period": "aggregated", "count": users.count()}]
+
+    return Response(
+        {
+            "data": growth_data,
+            "filters": {
+                "start_date": str(start_date),
+                "end_date": str(end_date),
+                "period": period,
+            },
+            "generated_at": timezone.now(),
+            "total_records": len(growth_data),
+        }
     )
-
-    return Response(growth_data)
 
 
 @api_view(["GET"])
@@ -120,23 +136,36 @@ def engagement_analytics_view(request):
     """Engagement analytics."""
     from engagements.models import Follow, Event, Poll, Prediction
 
-    data = {
-        "total_follows": Follow.objects.count(),
-        "total_events": Event.objects.count(),
-        "total_polls": Poll.objects.count(),
-        "total_predictions": Prediction.objects.count(),
-        "generated_at": timezone.now(),
-    }
+    data = [
+        {
+            "metric": "Total Follows",
+            "value": Follow.objects.count(),
+            "category": "engagement",
+        },
+        {
+            "metric": "Total Events",
+            "value": Event.objects.count(),
+            "category": "engagement",
+        },
+        {
+            "metric": "Total Polls",
+            "value": Poll.objects.count(),
+            "category": "engagement",
+        },
+        {
+            "metric": "Total Predictions",
+            "value": Prediction.objects.count(),
+            "category": "engagement",
+        },
+    ]
 
-    ReportAccessLog.objects.create(
-        user=request.user,
-        report_type=ReportAccessLog.ReportType.ENGAGEMENT,
-        action=ReportAccessLog.ActionType.VIEW,
-        ip_address=getattr(request, "META", {}).get("REMOTE_ADDR", ""),
-        user_agent=request.META.get("HTTP_USER_AGENT", ""),
+    return Response(
+        {
+            "data": data,
+            "generated_at": timezone.now(),
+            "total_records": len(data),
+        }
     )
-
-    return Response(data)
 
 
 @api_view(["GET"])
@@ -145,27 +174,35 @@ def membership_analytics_view(request):
     """Membership analytics."""
     from memberships.models import Membership
 
-    active = Membership.objects.filter(status=Membership.Status.ACTIVE).count()
-    expired = Membership.objects.filter(status=Membership.Status.EXPIRED).count()
-    suspended = Membership.objects.filter(status=Membership.Status.SUSPENDED).count()
+    data = [
+        {
+            "metric": "Active Memberships",
+            "value": Membership.objects.filter(status=Membership.Status.ACTIVE).count(),
+            "category": "memberships",
+        },
+        {
+            "metric": "Expired Memberships",
+            "value": Membership.objects.filter(
+                status=Membership.Status.EXPIRED
+            ).count(),
+            "category": "memberships",
+        },
+        {
+            "metric": "Suspended Memberships",
+            "value": Membership.objects.filter(
+                status=Membership.Status.SUSPENDED
+            ).count(),
+            "category": "memberships",
+        },
+    ]
 
-    data = {
-        "active": active,
-        "expired": expired,
-        "suspended": suspended,
-        "total": active + expired + suspended,
-        "generated_at": timezone.now(),
-    }
-
-    ReportAccessLog.objects.create(
-        user=request.user,
-        report_type=ReportAccessLog.ReportType.MEMBERSHIP,
-        action=ReportAccessLog.ActionType.VIEW,
-        ip_address=getattr(request, "META", {}).get("REMOTE_ADDR", ""),
-        user_agent=request.META.get("HTTP_USER_AGENT", ""),
+    return Response(
+        {
+            "data": data,
+            "generated_at": timezone.now(),
+            "total_records": len(data),
+        }
     )
-
-    return Response(data)
 
 
 @api_view(["GET"])
@@ -174,29 +211,40 @@ def ticketing_analytics_view(request):
     """Ticketing analytics."""
     from ticketing.models import TicketOrder, Ticket
 
-    pending = TicketOrder.objects.filter(status=TicketOrder.Status.PENDING).count()
-    paid = TicketOrder.objects.filter(status=TicketOrder.Status.PAID).count()
-    cancelled = TicketOrder.objects.filter(status=TicketOrder.Status.CANCELLED).count()
-    total_tickets = Ticket.objects.count()
+    data = [
+        {
+            "metric": "Pending Orders",
+            "value": TicketOrder.objects.filter(
+                status=TicketOrder.Status.PENDING
+            ).count(),
+            "category": "ticketing",
+        },
+        {
+            "metric": "Paid Orders",
+            "value": TicketOrder.objects.filter(status=TicketOrder.Status.PAID).count(),
+            "category": "ticketing",
+        },
+        {
+            "metric": "Cancelled Orders",
+            "value": TicketOrder.objects.filter(
+                status=TicketOrder.Status.CANCELLED
+            ).count(),
+            "category": "ticketing",
+        },
+        {
+            "metric": "Tickets Issued",
+            "value": Ticket.objects.count(),
+            "category": "ticketing",
+        },
+    ]
 
-    data = {
-        "orders_pending": pending,
-        "orders_paid": paid,
-        "orders_cancelled": cancelled,
-        "total_orders": pending + paid + cancelled,
-        "total_tickets": total_tickets,
-        "generated_at": timezone.now(),
-    }
-
-    ReportAccessLog.objects.create(
-        user=request.user,
-        report_type=ReportAccessLog.ReportType.TICKETING,
-        action=ReportAccessLog.ActionType.VIEW,
-        ip_address=getattr(request, "META", {}).get("REMOTE_ADDR", ""),
-        user_agent=request.META.get("HTTP_USER_AGENT", ""),
+    return Response(
+        {
+            "data": data,
+            "generated_at": timezone.now(),
+            "total_records": len(data),
+        }
     )
-
-    return Response(data)
 
 
 @api_view(["GET"])
@@ -205,28 +253,33 @@ def sponsorship_analytics_view(request):
     """Sponsorship analytics."""
     from sponsorships.models import SponsorAccount, SponsorshipAgreement
 
-    active_accounts = SponsorAccount.objects.filter(is_active=True).count()
-    active_agreements = SponsorshipAgreement.objects.filter(
-        status=SponsorshipAgreement.Status.ACTIVE
-    ).count()
-    total_agreements = SponsorshipAgreement.objects.count()
+    data = [
+        {
+            "metric": "Active Sponsor Accounts",
+            "value": SponsorAccount.objects.filter(is_active=True).count(),
+            "category": "sponsorships",
+        },
+        {
+            "metric": "Active Agreements",
+            "value": SponsorshipAgreement.objects.filter(
+                status=SponsorshipAgreement.Status.ACTIVE
+            ).count(),
+            "category": "sponsorships",
+        },
+        {
+            "metric": "Total Agreements",
+            "value": SponsorshipAgreement.objects.count(),
+            "category": "sponsorships",
+        },
+    ]
 
-    data = {
-        "active_accounts": active_accounts,
-        "active_agreements": active_agreements,
-        "total_agreements": total_agreements,
-        "generated_at": timezone.now(),
-    }
-
-    ReportAccessLog.objects.create(
-        user=request.user,
-        report_type=ReportAccessLog.ReportType.SPONSORSHIP,
-        action=ReportAccessLog.ActionType.VIEW,
-        ip_address=getattr(request, "META", {}).get("REMOTE_ADDR", ""),
-        user_agent=request.META.get("HTTP_USER_AGENT", ""),
+    return Response(
+        {
+            "data": data,
+            "generated_at": timezone.now(),
+            "total_records": len(data),
+        }
     )
-
-    return Response(data)
 
 
 @api_view(["GET"])
@@ -243,26 +296,28 @@ def system_health_view(request):
     except Exception:
         db_status = "unhealthy"
 
-    open_anomalies = Anomaly.objects.filter(status=Anomaly.Status.OPEN).count()
-    unresolved_security_events = SecurityEvent.objects.filter(is_resolved=False).count()
+    data = [
+        {"metric": "Database Status", "value": db_status, "category": "system"},
+        {"metric": "Total Users", "value": User.objects.count(), "category": "system"},
+        {
+            "metric": "Open Anomalies",
+            "value": Anomaly.objects.filter(status=Anomaly.Status.OPEN).count(),
+            "category": "system",
+        },
+        {
+            "metric": "Unresolved Security Events",
+            "value": SecurityEvent.objects.filter(is_resolved=False).count(),
+            "category": "system",
+        },
+    ]
 
-    data = {
-        "database_status": db_status,
-        "total_users": User.objects.count(),
-        "open_anomalies": open_anomalies,
-        "unresolved_security_events": unresolved_security_events,
-        "generated_at": timezone.now(),
-    }
-
-    ReportAccessLog.objects.create(
-        user=request.user,
-        report_type=ReportAccessLog.ReportType.SYSTEM_HEALTH,
-        action=ReportAccessLog.ActionType.VIEW,
-        ip_address=getattr(request, "META", {}).get("REMOTE_ADDR", ""),
-        user_agent=request.META.get("HTTP_USER_AGENT", ""),
+    return Response(
+        {
+            "data": data,
+            "generated_at": timezone.now(),
+            "total_records": len(data),
+        }
     )
-
-    return Response(data)
 
 
 @api_view(["GET"])
@@ -284,4 +339,9 @@ def analytics_report_access_log_view(request):
         queryset = queryset.filter(user_id=user_id)
 
     serializer = ReportAccessLogSerializer(queryset, many=True)
-    return Response(serializer.data)
+    return Response(
+        {
+            "data": serializer.data,
+            "total_records": queryset.count(),
+        }
+    )

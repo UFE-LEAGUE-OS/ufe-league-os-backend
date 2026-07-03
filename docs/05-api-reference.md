@@ -295,26 +295,16 @@ Super-admin-only module for platform-wide analytics, reporting, and audit loggin
 
 ### Analytics Response Examples
 
+All responses follow a table format:
+
 ```json
 {
-  "users": {
-    "total": 1234,
-    "active_last_30_days": 567,
-    "verified": 890
-  },
-  "memberships": {
-    "total_active": 456,
-    "total_expired": 123
-  },
-  "ticketing": {
-    "orders_pending": 12,
-    "orders_paid": 345,
-    "tickets_issued": 678
-  },
-  "sponsorships": {
-    "active_accounts": 23,
-    "active_agreements": 45
-  },
+  "data": [
+    {"metric": "Total Users", "value": 1234, "category": "users"},
+    {"metric": "Active Memberships", "value": 456, "category": "memberships"},
+    {"metric": "Paid Ticket Orders", "value": 345, "category": "ticketing"}
+  ],
+  "total_records": 3,
   "generated_at": "2026-03-07T18:00:00Z"
 }
 ```
