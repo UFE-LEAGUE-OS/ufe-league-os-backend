@@ -1,4 +1,4 @@
-# 05. API Reference
+`````````````# 05. API Reference
 
 Base URL locally:
 
@@ -213,6 +213,41 @@ GET /api/ticketing/flutterwave/verify/?tx_ref=LOS-TICKET-1-...
   "match_id": 1
 }
 ```
+
+## Monitoring & Audit
+
+Super-admin-only module for platform monitoring, audit trails, compliance, and security events.
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/api/monitoring/anomalies/` | Super Admin | List anomalies. |
+| `POST` | `/api/monitoring/anomalies/` | Super Admin | Create anomaly. |
+| `GET` | `/api/monitoring/anomalies/<pk>/` | Super Admin | Retrieve anomaly. |
+| `PATCH` | `/api/monitoring/anomalies/<pk>/` | Super Admin | Partial update anomaly. |
+| `PUT` | `/api/monitoring/anomalies/<pk>/` | Super Admin | Full update anomaly. |
+| `DELETE` | `/api/monitoring/anomalies/<pk>/` | Super Admin | Delete anomaly. |
+| `POST` | `/api/monitoring/anomalies/<pk>/resolve/` | Super Admin | Resolve anomaly. |
+| `GET` | `/api/monitoring/payments/` | Super Admin | List payment audit records. |
+| `GET` | `/api/monitoring/payments/<pk>/` | Super Admin | Retrieve payment audit. |
+| `GET` | `/api/monitoring/transactions/` | Super Admin | List transaction reconciliations. |
+| `POST` | `/api/monitoring/transactions/` | Super Admin | Create reconciliation. |
+| `GET` | `/api/monitoring/transactions/<pk>/` | Super Admin | Retrieve reconciliation. |
+| `PATCH` | `/api/monitoring/transactions/<pk>/` | Super Admin | Partial update reconciliation. |
+| `PUT` | `/api/monitoring/transactions/<pk>/` | Super Admin | Full update reconciliation. |
+| `POST` | `/api/monitoring/transactions/<pk>/verify/` | Super Admin | Verify reconciliation. |
+| `GET` | `/api/monitoring/system-logs/` | Super Admin | List system logs. |
+| `GET` | `/api/monitoring/system-logs/<pk>/` | Super Admin | Retrieve system log. |
+| `GET` | `/api/monitoring/compliance/` | Super Admin | List compliance trails. |
+| `POST` | `/api/monitoring/compliance/` | Super Admin | Create compliance trail. |
+| `GET` | `/api/monitoring/compliance/<pk>/` | Super Admin | Retrieve compliance trail. |
+| `PATCH` | `/api/monitoring/compliance/<pk>/` | Super Admin | Partial update compliance trail. |
+| `PUT` | `/api/monitoring/compliance/<pk>/` | Super Admin | Full update compliance trail. |
+| `GET` | `/api/monitoring/data-access/` | Super Admin | List data access audit records. |
+| `GET` | `/api/monitoring/data-access/<pk>/` | Super Admin | Retrieve data access audit. |
+| `GET` | `/api/monitoring/security-events/` | Super Admin | List security events. |
+| `POST` | `/api/monitoring/security-events/` | Super Admin | Create security event. |
+| `GET` | `/api/monitoring/security-events/<pk>/` | Super Admin | Retrieve security event. |
+| `POST` | `/api/monitoring/security-events/<pk>/resolve/` | Super Admin | Resolve security event. |
 
 ## Current Frontend Endpoint Alignment Note
 
