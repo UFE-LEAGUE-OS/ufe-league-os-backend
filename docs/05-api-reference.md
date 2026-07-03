@@ -93,21 +93,46 @@ Authorization: Bearer <access_token>
 
 ## Governance
 
+Super-admin-only module for platform-wide governance configuration.
+
 | Method | Endpoint | Auth | Purpose |
 |---|---|---|---|
-| `GET/POST` | `/api/governance/sport-variants/` | Depends on view permissions | List/create sport variants. |
-| `GET/PATCH/DELETE` | `/api/governance/sport-variants/<pk>/` | Depends on view permissions | Detail/update/delete sport variant. |
-| `POST` | `/api/governance/sport-variants/<pk>/verify/` | Admin | Verify sport variant. |
-| `GET/POST` | `/api/governance/competition-formats/` | Depends on view permissions | List/create competition formats. |
-| `GET/PATCH/DELETE` | `/api/governance/competition-formats/<pk>/` | Depends on view permissions | Detail/update/delete competition format. |
-| `POST` | `/api/governance/competition-formats/<pk>/verify/` | Admin | Verify competition format. |
-| `GET/POST` | `/api/governance/rules/` | Depends on view permissions | List/create rules. |
-| `GET/PATCH/DELETE` | `/api/governance/rules/<pk>/` | Depends on view permissions | Detail/update/delete rule. |
-| `POST` | `/api/governance/rules/<pk>/publish/` | Admin | Publish rule. |
-| `POST` | `/api/governance/rules/<pk>/unpublish/` | Admin | Unpublish rule. |
-| `GET/POST` | `/api/governance/league-standards/` | Admin | Publish standards to leagues. |
-| `DELETE` | `/api/governance/league-standards/<pk>/` | Admin | Remove standard. |
-| `GET` | `/api/governance/leagues/<league_pk>/standards/` | Depends on view permissions | Standards for league. |
+| `GET` | `/api/governance/sport-variants/` | Super Admin | List sport variants. |
+| `POST` | `/api/governance/sport-variants/` | Super Admin | Create sport variant. |
+| `GET` | `/api/governance/sport-variants/<pk>/` | Super Admin | Retrieve sport variant. |
+| `PATCH` | `/api/governance/sport-variants/<pk>/` | Super Admin | Partial update sport variant. |
+| `PUT` | `/api/governance/sport-variants/<pk>/` | Super Admin | Full update sport variant. |
+| `DELETE` | `/api/governance/sport-variants/<pk>/` | Super Admin | Delete sport variant. |
+| `POST` | `/api/governance/sport-variants/<pk>/verify/` | Super Admin | Verify sport variant. |
+| `GET` | `/api/governance/competition-formats/` | Super Admin | List competition formats. |
+| `POST` | `/api/governance/competition-formats/` | Super Admin | Create competition format. |
+| `GET` | `/api/governance/competition-formats/<pk>/` | Super Admin | Retrieve competition format. |
+| `PATCH` | `/api/governance/competition-formats/<pk>/` | Super Admin | Partial update competition format. |
+| `PUT` | `/api/governance/competition-formats/<pk>/` | Super Admin | Full update competition format. |
+| `DELETE` | `/api/governance/competition-formats/<pk>/` | Super Admin | Delete competition format. |
+| `POST` | `/api/governance/competition-formats/<pk>/verify/` | Super Admin | Verify competition format. |
+| `GET` | `/api/governance/rules/` | Super Admin | List rules & standards. |
+| `POST` | `/api/governance/rules/` | Super Admin | Create rule/standard. |
+| `GET` | `/api/governance/rules/<pk>/` | Super Admin | Retrieve rule/standard. |
+| `PATCH` | `/api/governance/rules/<pk>/` | Super Admin | Partial update rule/standard. |
+| `PUT` | `/api/governance/rules/<pk>/` | Super Admin | Full update rule/standard. |
+| `DELETE` | `/api/governance/rules/<pk>/` | Super Admin | Delete rule/standard. |
+| `POST` | `/api/governance/rules/<pk>/publish/` | Super Admin | Publish rule/standard for league assignment. |
+| `POST` | `/api/governance/rules/<pk>/unpublish/` | Super Admin | Unpublish rule/standard. |
+| `GET` | `/api/governance/league-standards/` | Super Admin | List league-standard assignments. |
+| `POST` | `/api/governance/league-standards/` | Super Admin | Publish standards to leagues. |
+| `DELETE` | `/api/governance/league-standards/<pk>/` | Super Admin | Remove league-standard assignment. |
+| `GET` | `/api/governance/leagues/<league_pk>/standards/` | Super Admin | List standards for a league. |
+
+### Publish Standards to Leagues Request
+
+```json
+{
+  "rule_ids": [1, 2],
+  "league_ids": [10, 11],
+  "notes": "Optional assignment notes"
+}
+```
 
 ## Sponsorships
 
