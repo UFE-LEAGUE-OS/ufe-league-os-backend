@@ -57,6 +57,7 @@ urlpatterns = [
     path("api/engagements/", include("engagements.urls")),
     path("api/monitoring/", include("monitoring.urls")),
     path("api/rbac/", include("rbac.urls")),
+    path("api/analytics/", include("analytics.urls")),
 ]
 
 if settings.DEBUG:

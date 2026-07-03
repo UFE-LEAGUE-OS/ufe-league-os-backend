@@ -270,6 +270,45 @@ Super-admin-only module for managing role templates, permissions, permission bun
 | `GET/POST` | `/api/rbac/impersonation/` | Super Admin | List impersonation sessions or start new impersonation. |
 | `POST` | `/api/rbac/impersonation/<pk>/stop/` | Super Admin | Stop active impersonation session. |
 
+## Analytics
+
+Super-admin-only module for platform-wide analytics, reporting, and audit logging.
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/api/analytics/summary/` | Super Admin | Platform summary analytics (users, memberships, ticketing, sponsorships). |
+| `GET` | `/api/analytics/user-growth/` | Super Admin | User growth analytics with date filtering (start_date, end_date, period). |
+| `GET` | `/api/analytics/engagement/` | Super Admin | Engagement analytics (follows, events, polls, predictions). |
+| `GET` | `/api/analytics/membership/` | Super Admin | Membership analytics (active, expired, suspended). |
+| `GET` | `/api/analytics/ticketing/` | Super Admin | Ticketing analytics (orders, tickets). |
+| `GET` | `/api/analytics/sponsorship/` | Super Admin | Sponsorship analytics (accounts, agreements). |
+| `GET` | `/api/analytics/system-health/` | Super Admin | System health metrics (database, anomalies, security events). |
+| `GET` | `/api/analytics/access-logs/` | Super Admin | List analytics report access and export audit logs. |
+
+### Analytics Query Parameters
+
+| Parameter | Description |
+|---|---|
+| `start_date` | Filter start date (YYYY-MM-DD). |
+| `end_date` | Filter end date (YYYY-MM-DD). |
+| `period` | Aggregation period: `daily`, `weekly`, `monthly`. |
+
+### Analytics Response Examples
+
+All responses follow a table format:
+
+```json
+{
+  "data": [
+    {"metric": "Total Users", "value": 1234, "category": "users"},
+    {"metric": "Active Memberships", "value": 456, "category": "memberships"},
+    {"metric": "Paid Ticket Orders", "value": 345, "category": "ticketing"}
+  ],
+  "total_records": 3,
+  "generated_at": "2026-03-07T18:00:00Z"
+}
+```
+
 ## Current Frontend Endpoint Alignment Note
 
 The backend currently has:
