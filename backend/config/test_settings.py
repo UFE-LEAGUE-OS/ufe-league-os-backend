@@ -26,6 +26,7 @@ INSTALLED_APPS = [
     "memberships",
     "fantasy",
     "engagements",
+    "monitoring.apps.MonitoringConfig",
 ]
 
 MIDDLEWARE = [
