@@ -270,6 +270,55 @@ Super-admin-only module for managing role templates, permissions, permission bun
 | `GET/POST` | `/api/rbac/impersonation/` | Super Admin | List impersonation sessions or start new impersonation. |
 | `POST` | `/api/rbac/impersonation/<pk>/stop/` | Super Admin | Stop active impersonation session. |
 
+## Analytics
+
+Super-admin-only module for platform-wide analytics, reporting, and audit logging.
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/api/analytics/summary/` | Super Admin | Platform summary analytics (users, memberships, ticketing, sponsorships). |
+| `GET` | `/api/analytics/user-growth/` | Super Admin | User growth analytics with date filtering (start_date, end_date, period). |
+| `GET` | `/api/analytics/engagement/` | Super Admin | Engagement analytics (follows, events, polls, predictions). |
+| `GET` | `/api/analytics/membership/` | Super Admin | Membership analytics (active, expired, suspended). |
+| `GET` | `/api/analytics/ticketing/` | Super Admin | Ticketing analytics (orders, tickets). |
+| `GET` | `/api/analytics/sponsorship/` | Super Admin | Sponsorship analytics (accounts, agreements). |
+| `GET` | `/api/analytics/system-health/` | Super Admin | System health metrics (database, anomalies, security events). |
+| `GET` | `/api/analytics/access-logs/` | Super Admin | List analytics report access and export audit logs. |
+
+### Analytics Query Parameters
+
+| Parameter | Description |
+|---|---|
+| `start_date` | Filter start date (YYYY-MM-DD). |
+| `end_date` | Filter end date (YYYY-MM-DD). |
+| `period` | Aggregation period: `daily`, `weekly`, `monthly`. |
+
+### Analytics Response Examples
+
+```json
+{
+  "users": {
+    "total": 1234,
+    "active_last_30_days": 567,
+    "verified": 890
+  },
+  "memberships": {
+    "total_active": 456,
+    "total_expired": 123
+  },
+  "ticketing": {
+    "orders_pending": 12,
+    "orders_paid": 345,
+    "tickets_issued": 678
+  },
+  "sponsorships": {
+    "active_accounts": 23,
+    "active_agreements": 45
+  },
+  "generated_at": "2026-03-07T18:00:00Z"
+}
+```
+
 ## Current Frontend Endpoint Alignment Note
 
 The backend currently has:

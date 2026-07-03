@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     "engagements",
     "monitoring.apps.MonitoringConfig",
     "rbac.apps.RbacConfig",
+    "analytics.apps.AnalyticsConfig",
 ]
 
 MIDDLEWARE = [
