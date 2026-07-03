@@ -23,7 +23,9 @@ class Command(BaseCommand):
         last_name = options["last_name"]
 
         if User.objects.filter(email=email).exists():
-            self.stdout.write(self.style.WARNING(f"User with email {email} already exists."))
+            self.stdout.write(
+                self.style.WARNING(f"User with email {email} already exists.")
+            )
             return
 
         user = User.objects.create_superuser(
