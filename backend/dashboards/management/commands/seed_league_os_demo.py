@@ -646,7 +646,17 @@ class Command(BaseCommand):
                 )
                 self.ticket_types.append(ticket_type)
 
-        for index, ticket_type in enumerate(self.ticket_types[:3], start=1):
+        demo_ticket_types = []
+        seen_match_ids = set()
+        for ticket_type in self.ticket_types:
+            if ticket_type.match_id in seen_match_ids:
+                continue
+            demo_ticket_types.append(ticket_type)
+            seen_match_ids.add(ticket_type.match_id)
+            if len(demo_ticket_types) == 3:
+                break
+
+        for index, ticket_type in enumerate(demo_ticket_types, start=1):
             reference = f"DEMO-TICKET-ORDER-{index:03d}"
             order = TicketOrder.objects.filter(payment_reference=reference).first()
             if order is None:

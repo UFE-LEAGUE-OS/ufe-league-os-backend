@@ -136,6 +136,19 @@ class TicketSerializer(serializers.ModelSerializer):
     ticket_type_name = serializers.CharField(source="ticket_type.name", read_only=True)
     match_id = serializers.IntegerField(source="match.id", read_only=True)
     match_label = serializers.SerializerMethodField()
+    match_date = serializers.DateTimeField(source="match.match_date", read_only=True)
+    venue = serializers.CharField(source="match.venue", read_only=True)
+    competition_name = serializers.CharField(
+        source="match.competition.name", read_only=True
+    )
+    home_club_name = serializers.CharField(
+        source="match.home_club.name", read_only=True
+    )
+    away_club_name = serializers.CharField(
+        source="match.away_club.name", read_only=True
+    )
+    home_club_logo_url = serializers.SerializerMethodField()
+    away_club_logo_url = serializers.SerializerMethodField()
     qr_payload = serializers.CharField(read_only=True)
     qr_image_url = serializers.SerializerMethodField()
 
@@ -151,6 +164,13 @@ class TicketSerializer(serializers.ModelSerializer):
             "ticket_type_name",
             "match_id",
             "match_label",
+            "match_date",
+            "venue",
+            "competition_name",
+            "home_club_name",
+            "away_club_name",
+            "home_club_logo_url",
+            "away_club_logo_url",
             "owner",
             "status",
             "issued_at",
@@ -158,6 +178,27 @@ class TicketSerializer(serializers.ModelSerializer):
             "checked_in_by",
         ]
         read_only_fields = fields
+
+    def build_absolute_media_url(self, value):
+        if not value:
+            return ""
+
+        request = self.context.get("request")
+        try:
+            url = value.url
+        except ValueError:
+            return ""
+
+        if request:
+            return request.build_absolute_uri(url)
+
+        return url
+
+    def get_home_club_logo_url(self, obj):
+        return self.build_absolute_media_url(obj.match.home_club.logo)
+
+    def get_away_club_logo_url(self, obj):
+        return self.build_absolute_media_url(obj.match.away_club.logo)
 
     def get_match_label(self, obj):
         return str(obj.match)
