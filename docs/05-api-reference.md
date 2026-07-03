@@ -1,4 +1,4 @@
-`````````````# 05. API Reference
+# 05. API Reference
 
 Base URL locally:
 
@@ -248,6 +248,27 @@ Super-admin-only module for platform monitoring, audit trails, compliance, and s
 | `POST` | `/api/monitoring/security-events/` | Super Admin | Create security event. |
 | `GET` | `/api/monitoring/security-events/<pk>/` | Super Admin | Retrieve security event. |
 | `POST` | `/api/monitoring/security-events/<pk>/resolve/` | Super Admin | Resolve security event. |
+
+## RBAC
+
+Super-admin-only module for managing role templates, permissions, permission bundles, user role assignments, user permission overrides, sessions, and impersonation.
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/api/rbac/permissions/` | Super Admin | List all permissions. |
+| `GET` | `/api/rbac/permissions/<pk>/` | Super Admin | Retrieve permission. |
+| `GET/POST` | `/api/rbac/bundles/` | Super Admin | List or create permission bundles. |
+| `GET/PUT/PATCH/DELETE` | `/api/rbac/bundles/<pk>/` | Super Admin | Retrieve, update, or delete permission bundle. |
+| `GET/POST` | `/api/rbac/role-templates/` | Super Admin | List or create role templates. |
+| `GET/PUT/PATCH/DELETE` | `/api/rbac/role-templates/<pk>/` | Super Admin | Retrieve, update, or delete role template. |
+| `GET/POST` | `/api/rbac/assignments/` | Super Admin | List or create user role assignments. |
+| `GET/PUT/PATCH/DELETE` | `/api/rbac/assignments/<pk>/` | Super Admin | Retrieve, update, or delete user role assignment. |
+| `GET/POST` | `/api/rbac/overrides/` | Super Admin | List or create user permission overrides. |
+| `GET/PUT/PATCH/DELETE` | `/api/rbac/overrides/<pk>/` | Super Admin | Retrieve, update, or delete permission override. |
+| `GET` | `/api/rbac/sessions/` | Super Admin | List user sessions. |
+| `GET/POST` | `/api/rbac/sessions/<pk>/` | Super Admin | Retrieve or revoke session. |
+| `GET/POST` | `/api/rbac/impersonation/` | Super Admin | List impersonation sessions or start new impersonation. |
+| `POST` | `/api/rbac/impersonation/<pk>/stop/` | Super Admin | Stop active impersonation session. |
 
 ## Current Frontend Endpoint Alignment Note
 
