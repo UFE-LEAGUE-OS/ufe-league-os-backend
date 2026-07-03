@@ -22,6 +22,10 @@ INSTALLED_APPS = [
     "dashboards",
     "governance.apps.GovernanceConfig",
     "sponsorships",
+    "ticketing",
+    "memberships",
+    "fantasy",
+    "engagements",
 ]
 
 MIDDLEWARE = [
