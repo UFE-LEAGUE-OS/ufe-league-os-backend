@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     "fantasy",
     "engagements",
     "monitoring.apps.MonitoringConfig",
+    "rbac.apps.RbacConfig",
 ]
 
 MIDDLEWARE = [
