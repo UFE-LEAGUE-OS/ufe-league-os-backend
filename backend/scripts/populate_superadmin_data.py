@@ -408,19 +408,23 @@ def populate_rbac():
 
     # Role Templates
     print("      Creating role templates...")
+    from rbac.models import RoleTemplatePermission
+
     templates_data = [
         {
             "name": "Super Administrator",
             "slug": "super-administrator",
             "description": "Full system administrator",
-            "bundles": list(PermissionBundle.objects.all()),
+            "permissions": list(Permission.objects.all()),
         },
         {
             "name": "League Administrator",
             "slug": "league-administrator",
             "description": "League-level administrator",
-            "bundles": list(
-                PermissionBundle.objects.filter(name="League Admin Bundle")
+            "permissions": list(
+                Permission.objects.filter(
+                    category__in=["dashboard", "governance", "analytics"]
+                )
             ),
         },
     ]
@@ -433,7 +437,12 @@ def populate_rbac():
             },
         )
         if created:
-            template.bundles.set(template_data["bundles"])
+            # Add permissions to role template via through model
+            for permission in template_data["permissions"]:
+                RoleTemplatePermission.objects.get_or_create(
+                    role_template=template,
+                    permission=permission,
+                )
             print(f"        + {template.name}")
 
 
