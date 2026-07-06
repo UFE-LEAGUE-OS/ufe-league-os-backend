@@ -143,7 +143,7 @@ def membership_plan_detail_view(request, plan_id):
 def membership_subscriptions_view(request):
     if request.method == "GET":
         subscriptions = MembershipSubscription.objects.select_related(
-            "user", "plan", "club"
+            "user", "plan", "club", "membership_card"
         )
 
         if request.user.role not in [User.Role.CLUB_ADMIN, User.Role.SUPER_ADMIN]:
@@ -244,7 +244,22 @@ def my_membership_view(request):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def membership_card_view(request):
-    subscription = _get_active_subscription_for_user(request.user)
+    subscription_id = request.data.get("subscription") or request.query_params.get(
+        "subscription"
+    )
+
+    if subscription_id:
+        subscription = (
+            MembershipSubscription.objects.filter(
+                id=subscription_id,
+                user=request.user,
+                status=MembershipSubscription.Status.ACTIVE,
+            )
+            .select_related("plan", "club")
+            .first()
+        )
+    else:
+        subscription = _get_active_subscription_for_user(request.user)
 
     if subscription is None:
         return Response(
@@ -277,7 +292,11 @@ def membership_card_view(request):
 def membership_payments_view(request):
     subscription_id = request.query_params.get("subscription")
     queryset = MembershipPayment.objects.select_related(
-        "subscription", "subscription_plan"
+        "subscription",
+        "subscription__user",
+        "subscription__plan",
+        "subscription__club",
+        "subscription_plan",
     )
 
     if subscription_id:

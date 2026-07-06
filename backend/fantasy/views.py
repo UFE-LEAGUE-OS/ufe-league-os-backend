@@ -1,4 +1,4 @@
-from django.db.models import Q
+from django.db.models import Count, Q
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -131,6 +131,181 @@ def _user_can_view_fantasy_league(user, league):
         fantasy_league=league,
         fantasy_team__owner=user,
     ).exists()
+
+
+def _build_absolute_media_url(request, value):
+    if not value:
+        return ""
+
+    try:
+        url = value.url
+    except ValueError:
+        return ""
+
+    return request.build_absolute_uri(url)
+
+
+def _serialize_competition_overview(request, competition):
+    linked = competition.linked_competition
+    active_gameweek = None
+
+    for gameweek in competition.prefetched_gameweeks:
+        if gameweek.status in [
+            FantasyGameweek.Status.OPEN,
+            FantasyGameweek.Status.UPCOMING,
+        ]:
+            active_gameweek = gameweek
+            break
+
+    if active_gameweek is None and competition.prefetched_gameweeks:
+        active_gameweek = competition.prefetched_gameweeks[0]
+
+    return {
+        "id": competition.id,
+        "name": competition.name,
+        "slug": competition.slug,
+        "sport": competition.sport,
+        "sport_label": competition.get_sport_display(),
+        "season": competition.season,
+        "status": competition.status,
+        "status_label": competition.get_status_display(),
+        "budget": str(competition.budget),
+        "squad_size": competition.squad_size,
+        "lineup_size": competition.lineup_size,
+        "max_players_per_club": competition.max_players_per_club,
+        "rules_summary": competition.rules_summary,
+        "teams_count": competition.teams_count,
+        "players_count": competition.players_count,
+        "leagues_count": competition.leagues_count,
+        "linked_competition": {
+            "id": linked.id,
+            "name": linked.name,
+            "slug": linked.slug,
+            "season": linked.season,
+        },
+        "active_gameweek": (
+            FantasyGameweekSerializer(active_gameweek).data if active_gameweek else None
+        ),
+    }
+
+
+def _serialize_featured_player(request, player):
+    return {
+        "id": player.id,
+        "display_name": player.display_name,
+        "club_name": player.club.name,
+        "position": player.position,
+        "position_label": player.get_position_display(),
+        "final_price": str(player.final_price),
+        "current_form": str(player.current_form),
+        "is_available": player.is_available,
+        "availability_note": player.availability_note,
+        "fantasy_competition": player.fantasy_competition_id,
+        "fantasy_competition_name": player.fantasy_competition.name,
+    }
+
+
+def _serialize_team_rank(team):
+    return {
+        "id": team.id,
+        "name": team.name,
+        "owner_name": team.owner.get_full_name() or team.owner.email,
+        "fantasy_competition": team.fantasy_competition_id,
+        "fantasy_competition_name": team.fantasy_competition.name,
+        "total_points": str(team.total_points),
+        "current_rank": team.current_rank,
+        "active_squad_count": team.active_squad_count,
+    }
+
+
+@extend_schema(tags=["Fantasy"])
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def fantasy_overview_view(request):
+    """
+    Optimized public fantasy hub payload for the frontend fantasy landing page.
+
+    This avoids the frontend doing several separate requests for competitions,
+    public leagues, player previews and leaderboard data.
+    """
+    competitions = (
+        FantasyCompetition.objects.select_related("linked_competition")
+        .prefetch_related("gameweeks")
+        .annotate(
+            teams_count=Count("teams", distinct=True),
+            players_count=Count("players", distinct=True),
+            leagues_count=Count("fantasy_leagues", distinct=True),
+        )
+        .filter(
+            status__in=[
+                FantasyCompetition.Status.OPEN,
+                FantasyCompetition.Status.LOCKED,
+            ]
+        )
+        .order_by("sport", "name")
+    )
+
+    # Attach sorted gameweeks without introducing extra serializers or queries per row.
+    for competition in competitions:
+        competition.prefetched_gameweeks = sorted(
+            competition.gameweeks.all(), key=lambda gameweek: gameweek.number
+        )
+
+    public_leagues = (
+        FantasyLeague.objects.filter(
+            is_active=True, league_type=FantasyLeague.LeagueType.PUBLIC
+        )
+        .select_related("fantasy_competition", "created_by")
+        .annotate(members_count_value=Count("memberships", distinct=True))
+        .order_by("-members_count_value", "name")[:8]
+    )
+
+    featured_players = (
+        FantasyPlayer.objects.filter(is_active=True, is_available=True)
+        .select_related("fantasy_competition", "club")
+        .order_by("-current_form", "-final_price", "display_name")[:8]
+    )
+
+    leaderboard = (
+        FantasyTeam.objects.select_related("owner", "fantasy_competition")
+        .prefetch_related("squad_players")
+        .order_by("current_rank", "-total_points", "name")[:10]
+    )
+
+    my_teams = []
+    if request.user.is_authenticated:
+        my_teams_queryset = (
+            FantasyTeam.objects.filter(owner=request.user)
+            .select_related("fantasy_competition", "owner")
+            .prefetch_related("squad_players")
+            .order_by("fantasy_competition__name")
+        )
+        my_teams = [_serialize_team_rank(team) for team in my_teams_queryset]
+
+    return Response(
+        {
+            "competitions": [
+                _serialize_competition_overview(request, competition)
+                for competition in competitions
+            ],
+            "public_leagues": FantasyLeagueSerializer(public_leagues, many=True).data,
+            "featured_players": [
+                _serialize_featured_player(request, player)
+                for player in featured_players
+            ],
+            "leaderboard": [_serialize_team_rank(team) for team in leaderboard],
+            "my_teams": my_teams,
+            "summary": {
+                "competitions_count": competitions.count(),
+                "public_leagues_count": FantasyLeague.objects.filter(
+                    is_active=True, league_type=FantasyLeague.LeagueType.PUBLIC
+                ).count(),
+                "players_count": FantasyPlayer.objects.filter(is_active=True).count(),
+                "teams_count": FantasyTeam.objects.count(),
+            },
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @extend_schema(tags=["Fantasy"])
