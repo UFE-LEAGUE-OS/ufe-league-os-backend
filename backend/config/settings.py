@@ -42,6 +42,10 @@ ALLOWED_HOSTS = config(
     cast=Csv(),
 )
 
+# Render health checks and proxy headers
+USE_X_FORWARDED_HOST = True
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 
 # Application definition
 
@@ -266,8 +270,6 @@ CSRF_TRUSTED_ORIGINS = config(
     default="http://localhost:5173",
     cast=Csv(),
 )
-
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 SESSION_COOKIE_SECURE = config(
     "SESSION_COOKIE_SECURE",
