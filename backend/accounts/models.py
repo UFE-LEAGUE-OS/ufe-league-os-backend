@@ -97,6 +97,15 @@ class User(AbstractUser):
             if sponsor_memberships.filter(is_active=True).exists():
                 roles.add(self.Role.SPONSOR)
 
+        union_memberships = getattr(self, "union_workspace_memberships", None)
+
+        if self.pk and union_memberships is not None:
+            if union_memberships.filter(
+                is_active=True,
+                workspace__status="ACTIVE",
+            ).exists():
+                roles.add(self.Role.UNION_ADMIN)
+
         return roles
 
     def has_role(self, role):

@@ -1,7 +1,15 @@
 from rest_framework import serializers
 
 from accounts.models import Club
-from .models import Union, League, Competition, Match, Standing
+from .models import (
+    Union,
+    League,
+    Competition,
+    Match,
+    Standing,
+    UnionWorkspace,
+    UnionWorkspaceMembership,
+)
 
 
 def build_file_url(request, file_field):
@@ -235,3 +243,77 @@ class StandingTableSerializer(serializers.Serializer):
     competition_name = serializers.CharField(read_only=True)
     competition_id = serializers.IntegerField(read_only=True)
     entries = serializers.ListField(child=StandingSerializer(), read_only=True)
+
+
+class UnionWorkspaceSerializer(serializers.ModelSerializer):
+    admin_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UnionWorkspace
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "acronym",
+            "sport",
+            "workspace_type",
+            "description",
+            "primary_color",
+            "status",
+            "admin_count",
+            "created_at",
+        ]
+
+    def get_admin_count(self, obj):
+        return obj.memberships.filter(is_active=True).count()
+
+
+class UnionWorkspaceMembershipSerializer(serializers.ModelSerializer):
+    workspace = UnionWorkspaceSerializer(read_only=True)
+    role_display = serializers.CharField(source="get_role_display", read_only=True)
+    effective_permissions = serializers.ListField(read_only=True)
+
+    class Meta:
+        model = UnionWorkspaceMembership
+        fields = [
+            "id",
+            "workspace",
+            "role",
+            "role_display",
+            "effective_permissions",
+            "is_active",
+            "created_at",
+        ]
+
+
+class UnionWorkspaceUserSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(source="user.id", read_only=True)
+    user_email = serializers.EmailField(source="user.email", read_only=True)
+    user_first_name = serializers.CharField(source="user.first_name", read_only=True)
+    user_last_name = serializers.CharField(source="user.last_name", read_only=True)
+    user_full_name = serializers.CharField(source="user.full_name", read_only=True)
+    workspace_slug = serializers.CharField(source="workspace.slug", read_only=True)
+    workspace_acronym = serializers.CharField(
+        source="workspace.acronym", read_only=True
+    )
+    role_display = serializers.CharField(source="get_role_display", read_only=True)
+    effective_permissions = serializers.ListField(read_only=True)
+
+    class Meta:
+        model = UnionWorkspaceMembership
+        fields = [
+            "id",
+            "user_id",
+            "user_email",
+            "user_first_name",
+            "user_last_name",
+            "user_full_name",
+            "workspace_slug",
+            "workspace_acronym",
+            "role",
+            "role_display",
+            "effective_permissions",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]

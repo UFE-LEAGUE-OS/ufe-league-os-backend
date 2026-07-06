@@ -152,3 +152,159 @@ class Standing(models.Model):
 
     def __str__(self):
         return f"{self.club.name} - {self.competition.name} (Pos: {self.position})"
+
+
+UNION_WORKSPACE_ROLE_PERMISSIONS = {
+    "OWNER": {
+        "union.dashboard.view",
+        "union.competitions.manage",
+        "union.clubs.manage",
+        "union.players.approve",
+        "union.referees.manage",
+        "union.finance.view",
+        "union.reports.view",
+        "union.communications.manage",
+        "union.users.manage",
+    },
+    "UNION_ADMIN": {
+        "union.dashboard.view",
+        "union.competitions.manage",
+        "union.clubs.manage",
+        "union.players.approve",
+        "union.referees.manage",
+        "union.reports.view",
+        "union.communications.manage",
+        "union.users.manage",
+    },
+    "COMPETITIONS_MANAGER": {
+        "union.dashboard.view",
+        "union.competitions.manage",
+        "union.reports.view",
+    },
+    "REGISTRAR": {
+        "union.dashboard.view",
+        "union.players.approve",
+        "union.clubs.manage",
+        "union.reports.view",
+    },
+    "REFEREE_MANAGER": {
+        "union.dashboard.view",
+        "union.referees.manage",
+        "union.reports.view",
+    },
+    "FINANCE_OFFICER": {
+        "union.dashboard.view",
+        "union.finance.view",
+        "union.reports.view",
+    },
+    "COMMUNICATIONS_OFFICER": {
+        "union.dashboard.view",
+        "union.communications.manage",
+    },
+    "VIEWER": {
+        "union.dashboard.view",
+        "union.reports.view",
+    },
+}
+
+
+class UnionWorkspace(models.Model):
+    """Admin workspace for federations, unions and community leagues."""
+
+    class WorkspaceType(models.TextChoices):
+        FEDERATION = "FEDERATION", "Federation"
+        UNION = "UNION", "Union"
+        COMMUNITY_LEAGUE = "COMMUNITY_LEAGUE", "Community League"
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        INACTIVE = "INACTIVE", "Inactive"
+
+    related_union = models.OneToOneField(
+        Union,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="workspace",
+    )
+    name = models.CharField(max_length=200, unique=True)
+    slug = models.SlugField(max_length=200, unique=True)
+    acronym = models.CharField(max_length=40)
+    sport = models.CharField(max_length=80)
+    workspace_type = models.CharField(
+        max_length=40,
+        choices=WorkspaceType.choices,
+        default=WorkspaceType.FEDERATION,
+    )
+    description = models.TextField(blank=True)
+    primary_color = models.CharField(max_length=20, default="#7b3ff2")
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        indexes = [
+            models.Index(fields=["slug"]),
+            models.Index(fields=["workspace_type", "status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.acronym} - {self.name}"
+
+
+class UnionWorkspaceMembership(models.Model):
+    """Connects a normal user account to a union workspace with permissions."""
+
+    class Role(models.TextChoices):
+        OWNER = "OWNER", "Workspace Owner"
+        UNION_ADMIN = "UNION_ADMIN", "Union Admin"
+        COMPETITIONS_MANAGER = "COMPETITIONS_MANAGER", "Competitions Manager"
+        REGISTRAR = "REGISTRAR", "Player Registrar"
+        REFEREE_MANAGER = "REFEREE_MANAGER", "Referee Manager"
+        FINANCE_OFFICER = "FINANCE_OFFICER", "Finance Officer"
+        COMMUNICATIONS_OFFICER = "COMMUNICATIONS_OFFICER", "Communications Officer"
+        VIEWER = "VIEWER", "Viewer"
+
+    user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        related_name="union_workspace_memberships",
+    )
+    workspace = models.ForeignKey(
+        UnionWorkspace,
+        on_delete=models.CASCADE,
+        related_name="memberships",
+    )
+    role = models.CharField(max_length=40, choices=Role.choices, default=Role.VIEWER)
+    extra_permissions = models.JSONField(default=list, blank=True)
+    is_active = models.BooleanField(default=True)
+    invited_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="union_workspace_invitations_sent",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["workspace__name", "user__email"]
+        unique_together = ["user", "workspace"]
+        indexes = [
+            models.Index(fields=["user", "is_active"]),
+            models.Index(fields=["workspace", "role", "is_active"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} -> {self.workspace.acronym} ({self.role})"
+
+    @property
+    def effective_permissions(self):
+        role_permissions = UNION_WORKSPACE_ROLE_PERMISSIONS.get(self.role, set())
+        return sorted(set(role_permissions) | set(self.extra_permissions or []))
