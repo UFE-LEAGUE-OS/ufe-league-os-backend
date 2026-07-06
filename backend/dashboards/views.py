@@ -1,3 +1,4 @@
+from django.db import models, transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -23,7 +24,15 @@ from accounts.routing import (
 )
 from accounts.serializers import UserSerializer
 
-from .models import Competition, League, Match, Standing, Union
+from .models import (
+    Competition,
+    League,
+    Match,
+    Standing,
+    Union,
+    UnionWorkspace,
+    UnionWorkspaceMembership,
+)
 from .serializers import (
     ClubListSerializer,
     CompetitionSerializer,
@@ -32,6 +41,8 @@ from .serializers import (
     MatchListSerializer,
     StandingSerializer,
     UnionSerializer,
+    UnionWorkspaceMembershipSerializer,
+    UnionWorkspaceUserSerializer,
 )
 from .services import recalculate_standings
 
@@ -565,5 +576,421 @@ def public_standings_calculation_view(request):
             "competition_id": competition.id,
             "competition_name": competition.name,
             "entries": serializer.data,
+        }
+    )
+
+
+def _get_active_union_workspace_memberships(user):
+    return (
+        UnionWorkspaceMembership.objects.filter(
+            user=user,
+            is_active=True,
+            workspace__status=UnionWorkspace.Status.ACTIVE,
+        )
+        .select_related("workspace", "workspace__related_union")
+        .order_by("workspace__name")
+    )
+
+
+def _get_union_membership_for_request(user, workspace_value=None):
+    queryset = _get_active_union_workspace_memberships(user)
+
+    if workspace_value:
+        queryset = queryset.filter(
+            models.Q(workspace__slug=workspace_value)
+            | models.Q(workspace__acronym__iexact=workspace_value)
+        )
+
+    return queryset.first()
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_workspaces_me_view(request):
+    """Return union/federation workspaces attached to the logged-in user."""
+
+    memberships = _get_active_union_workspace_memberships(request.user)
+
+    serializer = UnionWorkspaceMembershipSerializer(
+        memberships,
+        many=True,
+        context={"request": request},
+    )
+
+    return Response(
+        {
+            "count": memberships.count(),
+            "results": serializer.data,
+        }
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_switch_workspace_view(request):
+    """Validate and return the selected union workspace membership."""
+
+    workspace_value = request.data.get("workspace") or request.data.get(
+        "workspace_slug"
+    )
+
+    if not workspace_value:
+        return Response(
+            {"detail": "workspace is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    membership = _get_union_membership_for_request(request.user, workspace_value)
+
+    if membership is None:
+        return Response(
+            {"detail": "You do not have access to this union workspace."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    serializer = UnionWorkspaceMembershipSerializer(
+        membership,
+        context={"request": request},
+    )
+
+    return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_workspace_dashboard_view(request):
+    """Workspace-aware dashboard summary for the Union Admin portal."""
+
+    workspace_value = request.query_params.get("workspace")
+    membership = _get_union_membership_for_request(request.user, workspace_value)
+
+    if membership is None:
+        return Response(
+            {"detail": "No active union workspace access found for this user."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    workspace = membership.workspace
+    related_union = workspace.related_union
+
+    if related_union:
+        leagues = League.objects.filter(union=related_union)
+        competitions = Competition.objects.filter(league__union=related_union)
+        matches = Match.objects.filter(competition__league__union=related_union)
+    else:
+        leagues = League.objects.none()
+        competitions = Competition.objects.none()
+        matches = Match.objects.none()
+
+    return Response(
+        {
+            "workspace": UnionWorkspaceMembershipSerializer(
+                membership,
+                context={"request": request},
+            ).data,
+            "summary": {
+                "leagues": leagues.count(),
+                "active_competitions": competitions.filter(is_active=True).count(),
+                "member_clubs": 0,
+                "pending_approvals": 0,
+                "referees": 0,
+                "upcoming_matches": matches.filter(
+                    status=Match.Status.SCHEDULED
+                ).count(),
+            },
+            "permissions": membership.effective_permissions,
+        }
+    )
+
+
+def _get_union_workspace_by_value(workspace_value):
+    if not workspace_value:
+        return None
+
+    return (
+        UnionWorkspace.objects.filter(
+            models.Q(slug=workspace_value)
+            | models.Q(acronym__iexact=workspace_value)
+            | models.Q(name__iexact=workspace_value)
+        )
+        .select_related("related_union")
+        .first()
+    )
+
+
+def _is_super_admin_user(user):
+    return bool(
+        user
+        and getattr(user, "is_authenticated", False)
+        and (
+            getattr(user, "is_superuser", False)
+            or getattr(user, "role", None) == User.Role.SUPER_ADMIN
+        )
+    )
+
+
+def _get_membership_for_workspace(user, workspace):
+    if not user or not getattr(user, "is_authenticated", False) or workspace is None:
+        return None
+
+    return (
+        UnionWorkspaceMembership.objects.filter(
+            user=user,
+            workspace=workspace,
+            is_active=True,
+        )
+        .select_related("workspace")
+        .first()
+    )
+
+
+def _can_manage_workspace_users(user, workspace):
+    if _is_super_admin_user(user):
+        return True
+
+    membership = _get_membership_for_workspace(user, workspace)
+
+    if membership is None:
+        return False
+
+    return "union.users.manage" in membership.effective_permissions
+
+
+def _validate_workspace_role(role):
+    valid_roles = {choice[0] for choice in UnionWorkspaceMembership.Role.choices}
+
+    if role not in valid_roles:
+        return False
+
+    return True
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_workspace_users_view(request):
+    """List workspace users or create/attach a user to a union workspace."""
+
+    workspace_value = (
+        request.query_params.get("workspace")
+        if request.method == "GET"
+        else request.data.get("workspace")
+    )
+
+    workspace = _get_union_workspace_by_value(workspace_value)
+
+    if workspace is None:
+        return Response(
+            {"detail": "A valid workspace slug, acronym or name is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not _can_manage_workspace_users(request.user, workspace):
+        return Response(
+            {
+                "detail": "You do not have permission to manage users for this workspace."
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if request.method == "GET":
+        memberships = (
+            UnionWorkspaceMembership.objects.filter(
+                workspace=workspace,
+                is_active=True,
+            )
+            .select_related("user", "workspace")
+            .order_by("role", "user__email")
+        )
+
+        serializer = UnionWorkspaceUserSerializer(
+            memberships,
+            many=True,
+            context={"request": request},
+        )
+
+        return Response(
+            {
+                "count": memberships.count(),
+                "workspace": workspace.slug,
+                "results": serializer.data,
+            }
+        )
+
+    email = (request.data.get("email") or "").strip().lower()
+    first_name = (request.data.get("first_name") or "").strip()
+    last_name = (request.data.get("last_name") or "").strip()
+    phone_number = (request.data.get("phone_number") or "").strip() or None
+    role = request.data.get("role") or UnionWorkspaceMembership.Role.VIEWER
+    password = request.data.get("password")
+
+    if not email:
+        return Response(
+            {"detail": "email is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not _validate_workspace_role(role):
+        return Response(
+            {"detail": "Invalid workspace role."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if role == UnionWorkspaceMembership.Role.OWNER and not _is_super_admin_user(
+        request.user
+    ):
+        return Response(
+            {"detail": "Only a Super Admin can create or assign a workspace owner."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    user = User.objects.filter(email__iexact=email).first()
+    created_user = False
+    generated_password = None
+
+    if user is None:
+        import secrets
+
+        generated_password = password or f"LeagueOS-{secrets.token_urlsafe(8)}A1!"
+        create_kwargs = {
+            "email": email,
+            "password": generated_password,
+            "first_name": first_name or "Union",
+            "last_name": last_name or "User",
+            "role": User.Role.FAN,
+            "is_email_verified": True,
+        }
+
+        if phone_number:
+            create_kwargs["phone_number"] = phone_number
+
+        user = User.objects.create_user(**create_kwargs)
+        created_user = True
+    else:
+        update_fields = []
+
+        if first_name and not user.first_name:
+            user.first_name = first_name
+            update_fields.append("first_name")
+
+        if last_name and not user.last_name:
+            user.last_name = last_name
+            update_fields.append("last_name")
+
+        if phone_number and not user.phone_number:
+            user.phone_number = phone_number
+            update_fields.append("phone_number")
+
+        if update_fields:
+            user.save(update_fields=update_fields)
+
+    membership, created_membership = UnionWorkspaceMembership.objects.update_or_create(
+        user=user,
+        workspace=workspace,
+        defaults={
+            "role": role,
+            "is_active": True,
+            "invited_by": request.user,
+        },
+    )
+
+    serializer = UnionWorkspaceUserSerializer(
+        membership,
+        context={"request": request},
+    )
+
+    response_data = {
+        "created_user": created_user,
+        "created_membership": created_membership,
+        "workspace": workspace.slug,
+        "membership": serializer.data,
+    }
+
+    if created_user and generated_password:
+        response_data["temporary_password"] = generated_password
+
+    return Response(response_data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_transfer_owner_view(request):
+    """Transfer workspace ownership. This is intentionally Super Admin only."""
+
+    if not _is_super_admin_user(request.user):
+        return Response(
+            {"detail": "Only a Super Admin can transfer workspace ownership."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    workspace_value = request.data.get("workspace")
+    new_owner_email = (request.data.get("new_owner_email") or "").strip().lower()
+    old_owner_new_role = (
+        request.data.get("old_owner_new_role")
+        or UnionWorkspaceMembership.Role.UNION_ADMIN
+    )
+
+    workspace = _get_union_workspace_by_value(workspace_value)
+
+    if workspace is None:
+        return Response(
+            {"detail": "A valid workspace slug, acronym or name is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not new_owner_email:
+        return Response(
+            {"detail": "new_owner_email is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not _validate_workspace_role(old_owner_new_role):
+        return Response(
+            {"detail": "Invalid old owner role."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if old_owner_new_role == UnionWorkspaceMembership.Role.OWNER:
+        return Response(
+            {"detail": "old_owner_new_role cannot also be OWNER."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    new_owner = User.objects.filter(email__iexact=new_owner_email).first()
+
+    if new_owner is None:
+        return Response(
+            {
+                "detail": "New owner must already have a user account. Create the user first."
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    with transaction.atomic():
+        UnionWorkspaceMembership.objects.filter(
+            workspace=workspace,
+            role=UnionWorkspaceMembership.Role.OWNER,
+            is_active=True,
+        ).exclude(user=new_owner).update(role=old_owner_new_role)
+
+        new_owner_membership, _ = UnionWorkspaceMembership.objects.update_or_create(
+            user=new_owner,
+            workspace=workspace,
+            defaults={
+                "role": UnionWorkspaceMembership.Role.OWNER,
+                "is_active": True,
+                "invited_by": request.user,
+            },
+        )
+
+    serializer = UnionWorkspaceUserSerializer(
+        new_owner_membership,
+        context={"request": request},
+    )
+
+    return Response(
+        {
+            "detail": "Workspace ownership transferred successfully.",
+            "workspace": workspace.slug,
+            "new_owner": serializer.data,
         }
     )
