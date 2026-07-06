@@ -7,6 +7,7 @@ Run with: python backend/scripts/populate_superadmin_data.py
 import os
 import sys
 import django
+from decimal import Decimal
 from datetime import timedelta
 from django.utils import timezone
 from django.core.management import call_command  # noqa: E402
@@ -310,7 +311,7 @@ def populate_governance():
                 if created:
                     print(f"      + {rule.title} → {league.name}")
     else:
-        print("      ⚠ No leagues found, skipping league standards")
+        print("      [WARN] No leagues found, skipping league standards")
 
 
 def populate_rbac():
@@ -454,17 +455,21 @@ def populate_monitoring(super_admin):
     print("      Creating anomalies...")
     anomalies_data = [
         {
-            "anomaly_type": Anomaly.AnomalyType.UNUSUAL_ACTIVITY,
+            "anomaly_type": "UNUSUAL_ACTIVITY",
             "severity": Anomaly.Severity.MEDIUM,
             "status": Anomaly.Status.OPEN,
+            "title": "Multiple failed login attempts",
             "description": "Multiple failed login attempts detected",
+            "detection_source": "auth_pipeline",
             "affected_user": super_admin,
         },
         {
-            "anomaly_type": Anomaly.AnomalyType.PAYMENT_ANOMALY,
+            "anomaly_type": "PAYMENT_ANOMALY",
             "severity": Anomaly.Severity.HIGH,
             "status": Anomaly.Status.INVESTIGATING,
+            "title": "Unusual payment activity",
             "description": "Unusual payment pattern detected",
+            "detection_source": "payments",
             "affected_user": super_admin,
         },
     ]
@@ -481,14 +486,14 @@ def populate_monitoring(super_admin):
     print("      Creating security events...")
     security_events_data = [
         {
-            "event_type": SecurityEvent.EventType.UNAUTHORIZED_ACCESS,
+            "event_type": SecurityEvent.EventType.PERMISSION_DENIED,
             "severity": SecurityEvent.Severity.HIGH,
             "is_resolved": False,
             "description": "Unauthorized access attempt to admin panel",
         },
         {
-            "event_type": SecurityEvent.EventType.SUSPICIOUS_LOGIN,
-            "severity": SecurityEvent.Severity.MEDIUM,
+            "event_type": SecurityEvent.EventType.SUSPICIOUS_ACTIVITY,
+            "severity": SecurityEvent.Severity.WARNING,
             "is_resolved": True,
             "description": "Login from new device detected",
             "resolved_by": super_admin,
@@ -509,22 +514,24 @@ def populate_monitoring(super_admin):
     print("      Creating compliance trails...")
     compliance_data = [
         {
-            "category": ComplianceTrail.Category.DATA_ACCESS,
-            "action": "User data exported",
-            "status": ComplianceTrail.Status.COMPLETED,
+            "category": ComplianceTrail.Category.DATA_PROTECTION,
+            "title": "User data export",
             "description": "Bulk user data export for audit",
+            "is_compliant": True,
+            "corrective_action": "Review export scope",
         },
         {
-            "category": ComplianceTrail.Category.PERMISSION_CHANGE,
-            "action": "Role assignment updated",
-            "status": ComplianceTrail.Status.COMPLETED,
+            "category": ComplianceTrail.Category.SPORTS_GOVERNANCE,
+            "title": "Role assignment updated",
             "description": "Updated league admin permissions",
+            "is_compliant": True,
+            "corrective_action": "Confirm least-privilege retention",
         },
     ]
     for trail_data in compliance_data:
         trail, created = ComplianceTrail.objects.get_or_create(
             category=trail_data["category"],
-            action=trail_data["action"],
+            title=trail_data["title"],
             defaults=trail_data,
         )
         if created:
@@ -534,18 +541,21 @@ def populate_monitoring(super_admin):
     print("      Creating transaction reconciliations...")
     reconciliations_data = [
         {
-            "status": TransactionReconciliation.Status.VERIFIED,
+            "transaction_date": timezone.now().date(),
+            "source_system": "finance",
+            "external_reference": "EXT-1001",
+            "internal_reference": "INT-1001",
+            "amount": Decimal("150000.00"),
+            "currency": "UGX",
+            "status": TransactionReconciliation.Status.MATCHED,
             "is_verified": True,
             "verified_by": super_admin,
-            "verified_at": timezone.now() - timedelta(days=1),
-            "total_amount": 150000.00,
-            "transaction_count": 45,
             "notes": "Monthly reconciliation complete",
         },
     ]
     for recon_data in reconciliations_data:
         recon, created = TransactionReconciliation.objects.get_or_create(
-            total_amount=recon_data["total_amount"],
+            external_reference=recon_data["external_reference"],
             defaults=recon_data,
         )
         if created:
@@ -572,18 +582,18 @@ def main():
     # Run migrations
     print("\n[1/4] Running migrations...")
     call_command("migrate", verbosity=0)
-    print("✓ Migrations complete")
+    print("[OK] Migrations complete")
 
     # Create super admin
     print("\n[2/4] Creating super admin user...")
     super_admin = create_super_admin()
-    print(f"✓ Super admin ready: {super_admin.email}")
+    print(f"[OK] Super admin ready: {super_admin.email}")
 
     # Clear if requested
     if args.clear:
         print("\n[3/4] Clearing existing data...")
         clear_data()
-        print("✓ Data cleared")
+        print("[OK] Data cleared")
     else:
         print("\n[3/4] Skipping clear (use --clear to clear data)")
 
@@ -616,7 +626,7 @@ def main():
     print(f"  Compliance Trails: {ComplianceTrail.objects.count()}")
     print(f"  Transaction Reconciliations: {TransactionReconciliation.objects.count()}")
 
-    print("\n✓ Superadmin data populated successfully!")
+    print("\n[OK] Superadmin data populated successfully!")
     print("\nYou can now access superadmin pages with test data.")
     print(f"Super admin credentials: {super_admin.email} / SuperAdmin123!")
 
