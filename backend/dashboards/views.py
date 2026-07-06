@@ -677,10 +677,25 @@ def union_admin_workspace_dashboard_view(request):
         leagues = League.objects.filter(union=related_union)
         competitions = Competition.objects.filter(league__union=related_union)
         matches = Match.objects.filter(competition__league__union=related_union)
+
+        member_clubs = (
+            Club.objects.filter(
+                models.Q(home_matches__competition__league__union=related_union)
+                | models.Q(away_matches__competition__league__union=related_union)
+                | models.Q(standings__competition__league__union=related_union)
+            )
+            .distinct()
+            .count()
+        )
+
+        if member_clubs == 0 and workspace.sport:
+            sport_value = workspace.sport.strip().upper().replace(" ", "_")
+            member_clubs = Club.objects.filter(sport=sport_value).count()
     else:
         leagues = League.objects.none()
         competitions = Competition.objects.none()
         matches = Match.objects.none()
+        member_clubs = 0
 
     return Response(
         {
@@ -691,7 +706,7 @@ def union_admin_workspace_dashboard_view(request):
             "summary": {
                 "leagues": leagues.count(),
                 "active_competitions": competitions.filter(is_active=True).count(),
-                "member_clubs": 0,
+                "member_clubs": member_clubs,
                 "pending_approvals": 0,
                 "referees": 0,
                 "upcoming_matches": matches.filter(
