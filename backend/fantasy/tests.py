@@ -226,6 +226,34 @@ class FantasyFanAPITests(FantasyTestMixin, APITestCase):
             response.data["results"][0]["sport"], FantasyCompetition.Sport.RUGBY
         )
 
+    def test_fantasy_overview_endpoint_returns_hub_payload(self):
+        FantasyLeague.objects.create(
+            fantasy_competition=self.fantasy_competition,
+            name="Nile Special Public Fantasy",
+            league_type=FantasyLeague.LeagueType.PUBLIC,
+            created_by=self.league_admin,
+        )
+        FantasyTeam.objects.create(
+            owner=self.fan,
+            fantasy_competition=self.fantasy_competition,
+            name="Kobs Warriors Fantasy XV",
+            total_points=Decimal("44.00"),
+            current_rank=1,
+        )
+
+        response = self.client.get("/api/fantasy/overview/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["summary"]["competitions_count"], 1)
+        self.assertEqual(
+            response.data["competitions"][0]["name"], self.fantasy_competition.name
+        )
+        self.assertEqual(len(response.data["public_leagues"]), 1)
+        self.assertGreaterEqual(len(response.data["featured_players"]), 1)
+        self.assertEqual(
+            response.data["leaderboard"][0]["name"], "Kobs Warriors Fantasy XV"
+        )
+
     def test_competition_detail_endpoint_returns_gameweeks_and_leagues(self):
         FantasyLeague.objects.create(
             fantasy_competition=self.fantasy_competition,

@@ -4,6 +4,11 @@ from . import views
 
 urlpatterns = [
     path(
+        "overview/",
+        views.fantasy_overview_view,
+        name="fantasy-overview",
+    ),
+    path(
         "competitions/",
         views.fantasy_competition_list_view,
         name="fantasy-competition-list",
