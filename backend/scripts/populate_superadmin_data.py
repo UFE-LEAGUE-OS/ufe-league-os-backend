@@ -379,11 +379,13 @@ def populate_rbac():
     bundles_data = [
         {
             "name": "Super Admin Bundle",
+            "slug": "super-admin-bundle",
             "description": "Full system access",
             "permissions": list(Permission.objects.all()),
         },
         {
             "name": "League Admin Bundle",
+            "slug": "league-admin-bundle",
             "description": "League management access",
             "permissions": list(
                 Permission.objects.filter(
@@ -394,8 +396,11 @@ def populate_rbac():
     ]
     for bundle_data in bundles_data:
         bundle, created = PermissionBundle.objects.get_or_create(
-            name=bundle_data["name"],
-            defaults={"description": bundle_data["description"]},
+            slug=bundle_data["slug"],
+            defaults={
+                "name": bundle_data["name"],
+                "description": bundle_data["description"],
+            },
         )
         if created:
             bundle.permissions.set(bundle_data["permissions"])
@@ -406,11 +411,13 @@ def populate_rbac():
     templates_data = [
         {
             "name": "Super Administrator",
+            "slug": "super-administrator",
             "description": "Full system administrator",
             "bundles": list(PermissionBundle.objects.all()),
         },
         {
             "name": "League Administrator",
+            "slug": "league-administrator",
             "description": "League-level administrator",
             "bundles": list(
                 PermissionBundle.objects.filter(name="League Admin Bundle")
@@ -419,8 +426,11 @@ def populate_rbac():
     ]
     for template_data in templates_data:
         template, created = RoleTemplate.objects.get_or_create(
-            name=template_data["name"],
-            defaults={"description": template_data["description"]},
+            slug=template_data["slug"],
+            defaults={
+                "name": template_data["name"],
+                "description": template_data["description"],
+            },
         )
         if created:
             template.bundles.set(template_data["bundles"])
