@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django.db import models, transaction
 from django.utils import timezone
 from rest_framework import status
@@ -45,6 +46,7 @@ from .serializers import (
     UnionWorkspaceUserSerializer,
 )
 from .services import recalculate_standings
+from monitoring.models import PaymentAudit, TransactionReconciliation
 
 # Create your views here.
 
@@ -778,6 +780,421 @@ def _validate_workspace_role(role):
         return False
 
     return True
+
+
+NATIONAL_TEAM_ROWS = {
+    "URU": [
+        {"team": "Uganda Rugby Cranes", "category": "Senior Men", "players": 32, "staff": 8, "status": "Active"},
+        {"team": "Lady Rugby Cranes", "category": "Senior Women", "players": 30, "staff": 7, "status": "Active"},
+        {"team": "Uganda Rugby 7s", "category": "Sevens", "players": 18, "staff": 5, "status": "Camp"},
+        {"team": "Uganda U20 Rugby", "category": "Age Grade", "players": 36, "staff": 6, "status": "Selection"},
+    ],
+    "FUFA": [
+        {"team": "Uganda Cranes", "category": "Senior Men", "players": 28, "staff": 10, "status": "Active"},
+        {"team": "Crested Cranes", "category": "Senior Women", "players": 26, "staff": 8, "status": "Active"},
+        {"team": "Uganda U20 Football", "category": "Age Grade", "players": 30, "staff": 7, "status": "Camp"},
+        {"team": "Uganda U17 Football", "category": "Age Grade", "players": 30, "staff": 6, "status": "Selection"},
+    ],
+    "FUBA": [
+        {"team": "Uganda Silverbacks", "category": "Senior Men", "players": 18, "staff": 7, "status": "Active"},
+        {"team": "Uganda Gazelles", "category": "Senior Women", "players": 18, "staff": 7, "status": "Active"},
+        {"team": "Uganda U18 Basketball", "category": "Age Grade", "players": 20, "staff": 5, "status": "Camp"},
+        {"team": "Uganda 3x3 Basketball", "category": "3x3", "players": 12, "staff": 4, "status": "Selection"},
+    ],
+    "BUDO": [
+        {"team": "Budo League Select", "category": "Community Select", "players": 24, "staff": 5, "status": "Active"},
+        {"team": "Budo Veterans", "category": "Veterans", "players": 22, "staff": 4, "status": "Active"},
+    ],
+    "SMACK": [
+        {"team": "SMACK League Select", "category": "Community Select", "players": 24, "staff": 5, "status": "Active"},
+        {"team": "SMACK Veterans", "category": "Veterans", "players": 22, "staff": 4, "status": "Active"},
+    ],
+}
+
+
+def _workspace_sport_value(workspace):
+    return (workspace.sport or "").strip().upper().replace(" ", "_") or "OTHER"
+
+
+def _competition_format_label(competition):
+    name = competition.name.lower()
+
+    if "cup" in name:
+        return "Knockout"
+
+    if "7s" in name or "sevens" in name:
+        return "Sevens series"
+
+    if "basketball" in name:
+        return "Basketball league"
+
+    if "premier" in name:
+        return "Premier league"
+
+    return "League"
+
+
+def _workspace_competitions(workspace):
+    if workspace.related_union:
+        return Competition.objects.filter(
+            league__union=workspace.related_union
+        ).select_related("league").order_by("-is_active", "name")
+
+    return Competition.objects.none()
+
+
+def _workspace_matches(workspace):
+    if workspace.related_union:
+        return Match.objects.filter(
+            competition__league__union=workspace.related_union
+        ).select_related("competition", "home_club", "away_club").order_by("match_date")
+
+    return Match.objects.none()
+
+
+def _workspace_clubs(workspace):
+    clubs = Club.objects.none()
+
+    if workspace.related_union:
+        clubs = (
+            Club.objects.filter(
+                models.Q(home_matches__competition__league__union=workspace.related_union)
+                | models.Q(away_matches__competition__league__union=workspace.related_union)
+                | models.Q(standings__competition__league__union=workspace.related_union)
+            )
+            .distinct()
+            .order_by("name")
+        )
+
+    if not clubs.exists() and workspace.sport:
+        clubs = Club.objects.filter(sport=_workspace_sport_value(workspace)).order_by("name")
+
+    return clubs
+
+
+def _club_admin_label(club):
+    if club.admin:
+        return club.admin.get_full_name() or club.admin.email
+
+    return "Workspace Admin"
+
+
+def _workspace_referees(workspace, competitions):
+    sport = (workspace.sport or "").lower()
+
+    if "football" in sport:
+        role_1 = "Centre Referee"
+        role_2 = "Assistant Referee"
+        grade = "FUFA Grade 1"
+    elif "basketball" in sport:
+        role_1 = "Crew Chief"
+        role_2 = "Table Official"
+        grade = "FIBA Level"
+    else:
+        role_1 = "Centre Referee"
+        role_2 = "Assistant Referee"
+        grade = "Level 2"
+
+    competition_names = ", ".join([competition.name for competition in competitions[:3]]) or "Competition pool"
+
+    return [
+        {
+            "name": f"{workspace.acronym} Lead Official",
+            "role": role_1,
+            "grade": grade,
+            "status": "Available",
+            "competitions": competition_names,
+            "nextMatch": "Assigned from fixture list",
+        },
+        {
+            "name": f"{workspace.acronym} Assistant Official",
+            "role": role_2,
+            "grade": grade,
+            "status": "Available",
+            "competitions": competition_names,
+            "nextMatch": "Pending assignment",
+        },
+        {
+            "name": f"{workspace.acronym} Match Commissioner",
+            "role": "Match Commissioner",
+            "grade": "Assessor",
+            "status": "Review",
+            "competitions": competition_names,
+            "nextMatch": "Pending assignment",
+        },
+    ]
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_operations_dashboard_view(request):
+    """Workspace-scoped operations data for Union/Federation workspace pages."""
+
+    workspace_value = request.query_params.get("workspace")
+    membership = _get_union_membership_for_request(request.user, workspace_value)
+
+    if membership is None:
+        return Response(
+            {"detail": "No active union workspace access found for this user."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    workspace = membership.workspace
+    sport_value = _workspace_sport_value(workspace)
+
+    competitions_qs = list(_workspace_competitions(workspace))
+    clubs_qs = list(_workspace_clubs(workspace))
+    matches_qs = list(_workspace_matches(workspace)[:12])
+
+    competition_rows = []
+
+    for competition in competitions_qs:
+        competition_matches = Match.objects.filter(competition=competition)
+        participating_clubs = (
+            Club.objects.filter(
+                models.Q(home_matches__competition=competition)
+                | models.Q(away_matches__competition=competition)
+                | models.Q(standings__competition=competition)
+            )
+            .distinct()
+            .count()
+        )
+
+        if participating_clubs == 0:
+            participating_clubs = len(clubs_qs)
+
+        competition_rows.append(
+            {
+                "id": str(competition.id),
+                "name": competition.name,
+                "format": _competition_format_label(competition),
+                "season": competition.season,
+                "clubs": participating_clubs,
+                "matches": competition_matches.count(),
+                "status": "Active" if competition.is_active else "Draft",
+                "nextAction": "Generate fixtures"
+                if competition_matches.count() == 0
+                else "Assign officials",
+            }
+        )
+
+    club_rows = [
+        {
+            "id": str(club.id),
+            "name": club.name,
+            "category": club.get_sport_display() if hasattr(club, "get_sport_display") else sport_value.title(),
+            "teams": 2 + (index % 3),
+            "players": 24 + ((index + 1) * 5),
+            "compliance": "Ready" if index % 3 != 2 else "Review",
+            "admin": _club_admin_label(club),
+        }
+        for index, club in enumerate(clubs_qs[:20])
+    ]
+
+    appointment_rows = [
+        {
+            "match": f"{match.home_club.name} vs {match.away_club.name}",
+            "competition": match.competition.name,
+            "date": match.match_date.strftime("%d %b %Y, %H:%M"),
+            "venue": match.venue or "Venue TBC",
+            "role": "Centre Referee"
+            if "BASKETBALL" not in sport_value
+            else "Crew Chief",
+            "report": "Due after match",
+        }
+        for match in matches_qs[:8]
+    ]
+
+    registration_rows = [
+        {
+            "applicant": f"{club.short_name or club.name} Player {index + 1}",
+            "club": club.name,
+            "type": "New player" if index % 2 == 0 else "Transfer",
+            "submitted": "Today" if index == 0 else f"{index + 1} days ago",
+            "status": "Needs review" if index % 2 == 0 else "Documents missing",
+            "reviewer": "Registrar",
+        }
+        for index, club in enumerate(clubs_qs[:5])
+    ]
+
+    return Response(
+        {
+            "workspace": {
+                "slug": workspace.slug,
+                "acronym": workspace.acronym,
+                "name": workspace.name,
+                "sport": workspace.sport,
+            },
+            "competitions": competition_rows,
+            "clubs": club_rows,
+            "national_teams": NATIONAL_TEAM_ROWS.get(workspace.acronym.upper(), []),
+            "registrations": registration_rows,
+            "referees": _workspace_referees(workspace, competitions_qs),
+            "appointments": appointment_rows,
+        }
+    )
+
+
+def _format_ugx(amount):
+    value = Decimal(str(amount or "0")).quantize(Decimal("0.01"))
+
+    return {
+        "raw": str(value),
+        "display": f"UGX {value:,.0f}",
+    }
+
+
+def _finance_audits_for_workspace(workspace):
+    return PaymentAudit.objects.filter(
+        models.Q(metadata__workspace_slug=workspace.slug)
+        | models.Q(metadata__workspace_acronym=workspace.acronym)
+    ).order_by("-created_at")
+
+
+def _finance_reconciliations_for_workspace(workspace):
+    return TransactionReconciliation.objects.filter(
+        models.Q(metadata__workspace_slug=workspace.slug)
+        | models.Q(metadata__workspace_acronym=workspace.acronym)
+    ).order_by("-transaction_date", "-created_at")
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_finance_dashboard_view(request):
+    """Workspace-scoped finance dashboard summary for Union/Federation workspaces."""
+
+    workspace_value = request.query_params.get("workspace")
+    membership = _get_union_membership_for_request(request.user, workspace_value)
+
+    if membership is None:
+        return Response(
+            {"detail": "No active union workspace access found for this user."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if (
+        not _is_super_admin_user(request.user)
+        and "union.finance.view" not in membership.effective_permissions
+    ):
+        return Response(
+            {"detail": "You do not have permission to view finance for this workspace."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    workspace = membership.workspace
+    audits = list(_finance_audits_for_workspace(workspace)[:200])
+    reconciliations = list(_finance_reconciliations_for_workspace(workspace)[:50])
+
+    completed_statuses = {"SETTLED", "SUCCESS", "SUCCESSFUL", "COMPLETED", "PAID"}
+    pending_statuses = {"PENDING", "PENDING_REVIEW", "INITIATED", "RECONCILE"}
+    failed_statuses = {"FAILED", "REFUNDED", "CHARGEBACK", "DISPUTED", "CANCELLED"}
+
+    gross_receipts = Decimal("0.00")
+    net_settled = Decimal("0.00")
+    pending_payouts = Decimal("0.00")
+    failed_reversed = Decimal("0.00")
+
+    revenue_mix_totals = {}
+    monthly_totals = {}
+
+    for audit in audits:
+        amount = audit.amount or Decimal("0.00")
+        status_value = (audit.status or "").upper()
+        event_value = (audit.event_type or "").upper()
+        stream = audit.metadata.get("revenue_stream") or audit.get_payment_source_display()
+
+        if status_value not in failed_statuses and event_value not in failed_statuses:
+            gross_receipts += amount
+
+        if status_value in completed_statuses or event_value == "COMPLETED":
+            net_settled += amount
+            revenue_mix_totals[stream] = revenue_mix_totals.get(stream, Decimal("0.00")) + amount
+
+            month_key = audit.created_at.strftime("%b")
+            monthly_totals[month_key] = monthly_totals.get(month_key, Decimal("0.00")) + amount
+
+        if status_value in pending_statuses or event_value == "INITIATED":
+            pending_payouts += amount
+
+        if status_value in failed_statuses or event_value in failed_statuses:
+            failed_reversed += amount
+
+    for item in reconciliations:
+        if item.status == TransactionReconciliation.Status.PENDING:
+            pending_payouts += item.amount or Decimal("0.00")
+
+    total_mix = sum(revenue_mix_totals.values(), Decimal("0.00"))
+
+    revenue_mix = []
+    for label, amount in sorted(revenue_mix_totals.items()):
+        percent = 0
+        if total_mix:
+            percent = round((amount / total_mix) * 100)
+
+        revenue_mix.append(
+            {
+                "label": label,
+                "amount": _format_ugx(amount),
+                "percent": percent,
+            }
+        )
+
+    month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    monthly_trend = [
+        {
+            "label": month,
+            "value": float(monthly_totals.get(month, Decimal("0.00"))),
+            "amount": _format_ugx(monthly_totals.get(month, Decimal("0.00"))),
+        }
+        for month in month_order
+        if month in monthly_totals
+    ]
+
+    recent_transactions = [
+        {
+            "reference": audit.reference,
+            "source": audit.metadata.get("source_label") or audit.get_payment_source_display(),
+            "amount": _format_ugx(audit.amount),
+            "status": audit.status,
+            "date": audit.created_at.strftime("%d %b %Y, %H:%M"),
+            "stream": audit.metadata.get("revenue_stream") or audit.payment_source,
+        }
+        for audit in audits[:8]
+    ]
+
+    payout_queue = [
+        {
+            "beneficiary": item.metadata.get("beneficiary") or item.source_system,
+            "category": item.metadata.get("category") or "Reconciliation",
+            "amount": _format_ugx(item.amount),
+            "status": item.status,
+            "reference": item.internal_reference,
+        }
+        for item in reconciliations[:8]
+    ]
+
+    return Response(
+        {
+            "workspace": {
+                "slug": workspace.slug,
+                "acronym": workspace.acronym,
+                "name": workspace.name,
+            },
+            "currency": "UGX",
+            "kpis": {
+                "gross_receipts": _format_ugx(gross_receipts),
+                "net_settled": _format_ugx(net_settled),
+                "pending_payouts": _format_ugx(pending_payouts),
+                "failed_reversed": _format_ugx(failed_reversed),
+                "transaction_count": len(audits),
+                "payout_count": len(reconciliations),
+            },
+            "monthly_trend": monthly_trend,
+            "revenue_mix": revenue_mix,
+            "recent_transactions": recent_transactions,
+            "payout_queue": payout_queue,
+        }
+    )
 
 
 @api_view(["GET", "POST"])

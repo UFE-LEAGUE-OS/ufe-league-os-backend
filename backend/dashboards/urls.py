@@ -30,9 +30,19 @@ urlpatterns = [
         name="union-admin-workspace-dashboard",
     ),
     path(
+        "union-admin/operations/",
+        views.union_admin_operations_dashboard_view,
+        name="union-admin-operations-dashboard",
+    ),
+    path(
         "union-admin/workspace-users/",
         views.union_admin_workspace_users_view,
         name="union-admin-workspace-users",
+    ),
+    path(
+        "union-admin/finance/",
+        views.union_admin_finance_dashboard_view,
+        name="union-admin-finance-dashboard",
     ),
     path(
         "union-admin/transfer-owner/",
