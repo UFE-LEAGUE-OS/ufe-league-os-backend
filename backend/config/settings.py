@@ -72,6 +72,7 @@ INSTALLED_APPS = [
     "fantasy",
     "engagements",
     "monitoring",
+    "platform_admin",
     "rbac.apps.RbacConfig",
     "analytics.apps.AnalyticsConfig",
 ]
