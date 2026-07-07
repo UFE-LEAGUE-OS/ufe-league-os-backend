@@ -18,10 +18,6 @@ class AnnouncementSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_by", "created_at", "updated_at"]
 
-    def create(self, validated_data):
-        validated_data["created_by"] = self.context["request"].user
-        return super().create(validated_data)
-
 
 class FeatureFlagSerializer(serializers.ModelSerializer):
     class Meta:
@@ -37,10 +33,6 @@ class FeatureFlagSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "created_by", "created_at", "updated_at"]
-
-    def create(self, validated_data):
-        validated_data["created_by"] = self.context["request"].user
-        return super().create(validated_data)
 
 
 class BannerSerializer(serializers.ModelSerializer):
@@ -61,10 +53,6 @@ class BannerSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_by", "created_at", "updated_at"]
 
-    def create(self, validated_data):
-        validated_data["created_by"] = self.context["request"].user
-        return super().create(validated_data)
-
 
 class SystemMessageSerializer(serializers.ModelSerializer):
     class Meta:
@@ -80,7 +68,3 @@ class SystemMessageSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "created_by", "created_at", "updated_at"]
-
-    def create(self, validated_data):
-        validated_data["created_by"] = self.context["request"].user
-        return super().create(validated_data)

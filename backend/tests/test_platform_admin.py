@@ -49,7 +49,7 @@ def regular_client(regular_user):
 
 
 def test_super_admin_can_create_announcement(super_admin_client):
-    url = reverse("announcement-list-create")
+    url = reverse("announcement-list")
     response = super_admin_client.post(
         url,
         {
@@ -66,7 +66,7 @@ def test_super_admin_can_create_announcement(super_admin_client):
 
 
 def test_super_admin_can_create_banner(super_admin_client):
-    url = reverse("banner-list-create")
+    url = reverse("banner-list")
     response = super_admin_client.post(
         url,
         {
@@ -84,7 +84,7 @@ def test_super_admin_can_create_banner(super_admin_client):
 
 
 def test_super_admin_can_create_system_message(super_admin_client):
-    url = reverse("system-message-list-create")
+    url = reverse("system-message-list")
     response = super_admin_client.post(
         url,
         {
@@ -101,7 +101,7 @@ def test_super_admin_can_create_system_message(super_admin_client):
 
 
 def test_non_super_admin_cannot_create_feature_flag(regular_client):
-    url = reverse("feature-flag-list-create")
+    url = reverse("feature-flag-list")
     response = regular_client.post(
         url,
         {
