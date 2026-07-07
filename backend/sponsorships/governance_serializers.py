@@ -89,7 +89,9 @@ class SystemPlacementSerializer(serializers.ModelSerializer):
 
 class BenefitSharingPolicySerializer(serializers.ModelSerializer):
     created_by_email = serializers.EmailField(source="created_by.email", read_only=True)
-    approved_by_email = serializers.EmailField(source="approved_by.email", read_only=True)
+    approved_by_email = serializers.EmailField(
+        source="approved_by.email", read_only=True
+    )
 
     class Meta:
         model = BenefitSharingPolicy
@@ -117,7 +119,9 @@ class BenefitSharingPolicySerializer(serializers.ModelSerializer):
 
 
 class SponsorshipInventorySerializer(serializers.ModelSerializer):
-    sponsor_package_name = serializers.CharField(source="belongs_to.name", read_only=True)
+    sponsor_package_name = serializers.CharField(
+        source="belongs_to.name", read_only=True
+    )
     placement_name = serializers.CharField(source="placement.name", read_only=True)
 
     class Meta:
@@ -144,8 +148,12 @@ class SponsorshipInventorySerializer(serializers.ModelSerializer):
 
 
 class CampaignPerformanceSerializer(serializers.ModelSerializer):
-    sponsor_package_name = serializers.CharField(source="sponsor_package.name", read_only=True)
-    calculated_by_email = serializers.EmailField(source="calculated_by.email", read_only=True)
+    sponsor_package_name = serializers.CharField(
+        source="sponsor_package.name", read_only=True
+    )
+    calculated_by_email = serializers.EmailField(
+        source="calculated_by.email", read_only=True
+    )
 
     class Meta:
         model = CampaignPerformance
@@ -188,10 +196,18 @@ class SponsorshipApprovalWorkflowSerializer(serializers.ModelSerializer):
 
 
 class ComplianceAuditSerializer(serializers.ModelSerializer):
-    sponsor_account_name = serializers.CharField(source="sponsor_account.name", read_only=True)
-    sponsor_package_name = serializers.CharField(source="sponsor_package.name", read_only=True)
-    performed_by_email = serializers.EmailField(source="performed_by.email", read_only=True)
-    reviewed_by_email = serializers.EmailField(source="reviewed_by.email", read_only=True)
+    sponsor_account_name = serializers.CharField(
+        source="sponsor_account.name", read_only=True
+    )
+    sponsor_package_name = serializers.CharField(
+        source="sponsor_package.name", read_only=True
+    )
+    performed_by_email = serializers.EmailField(
+        source="performed_by.email", read_only=True
+    )
+    reviewed_by_email = serializers.EmailField(
+        source="reviewed_by.email", read_only=True
+    )
 
     class Meta:
         model = ComplianceAudit
