@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
-from .views import (
+from .governance_views import (
     FantasyScoringRuleViewSet,
     FantasyTransferRuleViewSet,
     FantasySquadRuleViewSet,
