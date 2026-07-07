@@ -908,6 +908,65 @@ NATIONAL_TEAM_ROWS = {
 }
 
 
+PLAYER_POSITIONS_BY_SPORT = {
+    "RUGBY": [
+        {
+            "group": "Forwards",
+            "positions": [
+                "Loosehead Prop",
+                "Hooker",
+                "Tighthead Prop",
+                "Lock",
+                "Flanker",
+                "Number Eight",
+            ],
+        },
+        {
+            "group": "Backs",
+            "positions": [
+                "Scrum-half",
+                "Fly-half",
+                "Centre",
+                "Wing",
+                "Fullback",
+            ],
+        },
+    ],
+    "FOOTBALL": [
+        {
+            "group": "Goalkeeping",
+            "positions": ["Goalkeeper"],
+        },
+        {
+            "group": "Defence",
+            "positions": ["Right Back", "Centre Back", "Left Back"],
+        },
+        {
+            "group": "Midfield",
+            "positions": [
+                "Defensive Midfielder",
+                "Central Midfielder",
+                "Attacking Midfielder",
+            ],
+        },
+        {
+            "group": "Attack",
+            "positions": ["Winger", "Striker"],
+        },
+    ],
+    "BASKETBALL": [
+        {
+            "group": "Backcourt",
+            "positions": ["Point Guard", "Shooting Guard"],
+        },
+        {
+            "group": "Frontcourt",
+            "positions": ["Small Forward", "Power Forward", "Center"],
+        },
+    ],
+}
+
+
 def _workspace_sport_value(workspace):
     return (workspace.sport or "").strip().upper().replace(" ", "_") or "OTHER"
 
@@ -928,6 +987,93 @@ def _competition_format_label(competition):
         return "Premier league"
 
     return "League"
+
+
+def _competition_type_label(competition):
+    name = competition.name.lower()
+
+    if "cup" in name:
+        return "Cup"
+
+    if "7s" in name or "sevens" in name or "series" in name:
+        return "Series"
+
+    if "super 8" in name or "playoffs" in name:
+        return "Tournament"
+
+    return "League"
+
+
+def _competition_phase_label(competition):
+    today = timezone.localdate()
+
+    if not competition.is_active:
+        return "Setup"
+
+    if competition.start_date and competition.start_date > today:
+        return "Pre-season"
+
+    if competition.end_date and competition.end_date < today:
+        return "Completed"
+
+    return "In season"
+
+
+def _competition_entry_window_label(competition):
+    phase = _competition_phase_label(competition)
+
+    if phase in {"Setup", "Pre-season"}:
+        return "Entries open"
+
+    if phase == "In season":
+        return "Entries closed"
+
+    return "Closed"
+
+
+def _competition_fixture_status(competition):
+    fixture_count = Match.objects.filter(competition=competition).count()
+
+    if fixture_count == 0:
+        return "Needs fixtures"
+
+    if fixture_count < 3:
+        return "Partially generated"
+
+    return "Fixtures ready"
+
+
+def _next_fixture_label(competition):
+    match = (
+        Match.objects.filter(
+            competition=competition,
+            match_date__gte=timezone.now(),
+        )
+        .select_related("home_club", "away_club")
+        .order_by("match_date")
+        .first()
+    )
+
+    if match is None:
+        return "No upcoming fixture"
+
+    return f"{match.home_club.name} vs {match.away_club.name}"
+
+
+def _competition_officials_needed(competition):
+    match_count = Match.objects.filter(
+        competition=competition,
+        match_date__gte=timezone.now(),
+    ).count()
+
+    return min(match_count, 3)
+
+
+def _competition_reports_due(competition):
+    return Match.objects.filter(
+        competition=competition,
+        status=Match.Status.COMPLETED,
+    ).count()
 
 
 def _workspace_competitions(workspace):
@@ -1078,11 +1224,19 @@ def union_admin_operations_dashboard_view(request):
             {
                 "id": str(competition.id),
                 "name": competition.name,
+                "type": _competition_type_label(competition),
                 "format": _competition_format_label(competition),
                 "season": competition.season,
                 "clubs": participating_clubs,
                 "matches": competition_matches.count(),
                 "status": "Active" if competition.is_active else "Draft",
+                "phase": _competition_phase_label(competition),
+                "entryWindow": _competition_entry_window_label(competition),
+                "registrationStatus": _competition_entry_window_label(competition),
+                "fixtureStatus": _competition_fixture_status(competition),
+                "nextFixture": _next_fixture_label(competition),
+                "officialsNeeded": _competition_officials_needed(competition),
+                "reportsDue": _competition_reports_due(competition),
                 "nextAction": (
                     "Generate fixtures"
                     if competition_matches.count() == 0
@@ -1148,6 +1302,7 @@ def union_admin_operations_dashboard_view(request):
             "registrations": registration_rows,
             "referees": _workspace_referees(workspace, competitions_qs),
             "appointments": appointment_rows,
+            "player_positions": PLAYER_POSITIONS_BY_SPORT.get(sport_value, []),
         }
     )
 
