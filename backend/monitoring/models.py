@@ -46,9 +46,7 @@ class ApprovalLog(models.Model):
         verbose_name_plural = "Approval Logs"
 
     def __str__(self):
-        return (
-            f"{self.category} {self.action} by {self.actor} at {self.created_at}"
-        )
+        return f"{self.category} {self.action} by {self.actor} at {self.created_at}"
 
 
 class ChargebackRefund(models.Model):
@@ -74,8 +72,12 @@ class ChargebackRefund(models.Model):
     payment_object = GenericForeignKey("payment_content_type", "payment_object_id")
 
     dispute_type = models.CharField(max_length=20, choices=DisputeType.choices)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
-    reason = models.TextField(help_text="Reason provided by the customer for the dispute.")
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.OPEN
+    )
+    reason = models.TextField(
+        help_text="Reason provided by the customer for the dispute."
+    )
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     currency = models.CharField(max_length=3)
 
