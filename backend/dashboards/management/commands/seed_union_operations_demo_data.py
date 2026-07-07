@@ -191,12 +191,10 @@ class Command(BaseCommand):
                 update_fields=["related_union", "sport", "status", "updated_at"]
             )
 
-            # Remove previously generated demo matches for this workspace before rebuilding.
-            # This prevents old matches from keeping links to clubs that were later renamed/reused.
-            for league_data in data["leagues"]:
-                for _comp_name, comp_slug, _season in league_data["competitions"]:
-                    Match.objects.filter(competition__slug=comp_slug).delete()
-
+            # Do not delete existing matches here.
+            # Some deployed/staging matches may already be linked to ticketing records
+            # through protected foreign keys. This command only updates or creates
+            # deterministic demo records so it can safely run against Neon/Render data.
             sport_value = SPORT_MAP[data["sport"]]
             clubs = []
 
