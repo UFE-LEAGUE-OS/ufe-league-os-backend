@@ -6,21 +6,13 @@ from accounts.permissions import IsSuperAdmin
 from .models import (
     Announcement,
     Banner,
-    Broadcast,
     FeatureFlag,
-    HelpCenterArticle,
-    NotificationTemplate,
-    PublicContent,
     SystemMessage,
 )
 from .serializers import (
     AnnouncementSerializer,
     BannerSerializer,
-    BroadcastSerializer,
     FeatureFlagSerializer,
-    HelpCenterArticleSerializer,
-    NotificationTemplateSerializer,
-    PublicContentSerializer,
     SystemMessageSerializer,
 )
 
@@ -28,10 +20,13 @@ from .serializers import (
 @api_view(["GET"])
 @permission_classes([permissions.AllowAny])
 def public_platform_content_view(request):
-    announcements = Announcement.objects.filter(is_active=True).order_by("-created_at")[:10]
+    announcements = Announcement.objects.filter(is_active=True).order_by("-created_at")[
+        :10
+    ]
     banners = Banner.objects.filter(is_active=True).order_by("-created_at")[:5]
-    system_messages = SystemMessage.objects.filter(is_active=True).order_by("-created_at")[:10]
-    public_content = PublicContent.objects.filter(is_published=True).order_by("title")[:20]
+    system_messages = SystemMessage.objects.filter(is_active=True).order_by(
+        "-created_at"
+    )[:10]
 
     return Response(
         {
