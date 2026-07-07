@@ -2,8 +2,6 @@
 Sponsorship Governance Serializers
 """
 
-from decimal import Decimal
-
 from rest_framework import serializers
 
 from .governance_models import (

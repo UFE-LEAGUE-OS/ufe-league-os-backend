@@ -1,10 +1,6 @@
-from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
+from rest_framework import viewsets
 
 from accounts.permissions import IsSuperAdmin
-
 from .models import Announcement, Banner, FeatureFlag, SystemMessage
 from .serializers import (
     AnnouncementSerializer,
@@ -14,59 +10,53 @@ from .serializers import (
 )
 
 
-@api_view(["GET", "POST"])
-@permission_classes([IsAuthenticated, IsSuperAdmin])
-def announcement_list_create_view(request):
-    if request.method == "GET":
-        queryset = Announcement.objects.all().order_by("-created_at")
-        serializer = AnnouncementSerializer(queryset, many=True)
-        return Response(serializer.data)
+class AnnouncementViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for managing platform announcements.
+    """
 
-    serializer = AnnouncementSerializer(data=request.data, context={"request": request})
-    serializer.is_valid(raise_exception=True)
-    serializer.save()
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
+    queryset = Announcement.objects.all().order_by("-created_at")
+    serializer_class = AnnouncementSerializer
+    permission_classes = [IsSuperAdmin]
 
-
-@api_view(["GET", "POST"])
-@permission_classes([IsAuthenticated, IsSuperAdmin])
-def feature_flag_list_create_view(request):
-    if request.method == "GET":
-        queryset = FeatureFlag.objects.all().order_by("name")
-        serializer = FeatureFlagSerializer(queryset, many=True)
-        return Response(serializer.data)
-
-    serializer = FeatureFlagSerializer(data=request.data, context={"request": request})
-    serializer.is_valid(raise_exception=True)
-    serializer.save()
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
 
 
-@api_view(["GET", "POST"])
-@permission_classes([IsAuthenticated, IsSuperAdmin])
-def banner_list_create_view(request):
-    if request.method == "GET":
-        queryset = Banner.objects.all().order_by("-created_at")
-        serializer = BannerSerializer(queryset, many=True)
-        return Response(serializer.data)
+class FeatureFlagViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for managing platform feature flags.
+    """
 
-    serializer = BannerSerializer(data=request.data, context={"request": request})
-    serializer.is_valid(raise_exception=True)
-    serializer.save()
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
+    queryset = FeatureFlag.objects.all().order_by("name")
+    serializer_class = FeatureFlagSerializer
+    permission_classes = [IsSuperAdmin]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
 
 
-@api_view(["GET", "POST"])
-@permission_classes([IsAuthenticated, IsSuperAdmin])
-def system_message_list_create_view(request):
-    if request.method == "GET":
-        queryset = SystemMessage.objects.all().order_by("-created_at")
-        serializer = SystemMessageSerializer(queryset, many=True)
-        return Response(serializer.data)
+class BannerViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for managing platform banners.
+    """
 
-    serializer = SystemMessageSerializer(
-        data=request.data, context={"request": request}
-    )
-    serializer.is_valid(raise_exception=True)
-    serializer.save()
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
+    queryset = Banner.objects.all().order_by("-created_at")
+    serializer_class = BannerSerializer
+    permission_classes = [IsSuperAdmin]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+class SystemMessageViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for managing platform system messages.
+    """
+
+    queryset = SystemMessage.objects.all().order_by("-created_at")
+    serializer_class = SystemMessageSerializer
+    permission_classes = [IsSuperAdmin]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)

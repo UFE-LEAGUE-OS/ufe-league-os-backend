@@ -1,22 +1,20 @@
-from django.urls import path
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
 
 from . import views
 
-urlpatterns = [
-    path(
-        "announcements/",
-        views.announcement_list_create_view,
-        name="announcement-list-create",
-    ),
-    path(
-        "feature-flags/",
-        views.feature_flag_list_create_view,
-        name="feature-flag-list-create",
-    ),
-    path("banners/", views.banner_list_create_view, name="banner-list-create"),
-    path(
-        "system-messages/",
-        views.system_message_list_create_view,
-        name="system-message-list-create",
-    ),
-]
+router = DefaultRouter()
+router.register(
+    r"announcements", views.AnnouncementViewSet, basename="announcement"
+)
+router.register(
+    r"feature-flags", views.FeatureFlagViewSet, basename="feature-flag"
+)
+router.register(
+    r"banners", views.BannerViewSet, basename="banner"
+)
+router.register(
+    r"system-messages", views.SystemMessageViewSet, basename="system-message"
+)
+
+urlpatterns = [path("", include(router.urls))]
