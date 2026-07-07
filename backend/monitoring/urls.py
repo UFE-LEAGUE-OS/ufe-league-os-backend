@@ -1,9 +1,18 @@
-from django.urls import path
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
 
 from . import views
 
+router = DefaultRouter()
+router.register(r"approvals", views.ApprovalLogViewSet, basename="approval-log")
+router.register(
+    r"chargebacks", views.ChargebackRefundViewSet, basename="chargeback-refund"
+)
+
+
 urlpatterns = [
     # Anomaly investigation
+    path("", include(router.urls)),
     path("anomalies/", views.anomaly_list_create_view, name="anomaly-list-create"),
     path("anomalies/<int:pk>/", views.anomaly_detail_view, name="anomaly-detail"),
     path(
