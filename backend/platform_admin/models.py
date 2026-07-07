@@ -1,200 +1,115 @@
 from django.conf import settings
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 from django.db import models
 
 User = settings.AUTH_USER_MODEL
 
 
-class Announcement(models.Model):
-    class Audience(models.TextChoices):
-        ALL = "ALL", "All"
-        FANS = "FANS", "Fans"
-        CLUBS = "CLUBS", "Clubs"
-        LEAGUES = "LEAGUES", "Leagues"
-        SPONSORS = "SPONSORS", "Sponsors"
+class ApprovalLog(models.Model):
+    """
+    A centralized log for all significant approval actions across the platform.
+    This provides a single place for super administrators to monitor governance.
+    """
 
-    title = models.CharField(max_length=255)
-    body = models.TextField()
-    audience = models.CharField(
-        max_length=20, choices=Audience.choices, default=Audience.ALL
+    class Action(models.TextChoices):
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        SUBMITTED = "SUBMITTED", "Submitted"
+        VERIFIED = "VERIFIED", "Verified"
+
+    class Category(models.TextChoices):
+        ROLE_MANAGEMENT = "ROLE_MANAGEMENT", "Role Management"
+        SPONSORSHIP = "SPONSORSHIP", "Sponsorship"
+        PAYMENT = "PAYMENT", "Payment"
+        COMPLIANCE = "COMPLIANCE", "Compliance"
+        OTHER = "OTHER", "Other"
+
+    actor = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, related_name="approvals_made"
     )
-    is_active = models.BooleanField(default=True)
-    created_by = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="announcements"
+    action = models.CharField(max_length=20, choices=Action.choices)
+    category = models.CharField(
+        max_length=30, choices=Category.choices, default=Category.OTHER
     )
+    notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+
+    # Generic relation to the object being approved/rejected
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveIntegerField()
+    content_object = GenericForeignKey("content_type", "object_id")
 
     class Meta:
-        app_label = "platform_admin"
+        app_label = "monitoring"
         ordering = ["-created_at"]
+        verbose_name = "Approval Log"
+        verbose_name_plural = "Approval Logs"
 
     def __str__(self):
-        return self.title
+        return f"{self.category} {self.action} by {self.actor} at {self.created_at}"
 
 
-class FeatureFlag(models.Model):
-    name = models.CharField(max_length=100, unique=True)
-    key = models.CharField(max_length=100, unique=True)
-    description = models.TextField(blank=True)
-    enabled = models.BooleanField(default=False)
-    created_by = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="feature_flags"
+class ChargebackRefund(models.Model):
+    """
+    Tracks and manages payment chargebacks and refund requests.
+    """
+
+    class DisputeType(models.TextChoices):
+        CHARGEBACK = "CHARGEBACK", "Chargeback"
+        REFUND_REQUEST = "REFUND_REQUEST", "Refund Request"
+
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "Open"
+        INVESTIGATING = "INVESTIGATING", "Investigating"
+        WON = "WON", "Won (Chargeback)"
+        LOST = "LOST", "Lost (Chargeback)"
+        REFUNDED = "REFUNDED", "Refunded"
+        REJECTED = "REJECTED", "Rejected (Refund)"
+
+    # Generic relation to the payment object (e.g., SponsorPayment, TicketOrder)
+    payment_content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    payment_object_id = models.PositiveIntegerField()
+    payment_object = GenericForeignKey("payment_content_type", "payment_object_id")
+
+    dispute_type = models.CharField(max_length=20, choices=DisputeType.choices)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
+    reason = models.TextField(help_text="Reason provided by the customer for the dispute.")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3)
+
+    evidence = models.JSONField(
+        default=dict, blank=True, help_text="Links or details of evidence submitted."
     )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    resolution_notes = models.TextField(
+        blank=True, help_text="Internal notes on how the dispute was resolved."
+    )
+
+    opened_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    opened_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="disputes_opened",
+        help_text="The user who initiated the dispute.",
+    )
+    handled_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="disputes_handled",
+        help_text="The admin who resolved the dispute.",
+    )
 
     class Meta:
-        app_label = "platform_admin"
-        ordering = ["name"]
+        app_label = "monitoring"
+        ordering = ["-opened_at"]
+        verbose_name = "Chargeback & Refund"
+        verbose_name_plural = "Chargebacks & Refunds"
 
     def __str__(self):
-        return self.name
-
-
-class Banner(models.Model):
-    title = models.CharField(max_length=255)
-    subtitle = models.CharField(max_length=255, blank=True)
-    cta_text = models.CharField(max_length=100, blank=True)
-    cta_url = models.URLField(blank=True)
-    is_active = models.BooleanField(default=True)
-    created_by = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="banners"
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        app_label = "platform_admin"
-        ordering = ["-created_at"]
-
-    def __str__(self):
-        return self.title
-
-
-class SystemMessage(models.Model):
-    class Severity(models.TextChoices):
-        INFO = "info", "Info"
-        WARNING = "warning", "Warning"
-        CRITICAL = "critical", "Critical"
-
-    title = models.CharField(max_length=255)
-    body = models.TextField()
-    severity = models.CharField(
-        max_length=20, choices=Severity.choices, default=Severity.INFO
-    )
-    is_active = models.BooleanField(default=True)
-    created_by = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="system_messages"
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        app_label = "platform_admin"
-        ordering = ["-created_at"]
-
-    def __str__(self):
-        return self.title
-
-
-class PublicContent(models.Model):
-    class ContentType(models.TextChoices):
-        PAGE = "page", "Page"
-        SECTION = "section", "Section"
-
-    slug = models.SlugField(unique=True)
-    title = models.CharField(max_length=255)
-    body = models.TextField(blank=True)
-    content_type = models.CharField(
-        max_length=20, choices=ContentType.choices, default=ContentType.PAGE
-    )
-    is_published = models.BooleanField(default=True)
-    created_by = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="public_content_entries"
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        app_label = "platform_admin"
-        ordering = ["title"]
-
-    def __str__(self):
-        return self.title
-
-
-class HelpCenterArticle(models.Model):
-    slug = models.SlugField(unique=True)
-    title = models.CharField(max_length=255)
-    summary = models.CharField(max_length=500, blank=True)
-    body = models.TextField()
-    category = models.CharField(max_length=100, blank=True)
-    is_published = models.BooleanField(default=True)
-    created_by = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="help_center_articles"
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        app_label = "platform_admin"
-        ordering = ["title"]
-
-    def __str__(self):
-        return self.title
-
-
-class Broadcast(models.Model):
-    class Audience(models.TextChoices):
-        ALL = "ALL", "All"
-        FANS = "FANS", "Fans"
-        CLUBS = "CLUBS", "Clubs"
-        LEAGUES = "LEAGUES", "Leagues"
-        SPONSORS = "SPONSORS", "Sponsors"
-
-    title = models.CharField(max_length=255)
-    body = models.TextField()
-    audience = models.CharField(
-        max_length=20, choices=Audience.choices, default=Audience.ALL
-    )
-    channel = models.CharField(max_length=50, default="in_app")
-    is_active = models.BooleanField(default=True)
-    created_by = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="broadcasts"
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        app_label = "platform_admin"
-        ordering = ["-created_at"]
-
-    def __str__(self):
-        return self.title
-
-
-class NotificationTemplate(models.Model):
-    class TemplateType(models.TextChoices):
-        EMAIL = "email", "Email"
-        SMS = "sms", "SMS"
-        PUSH = "push", "Push"
-
-    name = models.CharField(max_length=100, unique=True)
-    subject = models.CharField(max_length=255, blank=True)
-    body = models.TextField()
-    template_type = models.CharField(
-        max_length=20, choices=TemplateType.choices, default=TemplateType.EMAIL
-    )
-    is_active = models.BooleanField(default=True)
-    created_by = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="notification_templates"
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        app_label = "platform_admin"
-        ordering = ["name"]
-
-    def __str__(self):
-        return self.name
+        return f"{self.dispute_type} #{self.id} - {self.status}"

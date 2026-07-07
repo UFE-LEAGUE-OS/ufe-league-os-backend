@@ -1,148 +1,44 @@
 from rest_framework import serializers
-
-from .models import (
-    Announcement,
-    Banner,
-    Broadcast,
-    FeatureFlag,
-    HelpCenterArticle,
-    NotificationTemplate,
-    PublicContent,
-    SystemMessage,
-)
+from .models import ApprovalLog, ChargebackRefund
 
 
-class AnnouncementSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Announcement
-        fields = [
-            "id",
-            "title",
-            "body",
-            "audience",
-            "is_active",
-            "created_by",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_by", "created_at", "updated_at"]
-
-
-class FeatureFlagSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = FeatureFlag
-        fields = [
-            "id",
-            "name",
-            "key",
-            "description",
-            "enabled",
-            "created_by",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_by", "created_at", "updated_at"]
-
-
-class BannerSerializer(serializers.ModelSerializer):
-    cta_url = serializers.CharField(required=False, allow_blank=True)
+class ApprovalLogSerializer(serializers.ModelSerializer):
+    actor = serializers.StringRelatedField()
+    content_object_str = serializers.StringRelatedField(
+        source="content_object", read_only=True
+    )
 
     class Meta:
-        model = Banner
+        model = ApprovalLog
         fields = [
             "id",
-            "title",
-            "subtitle",
-            "cta_text",
-            "cta_url",
-            "is_active",
-            "created_by",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_by", "created_at", "updated_at"]
-
-
-class SystemMessageSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = SystemMessage
-        fields = [
-            "id",
-            "title",
-            "body",
-            "severity",
-            "is_active",
-            "created_by",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_by", "created_at", "updated_at"]
-
-
-class PublicContentSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PublicContent
-        fields = [
-            "id",
-            "slug",
-            "title",
-            "body",
-            "content_type",
-            "is_published",
-            "created_by",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_by", "created_at", "updated_at"]
-
-
-class HelpCenterArticleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = HelpCenterArticle
-        fields = [
-            "id",
-            "slug",
-            "title",
-            "summary",
-            "body",
+            "actor",
+            "action",
             "category",
-            "is_published",
-            "created_by",
+            "notes",
             "created_at",
-            "updated_at",
+            "content_type",
+            "object_id",
+            "content_object_str",
         ]
-        read_only_fields = ["id", "created_by", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "actor", "content_object_str"]
 
 
-class BroadcastSerializer(serializers.ModelSerializer):
+class ChargebackRefundSerializer(serializers.ModelSerializer):
+    opened_by = serializers.StringRelatedField()
+    handled_by = serializers.StringRelatedField()
+    payment_object_str = serializers.StringRelatedField(
+        source="payment_object", read_only=True
+    )
+
     class Meta:
-        model = Broadcast
-        fields = [
+        model = ChargebackRefund
+        fields = "__all__"
+        read_only_fields = [
             "id",
-            "title",
-            "body",
-            "audience",
-            "channel",
-            "is_active",
-            "created_by",
-            "created_at",
-            "updated_at",
+            "opened_at",
+            "resolved_at",
+            "opened_by",
+            "handled_by",
+            "payment_object_str",
         ]
-        read_only_fields = ["id", "created_by", "created_at", "updated_at"]
-
-
-class NotificationTemplateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = NotificationTemplate
-        fields = [
-            "id",
-            "name",
-            "subject",
-            "body",
-            "template_type",
-            "is_active",
-            "created_by",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "created_by", "created_at", "updated_at"]
