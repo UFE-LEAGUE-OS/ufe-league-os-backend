@@ -784,30 +784,126 @@ def _validate_workspace_role(role):
 
 NATIONAL_TEAM_ROWS = {
     "URU": [
-        {"team": "Uganda Rugby Cranes", "category": "Senior Men", "players": 32, "staff": 8, "status": "Active"},
-        {"team": "Lady Rugby Cranes", "category": "Senior Women", "players": 30, "staff": 7, "status": "Active"},
-        {"team": "Uganda Rugby 7s", "category": "Sevens", "players": 18, "staff": 5, "status": "Camp"},
-        {"team": "Uganda U20 Rugby", "category": "Age Grade", "players": 36, "staff": 6, "status": "Selection"},
+        {
+            "team": "Uganda Rugby Cranes",
+            "category": "Senior Men",
+            "players": 32,
+            "staff": 8,
+            "status": "Active",
+        },
+        {
+            "team": "Lady Rugby Cranes",
+            "category": "Senior Women",
+            "players": 30,
+            "staff": 7,
+            "status": "Active",
+        },
+        {
+            "team": "Uganda Rugby 7s",
+            "category": "Sevens",
+            "players": 18,
+            "staff": 5,
+            "status": "Camp",
+        },
+        {
+            "team": "Uganda U20 Rugby",
+            "category": "Age Grade",
+            "players": 36,
+            "staff": 6,
+            "status": "Selection",
+        },
     ],
     "FUFA": [
-        {"team": "Uganda Cranes", "category": "Senior Men", "players": 28, "staff": 10, "status": "Active"},
-        {"team": "Crested Cranes", "category": "Senior Women", "players": 26, "staff": 8, "status": "Active"},
-        {"team": "Uganda U20 Football", "category": "Age Grade", "players": 30, "staff": 7, "status": "Camp"},
-        {"team": "Uganda U17 Football", "category": "Age Grade", "players": 30, "staff": 6, "status": "Selection"},
+        {
+            "team": "Uganda Cranes",
+            "category": "Senior Men",
+            "players": 28,
+            "staff": 10,
+            "status": "Active",
+        },
+        {
+            "team": "Crested Cranes",
+            "category": "Senior Women",
+            "players": 26,
+            "staff": 8,
+            "status": "Active",
+        },
+        {
+            "team": "Uganda U20 Football",
+            "category": "Age Grade",
+            "players": 30,
+            "staff": 7,
+            "status": "Camp",
+        },
+        {
+            "team": "Uganda U17 Football",
+            "category": "Age Grade",
+            "players": 30,
+            "staff": 6,
+            "status": "Selection",
+        },
     ],
     "FUBA": [
-        {"team": "Uganda Silverbacks", "category": "Senior Men", "players": 18, "staff": 7, "status": "Active"},
-        {"team": "Uganda Gazelles", "category": "Senior Women", "players": 18, "staff": 7, "status": "Active"},
-        {"team": "Uganda U18 Basketball", "category": "Age Grade", "players": 20, "staff": 5, "status": "Camp"},
-        {"team": "Uganda 3x3 Basketball", "category": "3x3", "players": 12, "staff": 4, "status": "Selection"},
+        {
+            "team": "Uganda Silverbacks",
+            "category": "Senior Men",
+            "players": 18,
+            "staff": 7,
+            "status": "Active",
+        },
+        {
+            "team": "Uganda Gazelles",
+            "category": "Senior Women",
+            "players": 18,
+            "staff": 7,
+            "status": "Active",
+        },
+        {
+            "team": "Uganda U18 Basketball",
+            "category": "Age Grade",
+            "players": 20,
+            "staff": 5,
+            "status": "Camp",
+        },
+        {
+            "team": "Uganda 3x3 Basketball",
+            "category": "3x3",
+            "players": 12,
+            "staff": 4,
+            "status": "Selection",
+        },
     ],
     "BUDO": [
-        {"team": "Budo League Select", "category": "Community Select", "players": 24, "staff": 5, "status": "Active"},
-        {"team": "Budo Veterans", "category": "Veterans", "players": 22, "staff": 4, "status": "Active"},
+        {
+            "team": "Budo League Select",
+            "category": "Community Select",
+            "players": 24,
+            "staff": 5,
+            "status": "Active",
+        },
+        {
+            "team": "Budo Veterans",
+            "category": "Veterans",
+            "players": 22,
+            "staff": 4,
+            "status": "Active",
+        },
     ],
     "SMACK": [
-        {"team": "SMACK League Select", "category": "Community Select", "players": 24, "staff": 5, "status": "Active"},
-        {"team": "SMACK Veterans", "category": "Veterans", "players": 22, "staff": 4, "status": "Active"},
+        {
+            "team": "SMACK League Select",
+            "category": "Community Select",
+            "players": 24,
+            "staff": 5,
+            "status": "Active",
+        },
+        {
+            "team": "SMACK Veterans",
+            "category": "Veterans",
+            "players": 22,
+            "staff": 4,
+            "status": "Active",
+        },
     ],
 }
 
@@ -836,18 +932,22 @@ def _competition_format_label(competition):
 
 def _workspace_competitions(workspace):
     if workspace.related_union:
-        return Competition.objects.filter(
-            league__union=workspace.related_union
-        ).select_related("league").order_by("-is_active", "name")
+        return (
+            Competition.objects.filter(league__union=workspace.related_union)
+            .select_related("league")
+            .order_by("-is_active", "name")
+        )
 
     return Competition.objects.none()
 
 
 def _workspace_matches(workspace):
     if workspace.related_union:
-        return Match.objects.filter(
-            competition__league__union=workspace.related_union
-        ).select_related("competition", "home_club", "away_club").order_by("match_date")
+        return (
+            Match.objects.filter(competition__league__union=workspace.related_union)
+            .select_related("competition", "home_club", "away_club")
+            .order_by("match_date")
+        )
 
     return Match.objects.none()
 
@@ -858,16 +958,24 @@ def _workspace_clubs(workspace):
     if workspace.related_union:
         clubs = (
             Club.objects.filter(
-                models.Q(home_matches__competition__league__union=workspace.related_union)
-                | models.Q(away_matches__competition__league__union=workspace.related_union)
-                | models.Q(standings__competition__league__union=workspace.related_union)
+                models.Q(
+                    home_matches__competition__league__union=workspace.related_union
+                )
+                | models.Q(
+                    away_matches__competition__league__union=workspace.related_union
+                )
+                | models.Q(
+                    standings__competition__league__union=workspace.related_union
+                )
             )
             .distinct()
             .order_by("name")
         )
 
     if not clubs.exists() and workspace.sport:
-        clubs = Club.objects.filter(sport=_workspace_sport_value(workspace)).order_by("name")
+        clubs = Club.objects.filter(sport=_workspace_sport_value(workspace)).order_by(
+            "name"
+        )
 
     return clubs
 
@@ -895,7 +1003,10 @@ def _workspace_referees(workspace, competitions):
         role_2 = "Assistant Referee"
         grade = "Level 2"
 
-    competition_names = ", ".join([competition.name for competition in competitions[:3]]) or "Competition pool"
+    competition_names = (
+        ", ".join([competition.name for competition in competitions[:3]])
+        or "Competition pool"
+    )
 
     return [
         {
@@ -972,9 +1083,11 @@ def union_admin_operations_dashboard_view(request):
                 "clubs": participating_clubs,
                 "matches": competition_matches.count(),
                 "status": "Active" if competition.is_active else "Draft",
-                "nextAction": "Generate fixtures"
-                if competition_matches.count() == 0
-                else "Assign officials",
+                "nextAction": (
+                    "Generate fixtures"
+                    if competition_matches.count() == 0
+                    else "Assign officials"
+                ),
             }
         )
 
@@ -982,7 +1095,11 @@ def union_admin_operations_dashboard_view(request):
         {
             "id": str(club.id),
             "name": club.name,
-            "category": club.get_sport_display() if hasattr(club, "get_sport_display") else sport_value.title(),
+            "category": (
+                club.get_sport_display()
+                if hasattr(club, "get_sport_display")
+                else sport_value.title()
+            ),
             "teams": 2 + (index % 3),
             "players": 24 + ((index + 1) * 5),
             "compliance": "Ready" if index % 3 != 2 else "Review",
@@ -997,9 +1114,9 @@ def union_admin_operations_dashboard_view(request):
             "competition": match.competition.name,
             "date": match.match_date.strftime("%d %b %Y, %H:%M"),
             "venue": match.venue or "Venue TBC",
-            "role": "Centre Referee"
-            if "BASKETBALL" not in sport_value
-            else "Crew Chief",
+            "role": (
+                "Centre Referee" if "BASKETBALL" not in sport_value else "Crew Chief"
+            ),
             "report": "Due after match",
         }
         for match in matches_qs[:8]
@@ -1077,7 +1194,9 @@ def union_admin_finance_dashboard_view(request):
         and "union.finance.view" not in membership.effective_permissions
     ):
         return Response(
-            {"detail": "You do not have permission to view finance for this workspace."},
+            {
+                "detail": "You do not have permission to view finance for this workspace."
+            },
             status=status.HTTP_403_FORBIDDEN,
         )
 
@@ -1101,17 +1220,23 @@ def union_admin_finance_dashboard_view(request):
         amount = audit.amount or Decimal("0.00")
         status_value = (audit.status or "").upper()
         event_value = (audit.event_type or "").upper()
-        stream = audit.metadata.get("revenue_stream") or audit.get_payment_source_display()
+        stream = (
+            audit.metadata.get("revenue_stream") or audit.get_payment_source_display()
+        )
 
         if status_value not in failed_statuses and event_value not in failed_statuses:
             gross_receipts += amount
 
         if status_value in completed_statuses or event_value == "COMPLETED":
             net_settled += amount
-            revenue_mix_totals[stream] = revenue_mix_totals.get(stream, Decimal("0.00")) + amount
+            revenue_mix_totals[stream] = (
+                revenue_mix_totals.get(stream, Decimal("0.00")) + amount
+            )
 
             month_key = audit.created_at.strftime("%b")
-            monthly_totals[month_key] = monthly_totals.get(month_key, Decimal("0.00")) + amount
+            monthly_totals[month_key] = (
+                monthly_totals.get(month_key, Decimal("0.00")) + amount
+            )
 
         if status_value in pending_statuses or event_value == "INITIATED":
             pending_payouts += amount
@@ -1139,7 +1264,20 @@ def union_admin_finance_dashboard_view(request):
             }
         )
 
-    month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    month_order = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+    ]
     monthly_trend = [
         {
             "label": month,
@@ -1153,7 +1291,8 @@ def union_admin_finance_dashboard_view(request):
     recent_transactions = [
         {
             "reference": audit.reference,
-            "source": audit.metadata.get("source_label") or audit.get_payment_source_display(),
+            "source": audit.metadata.get("source_label")
+            or audit.get_payment_source_display(),
             "amount": _format_ugx(audit.amount),
             "status": audit.status,
             "date": audit.created_at.strftime("%d %b %Y, %H:%M"),

@@ -7,7 +7,6 @@ from django.utils.text import slugify
 from accounts.models import Club
 from dashboards.models import Competition, League, Match, Union, UnionWorkspace
 
-
 WORKSPACE_DATA = {
     "URU": {
         "union": "Uganda Rugby Union",
@@ -18,7 +17,11 @@ WORKSPACE_DATA = {
                 "slug": "nile-special-rugby-league",
                 "description": "Top flight Ugandan rugby league.",
                 "competitions": [
-                    ("Nile Special Rugby League 2026", "nile-special-rugby-league-2026", "2026"),
+                    (
+                        "Nile Special Rugby League 2026",
+                        "nile-special-rugby-league-2026",
+                        "2026",
+                    ),
                     ("Uganda Cup 2026", "uganda-cup-2026", "2026"),
                     ("Rugby 7s Series 2026", "rugby-7s-series-2026", "2026"),
                 ],
@@ -42,7 +45,11 @@ WORKSPACE_DATA = {
                 "slug": "startimes-uganda-premier-league",
                 "description": "Top flight Ugandan football league.",
                 "competitions": [
-                    ("StarTimes Uganda Premier League 2026", "startimes-uganda-premier-league-2026", "2026"),
+                    (
+                        "StarTimes Uganda Premier League 2026",
+                        "startimes-uganda-premier-league-2026",
+                        "2026",
+                    ),
                     ("Stanbic Uganda Cup 2026", "stanbic-uganda-cup-2026", "2026"),
                     ("FUFA Super 8 2026", "fufa-super-8-2026", "2026"),
                 ],
@@ -66,8 +73,16 @@ WORKSPACE_DATA = {
                 "slug": "national-basketball-league",
                 "description": "Top flight Ugandan basketball league.",
                 "competitions": [
-                    ("National Basketball League 2026", "national-basketball-league-2026", "2026"),
-                    ("Women’s National Basketball League 2026", "womens-national-basketball-league-2026", "2026"),
+                    (
+                        "National Basketball League 2026",
+                        "national-basketball-league-2026",
+                        "2026",
+                    ),
+                    (
+                        "Women’s National Basketball League 2026",
+                        "womens-national-basketball-league-2026",
+                        "2026",
+                    ),
                     ("FUBA Playoffs 2026", "fuba-playoffs-2026", "2026"),
                 ],
             }
@@ -147,7 +162,9 @@ class Command(BaseCommand):
             workspace = UnionWorkspace.objects.filter(acronym__iexact=acronym).first()
 
             if workspace is None:
-                self.stdout.write(self.style.WARNING(f"Skipping {acronym}: workspace not found."))
+                self.stdout.write(
+                    self.style.WARNING(f"Skipping {acronym}: workspace not found.")
+                )
                 continue
 
             union_slug = slugify(data["union"])
@@ -162,13 +179,17 @@ class Command(BaseCommand):
                 )
             else:
                 union.country = union.country or "Uganda"
-                union.description = union.description or f"{data['union']} workspace demo record."
+                union.description = (
+                    union.description or f"{data['union']} workspace demo record."
+                )
                 union.save(update_fields=["country", "description"])
 
             workspace.related_union = union
             workspace.sport = data["sport"]
             workspace.status = UnionWorkspace.Status.ACTIVE
-            workspace.save(update_fields=["related_union", "sport", "status", "updated_at"])
+            workspace.save(
+                update_fields=["related_union", "sport", "status", "updated_at"]
+            )
 
             # Remove previously generated demo matches for this workspace before rebuilding.
             # This prevents old matches from keeping links to clubs that were later renamed/reused.
@@ -239,7 +260,9 @@ class Command(BaseCommand):
                     ]
 
                     for round_index, (home, away) in enumerate(pairs, start=1):
-                        match_date = timezone.now() + timedelta(days=(index * 7) + round_index)
+                        match_date = timezone.now() + timedelta(
+                            days=(index * 7) + round_index
+                        )
                         existing = Match.objects.filter(
                             competition=competition,
                             home_club=home,
@@ -251,7 +274,14 @@ class Command(BaseCommand):
                             existing.match_date = match_date
                             existing.venue = self._venue_for(data["sport"], home)
                             existing.status = Match.Status.SCHEDULED
-                            existing.save(update_fields=["match_date", "venue", "status", "updated_at"])
+                            existing.save(
+                                update_fields=[
+                                    "match_date",
+                                    "venue",
+                                    "status",
+                                    "updated_at",
+                                ]
+                            )
                         else:
                             Match.objects.create(
                                 competition=competition,
@@ -264,9 +294,13 @@ class Command(BaseCommand):
                             )
                             created_matches += 1
 
-            self.stdout.write(self.style.SUCCESS(f"Seeded operations data for {acronym}"))
+            self.stdout.write(
+                self.style.SUCCESS(f"Seeded operations data for {acronym}")
+            )
 
-        self.stdout.write(self.style.SUCCESS(f"Created {created_matches} new scheduled matches."))
+        self.stdout.write(
+            self.style.SUCCESS(f"Created {created_matches} new scheduled matches.")
+        )
 
     def _venue_for(self, sport, club):
         if sport == "Basketball":

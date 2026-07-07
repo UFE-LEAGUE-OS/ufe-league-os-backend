@@ -8,7 +8,6 @@ from django.utils import timezone
 from dashboards.models import UnionWorkspace, UnionWorkspaceMembership
 from monitoring.models import PaymentAudit, TransactionReconciliation
 
-
 User = get_user_model()
 
 DEMO_KEY = "union_finance_demo"
@@ -179,10 +178,13 @@ class Command(BaseCommand):
                     amount=row["amount"].quantize(Decimal("0.01")),
                     currency="UGX",
                     status=row["status"],
-                    is_verified=row["status"] == TransactionReconciliation.Status.MATCHED,
-                    verified_by=actor
-                    if row["status"] == TransactionReconciliation.Status.MATCHED
-                    else None,
+                    is_verified=row["status"]
+                    == TransactionReconciliation.Status.MATCHED,
+                    verified_by=(
+                        actor
+                        if row["status"] == TransactionReconciliation.Status.MATCHED
+                        else None
+                    ),
                     notes=row["notes"],
                     metadata={
                         "demo_key": DEMO_KEY,
