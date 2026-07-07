@@ -95,3 +95,106 @@ class SystemMessage(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class PublicContent(models.Model):
+    class ContentType(models.TextChoices):
+        PAGE = "page", "Page"
+        SECTION = "section", "Section"
+
+    slug = models.SlugField(unique=True)
+    title = models.CharField(max_length=255)
+    body = models.TextField(blank=True)
+    content_type = models.CharField(
+        max_length=20, choices=ContentType.choices, default=ContentType.PAGE
+    )
+    is_published = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="public_content_entries"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "platform_admin"
+        ordering = ["title"]
+
+    def __str__(self):
+        return self.title
+
+
+class HelpCenterArticle(models.Model):
+    slug = models.SlugField(unique=True)
+    title = models.CharField(max_length=255)
+    summary = models.CharField(max_length=500, blank=True)
+    body = models.TextField()
+    category = models.CharField(max_length=100, blank=True)
+    is_published = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="help_center_articles"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "platform_admin"
+        ordering = ["title"]
+
+    def __str__(self):
+        return self.title
+
+
+class Broadcast(models.Model):
+    class Audience(models.TextChoices):
+        ALL = "ALL", "All"
+        FANS = "FANS", "Fans"
+        CLUBS = "CLUBS", "Clubs"
+        LEAGUES = "LEAGUES", "Leagues"
+        SPONSORS = "SPONSORS", "Sponsors"
+
+    title = models.CharField(max_length=255)
+    body = models.TextField()
+    audience = models.CharField(
+        max_length=20, choices=Audience.choices, default=Audience.ALL
+    )
+    channel = models.CharField(max_length=50, default="in_app")
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="broadcasts"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "platform_admin"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.title
+
+
+class NotificationTemplate(models.Model):
+    class TemplateType(models.TextChoices):
+        EMAIL = "email", "Email"
+        SMS = "sms", "SMS"
+        PUSH = "push", "Push"
+
+    name = models.CharField(max_length=100, unique=True)
+    subject = models.CharField(max_length=255, blank=True)
+    body = models.TextField()
+    template_type = models.CharField(
+        max_length=20, choices=TemplateType.choices, default=TemplateType.EMAIL
+    )
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="notification_templates"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "platform_admin"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
