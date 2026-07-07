@@ -169,7 +169,7 @@ class Command(BaseCommand):
             for row_index, row in enumerate(payout_rows, start=1):
                 reference = f"UPAY-{workspace.acronym}-{row_index:03d}"
 
-                reconciliation = TransactionReconciliation.objects.create(
+                TransactionReconciliation.objects.create(
                     transaction_date=timezone.localdate()
                     - timedelta(days=row["days_ago"]),
                     source_system="UNION_FINANCE",
