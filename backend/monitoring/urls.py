@@ -6,7 +6,9 @@ from . import views
 router = DefaultRouter()
 router.register(r"approvals", views.ApprovalLogViewSet, basename="approval-log")
 router.register(
-    r"chargebacks", views.ChargebackRefundViewSet, basename="chargeback-refund",
+    r"chargebacks",
+    views.ChargebackRefundViewSet,
+    basename="chargeback-refund",
 )
 router.register(r"anomalies", views.AnomalyViewSet, basename="anomaly")
 router.register(r"payments", views.PaymentAuditViewSet, basename="payment-audit")

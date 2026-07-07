@@ -34,9 +34,7 @@ class ApprovalLogViewSet(viewsets.ReadOnlyModelViewSet):
     Provides a centralized, read-only audit trail for super administrators.
     """
 
-    queryset = (
-        ApprovalLog.objects.all().select_related("actor").prefetch_related("content_object")
-    )
+    queryset = ApprovalLog.objects.all().select_related("actor").prefetch_related("content_object")
     serializer_class = ApprovalLogSerializer
     permission_classes = [IsSuperAdmin]
     filterset_fields = ["action", "category", "actor__email"]

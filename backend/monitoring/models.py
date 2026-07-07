@@ -46,7 +46,9 @@ class ApprovalLog(models.Model):
         verbose_name_plural = "Approval Logs"
 
     def __str__(self):
-        return f"{self.category} {self.action} by {self.actor} at {self.created_at}"
+        return (
+            f"{self.category} {self.action} by {self.actor} at {self.created_at}"
+        )
 
 
 class ChargebackRefund(models.Model):
