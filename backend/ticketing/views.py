@@ -299,7 +299,14 @@ def ticket_order_flutterwave_initialize_view(request):
 def my_tickets_view(request):
     tickets = (
         Ticket.objects.filter(owner=request.user)
-        .select_related("order", "ticket_type", "match")
+        .select_related(
+            "order",
+            "ticket_type",
+            "match",
+            "match__competition",
+            "match__home_club",
+            "match__away_club",
+        )
         .order_by("-issued_at")
     )
 

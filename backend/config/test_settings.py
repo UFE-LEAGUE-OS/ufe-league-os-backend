@@ -22,6 +22,14 @@ INSTALLED_APPS = [
     "dashboards",
     "governance.apps.GovernanceConfig",
     "sponsorships",
+    "ticketing",
+    "memberships",
+    "fantasy",
+    "engagements",
+    "monitoring.apps.MonitoringConfig",
+    "platform_admin",
+    "rbac.apps.RbacConfig",
+    "analytics.apps.AnalyticsConfig",
 ]
 
 MIDDLEWARE = [

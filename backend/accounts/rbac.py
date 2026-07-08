@@ -215,6 +215,47 @@ def get_role_permissions(role):
     return ROLE_PERMISSIONS.get(role, set())
 
 
+def user_has_union_workspace_access(user):
+    """Return True when a normal user account has an active union workspace."""
+
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+
+    union_memberships = getattr(user, "union_workspace_memberships", None)
+
+    if union_memberships is None:
+        return False
+
+    return union_memberships.filter(is_active=True, workspace__status="ACTIVE").exists()
+
+
+def get_union_workspace_permissions(user):
+    """Return permissions granted through active union workspace memberships."""
+
+    if user is None or not getattr(user, "is_authenticated", False):
+        return set()
+
+    union_memberships = getattr(user, "union_workspace_memberships", None)
+
+    if union_memberships is None:
+        return set()
+
+    permissions = set()
+
+    for membership in union_memberships.filter(
+        is_active=True,
+        workspace__status="ACTIVE",
+    ):
+        permissions.update(membership.effective_permissions)
+
+    if permissions:
+        permissions.add("dashboard.union_admin")
+        permissions.add("dashboard.me")
+        permissions.add("union.workspace.switch")
+
+    return permissions
+
+
 def user_has_sponsor_access(user):
     """
     Return True when the user can access sponsor features.
@@ -251,6 +292,8 @@ def get_user_permissions(user):
     if user_has_sponsor_access(user):
         permissions |= get_role_permissions(User.Role.SPONSOR)
 
+    permissions |= get_union_workspace_permissions(user)
+
     return permissions
 
 
@@ -283,6 +326,16 @@ def get_dashboard_routes(user):
                 "role_display": "Sponsor",
                 "route": FRONTEND_DASHBOARD_ROUTES[User.Role.SPONSOR],
                 "backend_route": BACKEND_DASHBOARD_ROUTES[User.Role.SPONSOR],
+            }
+        )
+
+    if user_has_union_workspace_access(user) and user.role != User.Role.UNION_ADMIN:
+        routes.append(
+            {
+                "role": User.Role.UNION_ADMIN,
+                "role_display": "Union Admin Workspace",
+                "route": FRONTEND_DASHBOARD_ROUTES[User.Role.UNION_ADMIN],
+                "backend_route": BACKEND_DASHBOARD_ROUTES[User.Role.UNION_ADMIN],
             }
         )
 

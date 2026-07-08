@@ -97,6 +97,15 @@ class User(AbstractUser):
             if sponsor_memberships.filter(is_active=True).exists():
                 roles.add(self.Role.SPONSOR)
 
+        union_memberships = getattr(self, "union_workspace_memberships", None)
+
+        if self.pk and union_memberships is not None:
+            if union_memberships.filter(
+                is_active=True,
+                workspace__status="ACTIVE",
+            ).exists():
+                roles.add(self.Role.UNION_ADMIN)
+
         return roles
 
     def has_role(self, role):
@@ -104,8 +113,25 @@ class User(AbstractUser):
 
 
 class Club(models.Model):
+    class Sport(models.TextChoices):
+        RUGBY = "RUGBY", "Rugby"
+        FOOTBALL = "FOOTBALL", "Football"
+        BASKETBALL = "BASKETBALL", "Basketball"
+        MULTI_SPORT = "MULTI_SPORT", "Multi-Sport"
+        OTHER = "OTHER", "Other"
+
     name = models.CharField(max_length=150, unique=True)
     slug = models.SlugField(max_length=150, unique=True)
+    short_name = models.CharField(max_length=80, blank=True)
+    sport = models.CharField(
+        max_length=30,
+        choices=Sport.choices,
+        default=Sport.OTHER,
+    )
+    logo = models.ImageField(upload_to="clubs/logos/", blank=True, null=True)
+    banner = models.ImageField(upload_to="clubs/banners/", blank=True, null=True)
+    primary_color = models.CharField(max_length=20, blank=True)
+    secondary_color = models.CharField(max_length=20, blank=True)
     admin = models.ForeignKey(
         User,
         null=True,

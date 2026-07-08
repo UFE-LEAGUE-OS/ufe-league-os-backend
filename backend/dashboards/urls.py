@@ -15,6 +15,41 @@ urlpatterns = [
         "union-admin/", views.union_admin_dashboard_view, name="union-admin-dashboard"
     ),
     path(
+        "union-admin/workspaces/",
+        views.union_admin_workspaces_me_view,
+        name="union-admin-workspaces-me",
+    ),
+    path(
+        "union-admin/switch-workspace/",
+        views.union_admin_switch_workspace_view,
+        name="union-admin-switch-workspace",
+    ),
+    path(
+        "union-admin/workspace/",
+        views.union_admin_workspace_dashboard_view,
+        name="union-admin-workspace-dashboard",
+    ),
+    path(
+        "union-admin/operations/",
+        views.union_admin_operations_dashboard_view,
+        name="union-admin-operations-dashboard",
+    ),
+    path(
+        "union-admin/workspace-users/",
+        views.union_admin_workspace_users_view,
+        name="union-admin-workspace-users",
+    ),
+    path(
+        "union-admin/finance/",
+        views.union_admin_finance_dashboard_view,
+        name="union-admin-finance-dashboard",
+    ),
+    path(
+        "union-admin/transfer-owner/",
+        views.union_admin_transfer_owner_view,
+        name="union-admin-transfer-owner",
+    ),
+    path(
         "super-admin/", views.super_admin_dashboard_view, name="super-admin-dashboard"
     ),
     path("referee/", views.referee_dashboard_view, name="referee-dashboard"),
