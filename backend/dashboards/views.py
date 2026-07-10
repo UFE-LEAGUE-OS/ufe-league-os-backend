@@ -28,6 +28,7 @@ from accounts.serializers import UserSerializer
 from .models import (
     Competition,
     League,
+    LeagueClubMembership,
     Match,
     Standing,
     Union,
@@ -1102,21 +1103,21 @@ def _workspace_clubs(workspace):
     clubs = Club.objects.none()
 
     if workspace.related_union:
-        clubs = (
-            Club.objects.filter(
-                models.Q(
-                    home_matches__competition__league__union=workspace.related_union
-                )
-                | models.Q(
-                    away_matches__competition__league__union=workspace.related_union
-                )
-                | models.Q(
-                    standings__competition__league__union=workspace.related_union
-                )
-            )
-            .distinct()
-            .order_by("name")
+        league_member_clubs = Club.objects.filter(
+            league_memberships__league__union=workspace.related_union,
+            league_memberships__status__in=[
+                LeagueClubMembership.Status.ACTIVE,
+                LeagueClubMembership.Status.PROMOTED,
+            ],
         )
+
+        match_clubs = Club.objects.filter(
+            models.Q(home_matches__competition__league__union=workspace.related_union)
+            | models.Q(away_matches__competition__league__union=workspace.related_union)
+            | models.Q(standings__competition__league__union=workspace.related_union)
+        )
+
+        clubs = (league_member_clubs | match_clubs).distinct().order_by("name")
 
     if not clubs.exists() and workspace.sport:
         clubs = Club.objects.filter(sport=_workspace_sport_value(workspace)).order_by(

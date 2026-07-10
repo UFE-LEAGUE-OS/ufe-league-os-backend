@@ -50,6 +50,13 @@ class Competition(models.Model):
     name = models.CharField(max_length=200)
     slug = models.SlugField(max_length=200)
     season = models.CharField(max_length=50, help_text="e.g. 2025/26")
+    season_record = models.ForeignKey(
+        "Season",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="competitions",
+    )
     is_active = models.BooleanField(default=True)
     start_date = models.DateField(blank=True, null=True)
     end_date = models.DateField(blank=True, null=True)
@@ -308,3 +315,100 @@ class UnionWorkspaceMembership(models.Model):
     def effective_permissions(self):
         role_permissions = UNION_WORKSPACE_ROLE_PERMISSIONS.get(self.role, set())
         return sorted(set(role_permissions) | set(self.extra_permissions or []))
+
+
+
+class Season(models.Model):
+    """A real season record under a league, e.g. 2026/27."""
+
+    league = models.ForeignKey(League, on_delete=models.CASCADE, related_name="seasons")
+    name = models.CharField(max_length=80)
+    slug = models.SlugField(max_length=100)
+    start_date = models.DateField(blank=True, null=True)
+    end_date = models.DateField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-start_date", "-created_at", "name"]
+        unique_together = ["league", "slug"]
+        indexes = [
+            models.Index(fields=["league", "is_active"]),
+            models.Index(fields=["slug"]),
+        ]
+
+    def __str__(self):
+        return f"{self.league.name} - {self.name}"
+
+
+class LeagueClubMembership(models.Model):
+    """Season-aware club membership in a league, including promotions/relegations."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        PROMOTED = "PROMOTED", "Promoted"
+        RELEGATED = "RELEGATED", "Relegated"
+        WITHDRAWN = "WITHDRAWN", "Withdrawn"
+        INVITED = "INVITED", "Invited"
+        SUSPENDED = "SUSPENDED", "Suspended"
+
+    league = models.ForeignKey(
+        League,
+        on_delete=models.CASCADE,
+        related_name="club_memberships",
+    )
+    club = models.ForeignKey(
+        "accounts.Club",
+        on_delete=models.CASCADE,
+        related_name="league_memberships",
+    )
+    season = models.ForeignKey(
+        Season,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="club_memberships",
+    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
+    promoted_from_league = models.ForeignKey(
+        League,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="promoted_club_entries",
+    )
+    relegated_to_league = models.ForeignKey(
+        League,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="relegated_club_entries",
+    )
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_league_club_memberships",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["league__name", "season__name", "club__name"]
+        unique_together = ["league", "club", "season"]
+        indexes = [
+            models.Index(fields=["league", "status"]),
+            models.Index(fields=["season", "status"]),
+            models.Index(fields=["club", "status"]),
+        ]
+
+    def __str__(self):
+        season = self.season.name if self.season else "All seasons"
+        return f"{self.club.name} in {self.league.name} ({season}) - {self.status}"
+
+    @property
+    def is_active_entry(self):
+        return self.status in {self.Status.ACTIVE, self.Status.PROMOTED}

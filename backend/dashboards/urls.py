@@ -1,5 +1,5 @@
 from django.urls import path
-from . import views
+from . import views, union_management_views
 
 urlpatterns = [
     # Authenticated role dashboards
@@ -48,6 +48,37 @@ urlpatterns = [
         "union-admin/transfer-owner/",
         views.union_admin_transfer_owner_view,
         name="union-admin-transfer-owner",
+    ),
+
+    path(
+        "union-admin/seasons/",
+        union_management_views.union_admin_seasons_view,
+        name="union-admin-seasons",
+    ),
+    path(
+        "union-admin/competitions/",
+        union_management_views.union_admin_competitions_view,
+        name="union-admin-competitions-manage",
+    ),
+    path(
+        "union-admin/league-clubs/",
+        union_management_views.union_admin_league_clubs_view,
+        name="union-admin-league-clubs",
+    ),
+    path(
+        "union-admin/league-clubs/<int:membership_id>/",
+        union_management_views.union_admin_league_club_detail_view,
+        name="union-admin-league-club-detail",
+    ),
+    path(
+        "union-admin/promote-relegate/",
+        union_management_views.union_admin_promote_relegate_view,
+        name="union-admin-promote-relegate",
+    ),
+    path(
+        "union-admin/generate-fixtures/",
+        union_management_views.union_admin_generate_fixtures_view,
+        name="union-admin-generate-fixtures",
     ),
     path(
         "super-admin/", views.super_admin_dashboard_view, name="super-admin-dashboard"
