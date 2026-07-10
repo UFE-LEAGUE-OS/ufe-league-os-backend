@@ -75,6 +75,11 @@ urlpatterns = [
         name="union-admin-competitions-manage",
     ),
     path(
+        "union-admin/league-clubs/bulk-add/",
+        union_management_views.union_admin_league_clubs_bulk_add_view,
+        name="union-admin-league-clubs-bulk-add",
+    ),
+    path(
         "union-admin/league-clubs/",
         union_management_views.union_admin_league_clubs_view,
         name="union-admin-league-clubs",
