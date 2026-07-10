@@ -489,6 +489,109 @@ def union_admin_competitions_view(request):
     )
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_league_clubs_bulk_add_view(request):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+
+    workspace = membership.workspace
+
+    permission_error = _require_permission(
+        request.user, workspace, "union.competitions.manage"
+    )
+    if permission_error:
+        return permission_error
+
+    league_id = request.data.get("league")
+    season_id = request.data.get("season")
+    club_ids = request.data.get("club_ids") or []
+    notes = (request.data.get("notes") or "").strip()
+    status_value = request.data.get("status") or LeagueClubMembership.Status.ACTIVE
+    valid_statuses = {choice[0] for choice in LeagueClubMembership.Status.choices}
+
+    if status_value not in valid_statuses:
+        return _workspace_error("Invalid club membership status.")
+
+    if not league_id:
+        return _workspace_error("League is required.")
+
+    if not season_id:
+        return _workspace_error("Season is required.")
+
+    if not isinstance(club_ids, list) or not club_ids:
+        return _workspace_error("Select at least one club to add.")
+
+    league = _workspace_leagues(workspace).filter(id=league_id).first()
+    if league is None:
+        return _workspace_error("League not found.", status.HTTP_404_NOT_FOUND)
+
+    season = Season.objects.filter(id=season_id, league=league).first()
+    if season is None:
+        return _workspace_error(
+            "Season not found for this league.", status.HTTP_404_NOT_FOUND
+        )
+
+    clean_club_ids = []
+    for club_id in club_ids:
+        try:
+            clean_club_ids.append(int(club_id))
+        except (TypeError, ValueError):
+            continue
+
+    if not clean_club_ids:
+        return _workspace_error("No valid club ids were supplied.")
+
+    clubs = list(_workspace_management_clubs(workspace).filter(id__in=clean_club_ids))
+    found_ids = {club.id for club in clubs}
+    missing_ids = [club_id for club_id in clean_club_ids if club_id not in found_ids]
+
+    created_count = 0
+    updated_count = 0
+    memberships = []
+
+    for club in clubs:
+        membership_record, was_created = LeagueClubMembership.objects.update_or_create(
+            league=league,
+            season=season,
+            club=club,
+            defaults={
+                "status": status_value,
+                "notes": notes,
+            },
+        )
+
+        if was_created:
+            created_count += 1
+        else:
+            updated_count += 1
+
+        memberships.append(membership_record)
+
+    memberships = (
+        LeagueClubMembership.objects.filter(id__in=[item.id for item in memberships])
+        .select_related(
+            "league", "season", "club", "promoted_from_league", "relegated_to_league"
+        )
+        .order_by("club__name")
+    )
+
+    return Response(
+        {
+            "created": created_count,
+            "updated": updated_count,
+            "missing_club_ids": missing_ids,
+            "results": LeagueClubMembershipSerializer(
+                memberships,
+                many=True,
+                context={"request": request},
+            ).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticatedAudit])
 def union_admin_league_clubs_view(request):
