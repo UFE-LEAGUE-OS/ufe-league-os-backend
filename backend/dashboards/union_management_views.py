@@ -844,6 +844,202 @@ def _round_robin_pairs(clubs):
     return rounds
 
 
+WEEKDAY_LOOKUP = {
+    "MONDAY": 0,
+    "TUESDAY": 1,
+    "WEDNESDAY": 2,
+    "THURSDAY": 3,
+    "FRIDAY": 4,
+    "SATURDAY": 5,
+    "SUNDAY": 6,
+}
+
+
+def _safe_positive_int(value, default, minimum=1, maximum=None):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+
+    parsed = max(parsed, minimum)
+    if maximum is not None:
+        parsed = min(parsed, maximum)
+
+    return parsed
+
+
+def _normalise_match_days(raw_days):
+    if not raw_days:
+        return None
+
+    if isinstance(raw_days, str):
+        raw_days = [raw_days]
+
+    allowed_days = set()
+
+    for raw_day in raw_days:
+        day = str(raw_day).strip().upper()
+        if not day:
+            continue
+
+        if day.isdigit():
+            numeric_day = int(day)
+            if 0 <= numeric_day <= 6:
+                allowed_days.add(numeric_day)
+            continue
+
+        if day in WEEKDAY_LOOKUP:
+            allowed_days.add(WEEKDAY_LOOKUP[day])
+
+    return allowed_days or None
+
+
+def _normalise_excluded_dates(raw_dates):
+    if not raw_dates:
+        return set()
+
+    if isinstance(raw_dates, str):
+        raw_dates = [raw_dates]
+
+    excluded = set()
+
+    for raw_date in raw_dates:
+        parsed = parse_date(str(raw_date).strip())
+        if parsed:
+            excluded.add(parsed)
+
+    return excluded
+
+
+def _normalise_venues(raw_venues, fallback_venue):
+    if not raw_venues:
+        return [
+            {
+                "name": fallback_venue or "Venue TBC",
+                "pitches": ["Main Pitch"],
+            }
+        ]
+
+    venues = []
+
+    for raw_venue in raw_venues:
+        if isinstance(raw_venue, str):
+            venue_name = raw_venue.strip()
+            pitches = ["Main Pitch"]
+        elif isinstance(raw_venue, dict):
+            venue_name = str(raw_venue.get("name") or "").strip()
+            raw_pitches = (
+                raw_venue.get("pitches")
+                or raw_venue.get("courts")
+                or raw_venue.get("fields")
+                or []
+            )
+            if isinstance(raw_pitches, str):
+                raw_pitches = [raw_pitches]
+            pitches = [
+                str(pitch).strip() for pitch in raw_pitches if str(pitch).strip()
+            ]
+            if not pitches:
+                pitches = ["Main Pitch"]
+        else:
+            continue
+
+        if venue_name:
+            venues.append({"name": venue_name, "pitches": pitches})
+
+    return venues or [
+        {
+            "name": fallback_venue or "Venue TBC",
+            "pitches": ["Main Pitch"],
+        }
+    ]
+
+
+def _format_fixture_venue(venue_name, pitch_name):
+    if not pitch_name or pitch_name == "Main Pitch":
+        return venue_name
+
+    return f"{venue_name} - {pitch_name}"
+
+
+def _parse_time_slots(raw_slots):
+    if not raw_slots:
+        return []
+
+    if isinstance(raw_slots, str):
+        raw_slots = [raw_slots]
+
+    slots = []
+
+    for raw_slot in raw_slots:
+        parsed = parse_time(str(raw_slot).strip())
+        if parsed:
+            slots.append(parsed)
+
+    return sorted(set(slots))
+
+
+def _next_allowed_match_date(start_date, allowed_weekdays, excluded_dates):
+    match_day = start_date
+
+    for _ in range(370):
+        weekday_ok = allowed_weekdays is None or match_day.weekday() in allowed_weekdays
+        excluded = match_day in excluded_dates
+
+        if weekday_ok and not excluded:
+            return match_day
+
+        match_day = match_day + timedelta(days=1)
+
+    return start_date
+
+
+def _build_day_slots(
+    match_day,
+    venues,
+    explicit_time_slots,
+    first_kickoff,
+    match_duration_minutes,
+    turnaround_minutes,
+    max_games_per_day,
+    timezone_value,
+):
+    pitch_count = sum(max(len(venue["pitches"]), 1) for venue in venues)
+    pitch_count = max(pitch_count, 1)
+
+    if explicit_time_slots:
+        time_slots = explicit_time_slots
+    else:
+        slot_gap = timedelta(minutes=match_duration_minutes + turnaround_minutes)
+        sequential_windows = max(
+            1,
+            (max_games_per_day + pitch_count - 1) // pitch_count,
+        )
+        anchor = datetime.combine(match_day, first_kickoff)
+        time_slots = [
+            (anchor + slot_gap * index).time() for index in range(sequential_windows)
+        ]
+
+    slots = []
+
+    for slot_time in time_slots:
+        slot_datetime = timezone.make_aware(
+            datetime.combine(match_day, slot_time),
+            timezone_value,
+        )
+        for venue in venues:
+            for pitch in venue["pitches"]:
+                slots.append(
+                    {
+                        "datetime": slot_datetime,
+                        "venue": _format_fixture_venue(venue["name"], pitch),
+                        "pitch": pitch,
+                    }
+                )
+
+    return slots[:max_games_per_day]
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticatedAudit])
 def union_admin_generate_fixtures_view(request):
@@ -888,10 +1084,29 @@ def union_admin_generate_fixtures_view(request):
         or competition.start_date
         or timezone.localdate()
     )
-    kickoff = parse_time(str(request.data.get("kickoff_time") or "15:00"))
-    interval_days = int(request.data.get("interval_days") or 7)
+    first_kickoff = (
+        parse_time(str(request.data.get("first_kickoff_time") or ""))
+        or parse_time(str(request.data.get("kickoff_time") or ""))
+        or parse_time("15:00")
+    )
+    explicit_time_slots = _parse_time_slots(request.data.get("time_slots"))
+    interval_days = _safe_positive_int(request.data.get("interval_days"), 7, 1, 90)
+    match_duration_minutes = _safe_positive_int(
+        request.data.get("match_duration_minutes"), 80, 1, 240
+    )
+    turnaround_minutes = _safe_positive_int(
+        request.data.get("turnaround_minutes"), 20, 0, 180
+    )
+    max_games_per_day = _safe_positive_int(
+        request.data.get("max_games_per_day"), 8, 1, 80
+    )
     home_and_away = bool(request.data.get("home_and_away", True))
     default_venue = (request.data.get("venue") or "").strip()
+    venues = _normalise_venues(request.data.get("venues"), default_venue)
+    allowed_weekdays = _normalise_match_days(request.data.get("match_days"))
+    excluded_dates = _normalise_excluded_dates(
+        request.data.get("excluded_dates") or request.data.get("rest_weeks")
+    )
 
     rounds = _round_robin_pairs(clubs)
     if home_and_away:
@@ -901,32 +1116,96 @@ def union_admin_generate_fixtures_view(request):
         rounds = rounds + reverse_rounds
 
     created_matches = []
+    byes = []
     timezone_value = timezone.get_current_timezone()
+    cursor_date = start_date
 
     with transaction.atomic():
         for round_index, round_pairs in enumerate(rounds, start=1):
-            match_day = start_date + timedelta(days=interval_days * (round_index - 1))
-            match_datetime = timezone.make_aware(
-                datetime.combine(match_day, kickoff),
-                timezone_value,
-            )
-            for home, away in round_pairs:
-                created_matches.append(
-                    Match.objects.create(
-                        competition=competition,
-                        home_club=home,
-                        away_club=away,
-                        match_date=match_datetime,
-                        venue=default_venue or "Venue TBC",
-                        round=f"Matchweek {round_index}",
-                        status=Match.Status.SCHEDULED,
-                    )
+            round_label = f"Matchweek {round_index}"
+            round_club_ids = {
+                club.id for pair in round_pairs for club in pair if club is not None
+            }
+            bye_clubs = [club for club in clubs if club.id not in round_club_ids]
+            for club in bye_clubs:
+                byes.append(
+                    {
+                        "round": round_label,
+                        "club": club.id,
+                        "club_name": club.name,
+                    }
                 )
+
+            unscheduled_pairs = list(round_pairs)
+            round_first_date = _next_allowed_match_date(
+                cursor_date,
+                allowed_weekdays,
+                excluded_dates,
+            )
+            match_day = round_first_date
+
+            while unscheduled_pairs:
+                match_day = _next_allowed_match_date(
+                    match_day,
+                    allowed_weekdays,
+                    excluded_dates,
+                )
+                day_slots = _build_day_slots(
+                    match_day,
+                    venues,
+                    explicit_time_slots,
+                    first_kickoff,
+                    match_duration_minutes,
+                    turnaround_minutes,
+                    max_games_per_day,
+                    timezone_value,
+                )
+
+                if not day_slots:
+                    return _workspace_error(
+                        "No valid fixture slots could be generated."
+                    )
+
+                for slot in day_slots:
+                    if not unscheduled_pairs:
+                        break
+
+                    home, away = unscheduled_pairs.pop(0)
+                    created_matches.append(
+                        Match.objects.create(
+                            competition=competition,
+                            home_club=home,
+                            away_club=away,
+                            match_date=slot["datetime"],
+                            venue=slot["venue"],
+                            round=round_label,
+                            status=Match.Status.SCHEDULED,
+                        )
+                    )
+
+                if unscheduled_pairs:
+                    match_day = match_day + timedelta(days=1)
+
+            cursor_date = round_first_date + timedelta(days=interval_days)
 
     return Response(
         {
             "competition": CompetitionManagementSerializer(competition).data,
             "created_count": len(created_matches),
+            "schedule_rules": {
+                "start_date": start_date,
+                "match_days": request.data.get("match_days") or [],
+                "interval_days": interval_days,
+                "first_kickoff_time": first_kickoff,
+                "time_slots": explicit_time_slots,
+                "match_duration_minutes": match_duration_minutes,
+                "turnaround_minutes": turnaround_minutes,
+                "max_games_per_day": max_games_per_day,
+                "venues": venues,
+                "excluded_dates": sorted(excluded_dates),
+                "home_and_away": home_and_away,
+            },
+            "byes": byes,
             "fixtures": MatchListSerializer(
                 created_matches, many=True, context={"request": request}
             ).data,
