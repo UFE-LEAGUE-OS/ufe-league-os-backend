@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Competition, League, LeagueClubMembership, Match, Season
+from .models import Competition, LeagueClubMembership, Season
 from .serializers import MatchListSerializer
 
 

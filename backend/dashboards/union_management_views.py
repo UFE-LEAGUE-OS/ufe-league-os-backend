@@ -149,16 +149,25 @@ def union_admin_seasons_view(request):
     workspace = membership.workspace
 
     if request.method == "GET":
-        seasons = Season.objects.filter(league__union=workspace.related_union).select_related("league")
+        seasons = Season.objects.filter(
+            league__union=workspace.related_union
+        ).select_related("league")
         league_value = request.query_params.get("league")
         if league_value:
             league = _get_workspace_league(workspace, league_value)
             if league is None:
                 return _workspace_error("League not found.", status.HTTP_404_NOT_FOUND)
             seasons = seasons.filter(league=league)
-        return Response({"count": seasons.count(), "results": SeasonManagementSerializer(seasons, many=True).data})
+        return Response(
+            {
+                "count": seasons.count(),
+                "results": SeasonManagementSerializer(seasons, many=True).data,
+            }
+        )
 
-    permission_error = _require_permission(request.user, workspace, "union.competitions.manage")
+    permission_error = _require_permission(
+        request.user, workspace, "union.competitions.manage"
+    )
     if permission_error:
         return permission_error
 
@@ -178,7 +187,9 @@ def union_admin_seasons_view(request):
         end_date=parse_date(str(request.data.get("end_date") or "")),
         is_active=bool(request.data.get("is_active", True)),
     )
-    return Response(SeasonManagementSerializer(season).data, status=status.HTTP_201_CREATED)
+    return Response(
+        SeasonManagementSerializer(season).data, status=status.HTTP_201_CREATED
+    )
 
 
 @api_view(["GET", "POST"])
@@ -196,13 +207,24 @@ def union_admin_competitions_view(request):
             .select_related("league", "season_record")
             .annotate(
                 matches_count=models.Count("matches", distinct=True),
-                clubs_count=models.Count("league__club_memberships__club", distinct=True),
+                clubs_count=models.Count(
+                    "league__club_memberships__club", distinct=True
+                ),
             )
             .order_by("-is_active", "name")
         )
-        return Response({"count": competitions.count(), "results": CompetitionManagementSerializer(competitions, many=True).data})
+        return Response(
+            {
+                "count": competitions.count(),
+                "results": CompetitionManagementSerializer(
+                    competitions, many=True
+                ).data,
+            }
+        )
 
-    permission_error = _require_permission(request.user, workspace, "union.competitions.manage")
+    permission_error = _require_permission(
+        request.user, workspace, "union.competitions.manage"
+    )
     if permission_error:
         return permission_error
 
@@ -214,8 +236,12 @@ def union_admin_competitions_view(request):
     if not name:
         return _workspace_error("Competition name is required.")
 
-    season = _get_workspace_season(workspace, request.data.get("season") or request.data.get("season_id"))
-    season_label = (request.data.get("season_name") or request.data.get("season_label") or "").strip()
+    season = _get_workspace_season(
+        workspace, request.data.get("season") or request.data.get("season_id")
+    )
+    season_label = (
+        request.data.get("season_name") or request.data.get("season_label") or ""
+    ).strip()
     if season:
         season_label = season.name
     if not season_label:
@@ -232,7 +258,10 @@ def union_admin_competitions_view(request):
         is_active=bool(request.data.get("is_active", True)),
     )
 
-    return Response(CompetitionManagementSerializer(competition).data, status=status.HTTP_201_CREATED)
+    return Response(
+        CompetitionManagementSerializer(competition).data,
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @api_view(["GET", "POST"])
@@ -247,7 +276,13 @@ def union_admin_league_clubs_view(request):
     if request.method == "GET":
         memberships = (
             LeagueClubMembership.objects.filter(league__union=workspace.related_union)
-            .select_related("league", "club", "season", "promoted_from_league", "relegated_to_league")
+            .select_related(
+                "league",
+                "club",
+                "season",
+                "promoted_from_league",
+                "relegated_to_league",
+            )
             .order_by("league__name", "club__name")
         )
         league_value = request.query_params.get("league")
@@ -262,15 +297,24 @@ def union_admin_league_clubs_view(request):
             if season is None:
                 return _workspace_error("Season not found.", status.HTTP_404_NOT_FOUND)
             memberships = memberships.filter(season=season)
-        return Response({"count": memberships.count(), "results": LeagueClubMembershipSerializer(memberships, many=True).data})
+        return Response(
+            {
+                "count": memberships.count(),
+                "results": LeagueClubMembershipSerializer(memberships, many=True).data,
+            }
+        )
 
-    permission_error = _require_permission(request.user, workspace, "union.clubs.manage")
+    permission_error = _require_permission(
+        request.user, workspace, "union.clubs.manage"
+    )
     if permission_error:
         return permission_error
 
     league = _get_workspace_league(workspace, request.data.get("league"))
     club = _get_workspace_club(workspace, request.data.get("club"))
-    season = _get_workspace_season(workspace, request.data.get("season") or request.data.get("season_id"))
+    season = _get_workspace_season(
+        workspace, request.data.get("season") or request.data.get("season_id")
+    )
 
     if league is None:
         return _workspace_error("A valid league is required.")
@@ -278,7 +322,9 @@ def union_admin_league_clubs_view(request):
         return _workspace_error("A valid club is required.")
 
     status_value = request.data.get("status") or LeagueClubMembership.Status.ACTIVE
-    if status_value not in {choice[0] for choice in LeagueClubMembership.Status.choices}:
+    if status_value not in {
+        choice[0] for choice in LeagueClubMembership.Status.choices
+    }:
         return _workspace_error("Invalid league club status.")
 
     entry, _created = LeagueClubMembership.objects.update_or_create(
@@ -292,7 +338,9 @@ def union_admin_league_clubs_view(request):
         },
     )
 
-    return Response(LeagueClubMembershipSerializer(entry).data, status=status.HTTP_201_CREATED)
+    return Response(
+        LeagueClubMembershipSerializer(entry).data, status=status.HTTP_201_CREATED
+    )
 
 
 @api_view(["DELETE", "PATCH"])
@@ -303,17 +351,23 @@ def union_admin_league_club_detail_view(request, membership_id):
         return error
 
     workspace = membership.workspace
-    permission_error = _require_permission(request.user, workspace, "union.clubs.manage")
+    permission_error = _require_permission(
+        request.user, workspace, "union.clubs.manage"
+    )
     if permission_error:
         return permission_error
 
     entry = (
-        LeagueClubMembership.objects.filter(id=membership_id, league__union=workspace.related_union)
+        LeagueClubMembership.objects.filter(
+            id=membership_id, league__union=workspace.related_union
+        )
         .select_related("league", "club", "season")
         .first()
     )
     if entry is None:
-        return _workspace_error("League club entry not found.", status.HTTP_404_NOT_FOUND)
+        return _workspace_error(
+            "League club entry not found.", status.HTTP_404_NOT_FOUND
+        )
 
     if request.method == "DELETE":
         entry.status = LeagueClubMembership.Status.WITHDRAWN
@@ -323,7 +377,9 @@ def union_admin_league_club_detail_view(request, membership_id):
 
     status_value = request.data.get("status")
     if status_value:
-        if status_value not in {choice[0] for choice in LeagueClubMembership.Status.choices}:
+        if status_value not in {
+            choice[0] for choice in LeagueClubMembership.Status.choices
+        }:
             return _workspace_error("Invalid league club status.")
         entry.status = status_value
     if "notes" in request.data:
@@ -340,7 +396,9 @@ def union_admin_promote_relegate_view(request):
         return error
 
     workspace = membership.workspace
-    permission_error = _require_permission(request.user, workspace, "union.clubs.manage")
+    permission_error = _require_permission(
+        request.user, workspace, "union.clubs.manage"
+    )
     if permission_error:
         return permission_error
 
@@ -348,10 +406,15 @@ def union_admin_promote_relegate_view(request):
     from_league = _get_workspace_league(workspace, request.data.get("from_league"))
     to_league = _get_workspace_league(workspace, request.data.get("to_league"))
     season = _get_workspace_season(workspace, request.data.get("season"))
-    target_season = _get_workspace_season(workspace, request.data.get("target_season")) or season
+    target_season = (
+        _get_workspace_season(workspace, request.data.get("target_season")) or season
+    )
     movement = (request.data.get("movement") or "PROMOTED").upper()
 
-    if movement not in {LeagueClubMembership.Status.PROMOTED, LeagueClubMembership.Status.RELEGATED}:
+    if movement not in {
+        LeagueClubMembership.Status.PROMOTED,
+        LeagueClubMembership.Status.RELEGATED,
+    }:
         return _workspace_error("movement must be PROMOTED or RELEGATED.")
     if club is None or from_league is None or to_league is None:
         return _workspace_error("club, from_league and to_league are required.")
@@ -365,7 +428,11 @@ def union_admin_promote_relegate_view(request):
             season=season,
             defaults={
                 "status": movement,
-                "relegated_to_league": to_league if movement == LeagueClubMembership.Status.RELEGATED else None,
+                "relegated_to_league": (
+                    to_league
+                    if movement == LeagueClubMembership.Status.RELEGATED
+                    else None
+                ),
                 "notes": request.data.get("notes", ""),
                 "created_by": request.user,
             },
@@ -376,23 +443,32 @@ def union_admin_promote_relegate_view(request):
             season=target_season,
             defaults={
                 "status": movement,
-                "promoted_from_league": from_league if movement == LeagueClubMembership.Status.PROMOTED else None,
+                "promoted_from_league": (
+                    from_league
+                    if movement == LeagueClubMembership.Status.PROMOTED
+                    else None
+                ),
                 "notes": request.data.get("notes", ""),
                 "created_by": request.user,
             },
         )
 
-    return Response({
-        "source": LeagueClubMembershipSerializer(source).data,
-        "target": LeagueClubMembershipSerializer(target).data,
-    })
+    return Response(
+        {
+            "source": LeagueClubMembershipSerializer(source).data,
+            "target": LeagueClubMembershipSerializer(target).data,
+        }
+    )
 
 
 def _fixture_participants(competition):
     season = competition.season_record
     memberships = LeagueClubMembership.objects.filter(
         league=competition.league,
-        status__in=[LeagueClubMembership.Status.ACTIVE, LeagueClubMembership.Status.PROMOTED],
+        status__in=[
+            LeagueClubMembership.Status.ACTIVE,
+            LeagueClubMembership.Status.PROMOTED,
+        ],
     )
     if season:
         memberships = memberships.filter(season=season)
@@ -448,7 +524,9 @@ def union_admin_generate_fixtures_view(request):
         return error
 
     workspace = membership.workspace
-    permission_error = _require_permission(request.user, workspace, "union.competitions.manage")
+    permission_error = _require_permission(
+        request.user, workspace, "union.competitions.manage"
+    )
     if permission_error:
         return permission_error
 
@@ -460,18 +538,28 @@ def union_admin_generate_fixtures_view(request):
     clear_existing = bool(request.data.get("clear_existing", False))
 
     if existing.exists() and not clear_existing:
-        return _workspace_error("This competition already has fixtures. Send clear_existing=true to replace scheduled fixtures.")
+        return _workspace_error(
+            "This competition already has fixtures. Send clear_existing=true to replace scheduled fixtures."
+        )
 
     if clear_existing:
         if existing.exclude(status=Match.Status.SCHEDULED).exists():
-            return _workspace_error("Only competitions with scheduled-only fixtures can be regenerated.")
+            return _workspace_error(
+                "Only competitions with scheduled-only fixtures can be regenerated."
+            )
         existing.delete()
 
     clubs = _fixture_participants(competition)
     if len(clubs) < 2:
-        return _workspace_error("At least two league clubs are required to generate fixtures.")
+        return _workspace_error(
+            "At least two league clubs are required to generate fixtures."
+        )
 
-    start_date = parse_date(str(request.data.get("start_date") or "")) or competition.start_date or timezone.localdate()
+    start_date = (
+        parse_date(str(request.data.get("start_date") or ""))
+        or competition.start_date
+        or timezone.localdate()
+    )
     kickoff = parse_time(str(request.data.get("kickoff_time") or "15:00"))
     interval_days = int(request.data.get("interval_days") or 7)
     home_and_away = bool(request.data.get("home_and_away", True))
@@ -479,7 +567,9 @@ def union_admin_generate_fixtures_view(request):
 
     rounds = _round_robin_pairs(clubs)
     if home_and_away:
-        reverse_rounds = [[(away, home) for home, away in round_pairs] for round_pairs in rounds]
+        reverse_rounds = [
+            [(away, home) for home, away in round_pairs] for round_pairs in rounds
+        ]
         rounds = rounds + reverse_rounds
 
     created_matches = []
@@ -505,8 +595,13 @@ def union_admin_generate_fixtures_view(request):
                     )
                 )
 
-    return Response({
-        "competition": CompetitionManagementSerializer(competition).data,
-        "created_count": len(created_matches),
-        "fixtures": MatchListSerializer(created_matches, many=True, context={"request": request}).data,
-    }, status=status.HTTP_201_CREATED)
+    return Response(
+        {
+            "competition": CompetitionManagementSerializer(competition).data,
+            "created_count": len(created_matches),
+            "fixtures": MatchListSerializer(
+                created_matches, many=True, context={"request": request}
+            ).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )

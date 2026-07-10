@@ -49,7 +49,6 @@ urlpatterns = [
         views.union_admin_transfer_owner_view,
         name="union-admin-transfer-owner",
     ),
-
     path(
         "union-admin/seasons/",
         union_management_views.union_admin_seasons_view,

@@ -317,7 +317,6 @@ class UnionWorkspaceMembership(models.Model):
         return sorted(set(role_permissions) | set(self.extra_permissions or []))
 
 
-
 class Season(models.Model):
     """A real season record under a league, e.g. 2026/27."""
 
@@ -370,7 +369,9 @@ class LeagueClubMembership(models.Model):
         on_delete=models.CASCADE,
         related_name="club_memberships",
     )
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.ACTIVE
+    )
     promoted_from_league = models.ForeignKey(
         League,
         null=True,
