@@ -95,6 +95,11 @@ urlpatterns = [
         name="union-admin-promote-relegate",
     ),
     path(
+        "union-admin/fixtures/<int:match_id>/reschedule/",
+        union_management_views.union_admin_fixture_reschedule_view,
+        name="union-admin-fixture-reschedule",
+    ),
+    path(
         "union-admin/generate-fixtures/",
         union_management_views.union_admin_generate_fixtures_view,
         name="union-admin-generate-fixtures",
