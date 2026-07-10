@@ -50,6 +50,16 @@ urlpatterns = [
         name="union-admin-transfer-owner",
     ),
     path(
+        "union-admin/clubs/",
+        union_management_views.union_admin_clubs_view,
+        name="union-admin-clubs",
+    ),
+    path(
+        "union-admin/clubs/<int:club_id>/",
+        union_management_views.union_admin_club_detail_view,
+        name="union-admin-club-detail",
+    ),
+    path(
         "union-admin/leagues/",
         union_management_views.union_admin_leagues_view,
         name="union-admin-leagues",

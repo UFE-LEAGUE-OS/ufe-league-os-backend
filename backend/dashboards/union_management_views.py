@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+from django.contrib.auth import get_user_model
 from django.db import models, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_time
@@ -11,6 +12,7 @@ from rest_framework.response import Response
 from accounts.models import Club
 from accounts.permissions import IsAuthenticatedAudit
 from .management_serializers import (
+    ClubManagementSerializer,
     CompetitionManagementSerializer,
     LeagueClubMembershipSerializer,
     LeagueManagementSerializer,
@@ -73,6 +75,49 @@ def _require_permission(user, workspace, permission):
         )
 
     return None
+
+
+
+def _workspace_sport_value(workspace):
+    value = (workspace.sport or "").strip().upper().replace(" ", "_")
+    valid_values = {choice[0] for choice in Club.Sport.choices}
+    return value if value in valid_values else Club.Sport.OTHER
+
+
+def _workspace_management_clubs(workspace):
+    sport_value = _workspace_sport_value(workspace)
+    sport_clubs = Club.objects.filter(sport=sport_value)
+
+    if workspace.related_union:
+        union_clubs = Club.objects.filter(league_memberships__league__union=workspace.related_union)
+        return (
+            (sport_clubs | union_clubs)
+            .distinct()
+            .select_related("admin")
+            .prefetch_related("league_memberships__league", "league_memberships__season")
+            .order_by("name")
+        )
+
+    return (
+        sport_clubs
+        .select_related("admin")
+        .prefetch_related("league_memberships__league", "league_memberships__season")
+        .order_by("name")
+    )
+
+
+def _resolve_existing_user_by_email(email):
+    email_value = (email or "").strip().lower()
+    if not email_value:
+        return None, None
+
+    User = get_user_model()
+    user = User.objects.filter(email__iexact=email_value).first()
+
+    if user is None:
+        return None, _workspace_error("No existing user found for the supplied admin email.")
+
+    return user, None
 
 
 def _workspace_leagues(workspace):
@@ -138,6 +183,145 @@ def _unique_slug(model, base, queryset):
         counter += 1
 
     return slug
+
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_clubs_view(request):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+
+    workspace = membership.workspace
+
+    if request.method == "GET":
+        clubs = _workspace_management_clubs(workspace)
+
+        query = (request.query_params.get("q") or "").strip()
+        if query:
+            clubs = clubs.filter(
+                models.Q(name__icontains=query)
+                | models.Q(short_name__icontains=query)
+                | models.Q(admin__email__icontains=query)
+            )
+
+        return Response(
+            {
+                "count": clubs.count(),
+                "results": ClubManagementSerializer(
+                    clubs,
+                    many=True,
+                    context={"request": request},
+                ).data,
+            }
+        )
+
+    permission_error = _require_permission(request.user, workspace, "union.clubs.manage")
+    if permission_error:
+        return permission_error
+
+    name = (request.data.get("name") or "").strip()
+    if not name:
+        return _workspace_error("Club name is required.")
+
+    if Club.objects.filter(name__iexact=name).exists():
+        return _workspace_error("A club with this name already exists.")
+
+    admin, admin_error = _resolve_existing_user_by_email(request.data.get("admin_email"))
+    if admin_error:
+        return admin_error
+
+    sport_value = (request.data.get("sport") or _workspace_sport_value(workspace)).strip().upper().replace(" ", "_")
+    if sport_value not in {choice[0] for choice in Club.Sport.choices}:
+        sport_value = _workspace_sport_value(workspace)
+
+    club = Club.objects.create(
+        name=name,
+        slug=_unique_slug(Club, name, Club.objects.all()),
+        short_name=(request.data.get("short_name") or "").strip(),
+        sport=sport_value,
+        primary_color=(request.data.get("primary_color") or "").strip(),
+        secondary_color=(request.data.get("secondary_color") or "").strip(),
+        admin=admin,
+    )
+
+    return Response(
+        ClubManagementSerializer(club, context={"request": request}).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["GET", "PATCH", "DELETE"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_club_detail_view(request, club_id):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+
+    workspace = membership.workspace
+    club = _workspace_management_clubs(workspace).filter(id=club_id).first()
+
+    if club is None:
+        return _workspace_error("Club not found.", status.HTTP_404_NOT_FOUND)
+
+    if request.method == "GET":
+        return Response(ClubManagementSerializer(club, context={"request": request}).data)
+
+    permission_error = _require_permission(request.user, workspace, "union.clubs.manage")
+    if permission_error:
+        return permission_error
+
+    if request.method == "DELETE":
+        has_workspace_links = club.league_memberships.filter(
+            league__union=workspace.related_union
+        ).exists()
+        has_matches = club.home_matches.exists() or club.away_matches.exists() or club.standings.exists()
+
+        if has_workspace_links or has_matches:
+            return _workspace_error(
+                "This club has league, fixture or standings records. Remove it from a league season instead of deleting the club."
+            )
+
+        club.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    if "name" in request.data:
+        name = (request.data.get("name") or "").strip()
+        if not name:
+            return _workspace_error("Club name cannot be blank.")
+        if Club.objects.filter(name__iexact=name).exclude(id=club.id).exists():
+            return _workspace_error("Another club with this name already exists.")
+        club.name = name
+
+    if "short_name" in request.data:
+        club.short_name = (request.data.get("short_name") or "").strip()
+
+    if "sport" in request.data:
+        sport_value = (request.data.get("sport") or "").strip().upper().replace(" ", "_")
+        if sport_value not in {choice[0] for choice in Club.Sport.choices}:
+            return _workspace_error("Invalid sport value.")
+        club.sport = sport_value
+
+    if "primary_color" in request.data:
+        club.primary_color = (request.data.get("primary_color") or "").strip()
+
+    if "secondary_color" in request.data:
+        club.secondary_color = (request.data.get("secondary_color") or "").strip()
+
+    if "admin_email" in request.data:
+        admin_email = (request.data.get("admin_email") or "").strip()
+        if admin_email:
+            admin, admin_error = _resolve_existing_user_by_email(admin_email)
+            if admin_error:
+                return admin_error
+            club.admin = admin
+        else:
+            club.admin = None
+
+    club.save()
+
+    return Response(ClubManagementSerializer(club, context={"request": request}).data)
 
 
 @api_view(["GET"])

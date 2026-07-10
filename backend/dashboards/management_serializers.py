@@ -1,7 +1,127 @@
 from rest_framework import serializers
 
+from accounts.models import Club
 from .models import Competition, League, LeagueClubMembership, Season
 from .serializers import MatchListSerializer
+
+
+
+class ClubManagementSerializer(serializers.ModelSerializer):
+    sport_display = serializers.CharField(source="get_sport_display", read_only=True)
+    admin_name = serializers.SerializerMethodField()
+    admin_email = serializers.SerializerMethodField()
+    logo_url = serializers.SerializerMethodField()
+    banner_url = serializers.SerializerMethodField()
+    teams = serializers.SerializerMethodField()
+    players = serializers.SerializerMethodField()
+    compliance = serializers.SerializerMethodField()
+    memberships = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Club
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "short_name",
+            "sport",
+            "sport_display",
+            "logo_url",
+            "banner_url",
+            "primary_color",
+            "secondary_color",
+            "admin",
+            "admin_name",
+            "admin_email",
+            "teams",
+            "players",
+            "compliance",
+            "memberships",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "slug",
+            "sport_display",
+            "logo_url",
+            "banner_url",
+            "admin_name",
+            "admin_email",
+            "teams",
+            "players",
+            "compliance",
+            "memberships",
+            "created_at",
+        ]
+
+    def _file_url(self, file_field):
+        if not file_field:
+            return None
+
+        url = getattr(file_field, "url", None)
+        if not url:
+            return None
+
+        request = self.context.get("request")
+        return request.build_absolute_uri(url) if request else url
+
+    def get_logo_url(self, obj):
+        return self._file_url(getattr(obj, "logo", None))
+
+    def get_banner_url(self, obj):
+        return self._file_url(getattr(obj, "banner", None))
+
+    def get_admin_name(self, obj):
+        if not obj.admin:
+            return ""
+        return obj.admin.get_full_name() or obj.admin.email
+
+    def get_admin_email(self, obj):
+        return obj.admin.email if obj.admin else ""
+
+    def get_teams(self, obj):
+        return max(1, obj.league_memberships.values("season_id").distinct().count())
+
+    def get_players(self, obj):
+        return getattr(obj, "players_count", 0) or 0
+
+    def get_compliance(self, obj):
+        if not obj.admin:
+            return "Admin needed"
+        if not obj.logo:
+            return "Logo needed"
+        return "Ready"
+
+    def get_memberships(self, obj):
+        memberships = (
+            obj.league_memberships
+            .select_related("league", "season", "promoted_from_league", "relegated_to_league")
+            .order_by("league__name", "season__name")
+        )
+
+        return [
+            {
+                "id": membership.id,
+                "league": membership.league_id,
+                "league_name": membership.league.name,
+                "season": membership.season_id,
+                "season_name": membership.season.name if membership.season else None,
+                "status": membership.status,
+                "status_display": membership.get_status_display(),
+                "promoted_from_league_name": (
+                    membership.promoted_from_league.name
+                    if membership.promoted_from_league
+                    else None
+                ),
+                "relegated_to_league_name": (
+                    membership.relegated_to_league.name
+                    if membership.relegated_to_league
+                    else None
+                ),
+                "notes": membership.notes,
+            }
+            for membership in memberships
+        ]
 
 
 class LeagueManagementSerializer(serializers.ModelSerializer):
