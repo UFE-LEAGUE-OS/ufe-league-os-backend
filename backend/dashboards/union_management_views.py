@@ -77,7 +77,6 @@ def _require_permission(user, workspace, permission):
     return None
 
 
-
 def _workspace_sport_value(workspace):
     value = (workspace.sport or "").strip().upper().replace(" ", "_")
     valid_values = {choice[0] for choice in Club.Sport.choices}
@@ -89,18 +88,21 @@ def _workspace_management_clubs(workspace):
     sport_clubs = Club.objects.filter(sport=sport_value)
 
     if workspace.related_union:
-        union_clubs = Club.objects.filter(league_memberships__league__union=workspace.related_union)
+        union_clubs = Club.objects.filter(
+            league_memberships__league__union=workspace.related_union
+        )
         return (
             (sport_clubs | union_clubs)
             .distinct()
             .select_related("admin")
-            .prefetch_related("league_memberships__league", "league_memberships__season")
+            .prefetch_related(
+                "league_memberships__league", "league_memberships__season"
+            )
             .order_by("name")
         )
 
     return (
-        sport_clubs
-        .select_related("admin")
+        sport_clubs.select_related("admin")
         .prefetch_related("league_memberships__league", "league_memberships__season")
         .order_by("name")
     )
@@ -115,7 +117,9 @@ def _resolve_existing_user_by_email(email):
     user = User.objects.filter(email__iexact=email_value).first()
 
     if user is None:
-        return None, _workspace_error("No existing user found for the supplied admin email.")
+        return None, _workspace_error(
+            "No existing user found for the supplied admin email."
+        )
 
     return user, None
 
@@ -185,7 +189,6 @@ def _unique_slug(model, base, queryset):
     return slug
 
 
-
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticatedAudit])
 def union_admin_clubs_view(request):
@@ -217,7 +220,9 @@ def union_admin_clubs_view(request):
             }
         )
 
-    permission_error = _require_permission(request.user, workspace, "union.clubs.manage")
+    permission_error = _require_permission(
+        request.user, workspace, "union.clubs.manage"
+    )
     if permission_error:
         return permission_error
 
@@ -228,11 +233,18 @@ def union_admin_clubs_view(request):
     if Club.objects.filter(name__iexact=name).exists():
         return _workspace_error("A club with this name already exists.")
 
-    admin, admin_error = _resolve_existing_user_by_email(request.data.get("admin_email"))
+    admin, admin_error = _resolve_existing_user_by_email(
+        request.data.get("admin_email")
+    )
     if admin_error:
         return admin_error
 
-    sport_value = (request.data.get("sport") or _workspace_sport_value(workspace)).strip().upper().replace(" ", "_")
+    sport_value = (
+        (request.data.get("sport") or _workspace_sport_value(workspace))
+        .strip()
+        .upper()
+        .replace(" ", "_")
+    )
     if sport_value not in {choice[0] for choice in Club.Sport.choices}:
         sport_value = _workspace_sport_value(workspace)
 
@@ -266,9 +278,13 @@ def union_admin_club_detail_view(request, club_id):
         return _workspace_error("Club not found.", status.HTTP_404_NOT_FOUND)
 
     if request.method == "GET":
-        return Response(ClubManagementSerializer(club, context={"request": request}).data)
+        return Response(
+            ClubManagementSerializer(club, context={"request": request}).data
+        )
 
-    permission_error = _require_permission(request.user, workspace, "union.clubs.manage")
+    permission_error = _require_permission(
+        request.user, workspace, "union.clubs.manage"
+    )
     if permission_error:
         return permission_error
 
@@ -276,7 +292,11 @@ def union_admin_club_detail_view(request, club_id):
         has_workspace_links = club.league_memberships.filter(
             league__union=workspace.related_union
         ).exists()
-        has_matches = club.home_matches.exists() or club.away_matches.exists() or club.standings.exists()
+        has_matches = (
+            club.home_matches.exists()
+            or club.away_matches.exists()
+            or club.standings.exists()
+        )
 
         if has_workspace_links or has_matches:
             return _workspace_error(
@@ -298,7 +318,9 @@ def union_admin_club_detail_view(request, club_id):
         club.short_name = (request.data.get("short_name") or "").strip()
 
     if "sport" in request.data:
-        sport_value = (request.data.get("sport") or "").strip().upper().replace(" ", "_")
+        sport_value = (
+            (request.data.get("sport") or "").strip().upper().replace(" ", "_")
+        )
         if sport_value not in {choice[0] for choice in Club.Sport.choices}:
             return _workspace_error("Invalid sport value.")
         club.sport = sport_value
@@ -334,10 +356,12 @@ def union_admin_leagues_view(request):
     workspace = membership.workspace
     leagues = _workspace_leagues(workspace).select_related("union")
 
-    return Response({
-        "count": leagues.count(),
-        "results": LeagueManagementSerializer(leagues, many=True).data,
-    })
+    return Response(
+        {
+            "count": leagues.count(),
+            "results": LeagueManagementSerializer(leagues, many=True).data,
+        }
+    )
 
 
 @api_view(["GET", "POST"])

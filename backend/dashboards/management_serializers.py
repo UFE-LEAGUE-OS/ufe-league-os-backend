@@ -5,7 +5,6 @@ from .models import Competition, League, LeagueClubMembership, Season
 from .serializers import MatchListSerializer
 
 
-
 class ClubManagementSerializer(serializers.ModelSerializer):
     sport_display = serializers.CharField(source="get_sport_display", read_only=True)
     admin_name = serializers.SerializerMethodField()
@@ -93,11 +92,9 @@ class ClubManagementSerializer(serializers.ModelSerializer):
         return "Ready"
 
     def get_memberships(self, obj):
-        memberships = (
-            obj.league_memberships
-            .select_related("league", "season", "promoted_from_league", "relegated_to_league")
-            .order_by("league__name", "season__name")
-        )
+        memberships = obj.league_memberships.select_related(
+            "league", "season", "promoted_from_league", "relegated_to_league"
+        ).order_by("league__name", "season__name")
 
         return [
             {
