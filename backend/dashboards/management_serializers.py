@@ -1,7 +1,67 @@
 from rest_framework import serializers
 
-from .models import Competition, LeagueClubMembership, Season
+from .models import Competition, League, LeagueClubMembership, Season
 from .serializers import MatchListSerializer
+
+
+class LeagueManagementSerializer(serializers.ModelSerializer):
+    union_name = serializers.CharField(source="union.name", read_only=True)
+    sport = serializers.SerializerMethodField()
+    description = serializers.SerializerMethodField()
+    logo_url = serializers.SerializerMethodField()
+    is_active = serializers.SerializerMethodField()
+    created_at = serializers.SerializerMethodField()
+    updated_at = serializers.SerializerMethodField()
+
+    class Meta:
+        model = League
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "union",
+            "union_name",
+            "sport",
+            "description",
+            "logo_url",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_sport(self, obj):
+        workspace = getattr(getattr(obj, "union", None), "workspace", None)
+        return getattr(workspace, "sport", "") or getattr(obj, "sport", "") or ""
+
+    def get_description(self, obj):
+        return getattr(obj, "description", "") or ""
+
+    def get_logo_url(self, obj):
+        logo = getattr(obj, "logo", None)
+        if not logo:
+            return None
+
+        url = getattr(logo, "url", None)
+        if not url:
+            return None
+
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(url)
+
+        return url
+
+    def get_is_active(self, obj):
+        return bool(getattr(obj, "is_active", True))
+
+    def get_created_at(self, obj):
+        value = getattr(obj, "created_at", None)
+        return value.isoformat() if value else None
+
+    def get_updated_at(self, obj):
+        value = getattr(obj, "updated_at", None)
+        return value.isoformat() if value else None
 
 
 class SeasonManagementSerializer(serializers.ModelSerializer):

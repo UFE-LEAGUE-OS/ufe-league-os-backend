@@ -13,6 +13,7 @@ from accounts.permissions import IsAuthenticatedAudit
 from .management_serializers import (
     CompetitionManagementSerializer,
     LeagueClubMembershipSerializer,
+    LeagueManagementSerializer,
     MatchListSerializer,
     SeasonManagementSerializer,
 )
@@ -137,6 +138,22 @@ def _unique_slug(model, base, queryset):
         counter += 1
 
     return slug
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_leagues_view(request):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+
+    workspace = membership.workspace
+    leagues = _workspace_leagues(workspace).select_related("union")
+
+    return Response({
+        "count": leagues.count(),
+        "results": LeagueManagementSerializer(leagues, many=True).data,
+    })
 
 
 @api_view(["GET", "POST"])
