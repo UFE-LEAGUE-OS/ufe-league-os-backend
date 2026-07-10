@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from django.contrib.auth import get_user_model
 from django.db import models, transaction
 from django.utils import timezone
-from django.utils.dateparse import parse_date, parse_time
+from django.utils.dateparse import parse_date, parse_datetime, parse_time
 from django.utils.text import slugify
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -11,6 +11,7 @@ from rest_framework.response import Response
 
 from accounts.models import Club
 from accounts.permissions import IsAuthenticatedAudit
+from accounts.rbac import log_governance_action
 from .management_serializers import (
     ClubManagementSerializer,
     CompetitionManagementSerializer,
@@ -1038,6 +1039,143 @@ def _build_day_slots(
                 )
 
     return slots[:max_games_per_day]
+
+
+def _get_workspace_match(workspace, match_id):
+    return (
+        Match.objects.select_related(
+            "competition",
+            "competition__league",
+            "home_club",
+            "away_club",
+        )
+        .filter(id=match_id, competition__league__union=workspace.related_union)
+        .first()
+    )
+
+
+def _fixture_datetime_from_request(request, current_match_date):
+    raw_match_date = str(request.data.get("match_date") or "").strip()
+    parsed_datetime = parse_datetime(raw_match_date) if raw_match_date else None
+
+    if parsed_datetime:
+        if timezone.is_naive(parsed_datetime):
+            return timezone.make_aware(
+                parsed_datetime,
+                timezone.get_current_timezone(),
+            )
+        return parsed_datetime
+
+    current_local = timezone.localtime(current_match_date)
+    requested_date = parse_date(str(request.data.get("scheduled_date") or "").strip())
+    requested_time = parse_time(
+        str(request.data.get("kickoff_time") or request.data.get("time") or "").strip()
+    )
+
+    if requested_date is None and requested_time is None:
+        return current_match_date
+
+    fixture_date = requested_date or current_local.date()
+    fixture_time = requested_time or current_local.time().replace(microsecond=0)
+
+    return timezone.make_aware(
+        datetime.combine(fixture_date, fixture_time),
+        timezone.get_current_timezone(),
+    )
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_fixture_reschedule_view(request, match_id):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+
+    workspace = membership.workspace
+
+    permission_error = _require_permission(
+        request.user,
+        workspace,
+        "union.competitions.manage",
+    )
+    if permission_error:
+        return permission_error
+
+    match = _get_workspace_match(workspace, match_id)
+    if match is None:
+        return _workspace_error("Fixture not found.", status.HTTP_404_NOT_FOUND)
+
+    if match.status in [Match.Status.COMPLETED, Match.Status.ABANDONED]:
+        return _workspace_error("Completed or abandoned matches cannot be rescheduled.")
+
+    status_value = request.data.get("status") or match.status
+    valid_statuses = {choice[0] for choice in Match.Status.choices}
+
+    if status_value not in valid_statuses:
+        return _workspace_error("Invalid fixture status.")
+
+    previous = {
+        "match_date": match.match_date.isoformat(),
+        "venue": match.venue,
+        "round": match.round,
+        "status": match.status,
+    }
+
+    new_match_date = _fixture_datetime_from_request(request, match.match_date)
+
+    venue_value = request.data.get("venue")
+    pitch_value = str(
+        request.data.get("pitch")
+        or request.data.get("field")
+        or request.data.get("court")
+        or ""
+    ).strip()
+
+    if venue_value is not None or pitch_value:
+        venue_name = str(venue_value or match.venue or "Venue TBC").strip()
+        match.venue = _format_fixture_venue(venue_name, pitch_value)
+    else:
+        match.venue = match.venue or "Venue TBC"
+
+    if "round" in request.data:
+        match.round = str(request.data.get("round") or "").strip()
+
+    match.match_date = new_match_date
+    match.status = status_value
+    match.save(update_fields=["match_date", "venue", "round", "status", "updated_at"])
+
+    reason = str(request.data.get("reason") or "").strip()
+
+    log_governance_action(
+        actor=request.user,
+        action="fixture_rescheduled",
+        details={
+            "workspace": workspace.slug,
+            "competition": match.competition_id,
+            "match": match.id,
+            "home_club": match.home_club.name,
+            "away_club": match.away_club.name,
+            "previous": previous,
+            "updated": {
+                "match_date": match.match_date.isoformat(),
+                "venue": match.venue,
+                "round": match.round,
+                "status": match.status,
+            },
+            "reason": reason,
+        },
+    )
+
+    return Response(
+        {
+            "previous": previous,
+            "updated": MatchListSerializer(
+                match,
+                context={"request": request},
+            ).data,
+            "reason": reason,
+        }
+    )
 
 
 @api_view(["POST"])
