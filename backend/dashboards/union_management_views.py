@@ -15,12 +15,22 @@ from accounts.rbac import log_governance_action
 from .management_serializers import (
     ClubManagementSerializer,
     CompetitionManagementSerializer,
+    FixtureOfficialAssignmentManagementSerializer,
     LeagueClubMembershipSerializer,
     LeagueManagementSerializer,
     MatchListSerializer,
+    UnionMatchOfficialManagementSerializer,
     SeasonManagementSerializer,
 )
-from .models import Competition, League, LeagueClubMembership, Match, Season
+from .models import (
+    Competition,
+    FixtureOfficialAssignment,
+    League,
+    LeagueClubMembership,
+    Match,
+    Season,
+    UnionMatchOfficial,
+)
 from .views import (
     _get_membership_for_workspace,
     _get_union_membership_for_request,
@@ -1175,6 +1185,515 @@ def union_admin_fixture_reschedule_view(request, match_id):
             ).data,
             "reason": reason,
         }
+    )
+
+
+OFFICIAL_ROLES_BY_SPORT = {
+    "RUGBY": {
+        UnionMatchOfficial.RoleType.CENTRE_REFEREE,
+        UnionMatchOfficial.RoleType.ASSISTANT_REFEREE,
+        UnionMatchOfficial.RoleType.TMO,
+        UnionMatchOfficial.RoleType.MATCH_COMMISSIONER,
+        UnionMatchOfficial.RoleType.ASSESSOR,
+        UnionMatchOfficial.RoleType.CITING_COMMISSIONER,
+        UnionMatchOfficial.RoleType.TIMEKEEPER,
+        UnionMatchOfficial.RoleType.SUBSTITUTION_CONTROLLER,
+        UnionMatchOfficial.RoleType.TECHNICAL_ZONE_OFFICIAL,
+        UnionMatchOfficial.RoleType.SCOREBOARD_OPERATOR,
+        UnionMatchOfficial.RoleType.OTHER,
+    },
+    "FOOTBALL": {
+        UnionMatchOfficial.RoleType.CENTRE_REFEREE,
+        UnionMatchOfficial.RoleType.ASSISTANT_REFEREE,
+        UnionMatchOfficial.RoleType.FOURTH_OFFICIAL,
+        UnionMatchOfficial.RoleType.VAR,
+        UnionMatchOfficial.RoleType.AVAR,
+        UnionMatchOfficial.RoleType.MATCH_COMMISSIONER,
+        UnionMatchOfficial.RoleType.ASSESSOR,
+        UnionMatchOfficial.RoleType.MATCH_COORDINATOR,
+        UnionMatchOfficial.RoleType.OTHER,
+    },
+    "BASKETBALL": {
+        UnionMatchOfficial.RoleType.CREW_CHIEF,
+        UnionMatchOfficial.RoleType.UMPIRE,
+        UnionMatchOfficial.RoleType.MATCH_COMMISSIONER,
+        UnionMatchOfficial.RoleType.TABLE_OFFICIAL,
+        UnionMatchOfficial.RoleType.SCORER,
+        UnionMatchOfficial.RoleType.ASSISTANT_SCORER,
+        UnionMatchOfficial.RoleType.TIMER,
+        UnionMatchOfficial.RoleType.SHOT_CLOCK_OPERATOR,
+        UnionMatchOfficial.RoleType.ASSESSOR,
+        UnionMatchOfficial.RoleType.OTHER,
+    },
+}
+
+DEFAULT_OFFICIAL_ROLE_BY_SPORT = {
+    "RUGBY": UnionMatchOfficial.RoleType.CENTRE_REFEREE,
+    "FOOTBALL": UnionMatchOfficial.RoleType.CENTRE_REFEREE,
+    "BASKETBALL": UnionMatchOfficial.RoleType.CREW_CHIEF,
+}
+
+
+def _normalise_official_sport(value):
+    return str(value or "").strip().upper().replace(" ", "_")
+
+
+def _official_role_options_for_sport(sport_value):
+    labels = dict(UnionMatchOfficial.RoleType.choices)
+    allowed_roles = OFFICIAL_ROLES_BY_SPORT.get(sport_value, set())
+
+    return [
+        {
+            "value": role,
+            "label": labels.get(role, role.replace("_", " ").title()),
+        }
+        for role in sorted(allowed_roles, key=lambda item: labels.get(item, item))
+    ]
+
+
+def _workspace_match_officials(workspace):
+    workspace_sport = _workspace_sport_value(workspace)
+
+    return UnionMatchOfficial.objects.filter(
+        union=workspace.related_union,
+        primary_sport__iexact=workspace_sport,
+    )
+
+
+def _get_workspace_match_official(workspace, official_id):
+    return _workspace_match_officials(workspace).filter(id=official_id).first()
+
+
+def _normalise_official_role(value, sport_value):
+    allowed_roles = OFFICIAL_ROLES_BY_SPORT.get(sport_value, set())
+    default_role = DEFAULT_OFFICIAL_ROLE_BY_SPORT.get(
+        sport_value,
+        UnionMatchOfficial.RoleType.OTHER,
+    )
+
+    if value in (None, ""):
+        return default_role
+
+    role_value = str(value).strip().upper()
+    return role_value if role_value in allowed_roles else None
+
+
+def _normalise_official_status(value):
+    status_value = str(value or "").strip().upper()
+
+    valid_statuses = {choice[0] for choice in UnionMatchOfficial.Status.choices}
+    return (
+        status_value
+        if status_value in valid_statuses
+        else UnionMatchOfficial.Status.AVAILABLE
+    )
+
+
+def _normalise_assignment_status(value):
+    status_value = str(value or "").strip().upper()
+
+    valid_statuses = {choice[0] for choice in FixtureOfficialAssignment.Status.choices}
+    return (
+        status_value
+        if status_value in valid_statuses
+        else FixtureOfficialAssignment.Status.ASSIGNED
+    )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_match_officials_view(request):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+
+    workspace = membership.workspace
+    workspace_sport = _workspace_sport_value(workspace)
+
+    permission_error = _require_permission(
+        request.user, workspace, "union.referees.manage"
+    )
+    if permission_error:
+        return permission_error
+
+    if request.method == "GET":
+        officials = _workspace_match_officials(workspace).select_related("user")
+
+        query = str(request.query_params.get("q") or "").strip()
+        if query:
+            officials = officials.filter(
+                models.Q(full_name__icontains=query)
+                | models.Q(email__icontains=query)
+                | models.Q(role_type__icontains=query)
+                | models.Q(certification_level__icontains=query)
+                | models.Q(status__icontains=query)
+            )
+
+        return Response(
+            {
+                "count": officials.count(),
+                "sport": workspace_sport,
+                "role_options": _official_role_options_for_sport(workspace_sport),
+                "results": UnionMatchOfficialManagementSerializer(
+                    officials,
+                    many=True,
+                    context={"request": request},
+                ).data,
+            }
+        )
+
+    email = str(request.data.get("email") or "").strip().lower()
+    full_name = str(
+        request.data.get("full_name") or request.data.get("name") or ""
+    ).strip()
+    requested_sport = _normalise_official_sport(request.data.get("primary_sport"))
+
+    if requested_sport and requested_sport != workspace_sport:
+        return _workspace_error(
+            f"Officials in this workspace must belong to {workspace_sport.title()}."
+        )
+
+    role_type = _normalise_official_role(
+        request.data.get("role_type"),
+        workspace_sport,
+    )
+
+    if role_type is None:
+        return _workspace_error(
+            f"The selected official role is not valid for {workspace_sport.title()}."
+        )
+
+    linked_user = None
+    if email:
+        linked_user = get_user_model().objects.filter(email__iexact=email).first()
+
+    if not full_name and linked_user:
+        full_name = linked_user.full_name or linked_user.email
+
+    if not full_name:
+        return _workspace_error("Official full name is required.")
+
+    defaults = {
+        "user": linked_user,
+        "full_name": full_name,
+        "phone_number": str(request.data.get("phone_number") or "").strip(),
+        "role_type": role_type,
+        "certification_level": str(
+            request.data.get("certification_level") or ""
+        ).strip(),
+        "primary_sport": workspace_sport,
+        "competitions": str(request.data.get("competitions") or "").strip(),
+        "status": _normalise_official_status(request.data.get("status")),
+        "notes": str(request.data.get("notes") or "").strip(),
+        "created_by": request.user,
+    }
+
+    if email:
+        official, created = UnionMatchOfficial.objects.update_or_create(
+            union=workspace.related_union,
+            email=email,
+            defaults=defaults,
+        )
+    else:
+        official = UnionMatchOfficial.objects.create(
+            union=workspace.related_union,
+            email="",
+            **defaults,
+        )
+        created = True
+
+    log_governance_action(
+        actor=request.user,
+        action="match_official_created" if created else "match_official_updated",
+        details={
+            "workspace": workspace.slug,
+            "official": official.id,
+            "email": official.email,
+            "role_type": official.role_type,
+            "status": official.status,
+        },
+    )
+
+    return Response(
+        UnionMatchOfficialManagementSerializer(
+            official,
+            context={"request": request},
+        ).data,
+        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET", "PATCH", "DELETE"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_match_official_detail_view(request, official_id):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+
+    workspace = membership.workspace
+    workspace_sport = _workspace_sport_value(workspace)
+
+    permission_error = _require_permission(
+        request.user, workspace, "union.referees.manage"
+    )
+    if permission_error:
+        return permission_error
+
+    official = _get_workspace_match_official(workspace, official_id)
+    if official is None:
+        return _workspace_error("Match official not found.", status.HTTP_404_NOT_FOUND)
+
+    if request.method == "GET":
+        return Response(
+            UnionMatchOfficialManagementSerializer(
+                official,
+                context={"request": request},
+            ).data
+        )
+
+    if request.method == "DELETE":
+        if official.assignments.exists():
+            return _workspace_error(
+                "Officials with fixture assignments cannot be deleted. Mark them unavailable or suspended instead."
+            )
+
+        official.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    if "full_name" in request.data or "name" in request.data:
+        official.full_name = str(
+            request.data.get("full_name")
+            or request.data.get("name")
+            or official.full_name
+        ).strip()
+    if "email" in request.data:
+        official.email = str(request.data.get("email") or "").strip().lower()
+    if "phone_number" in request.data:
+        official.phone_number = str(request.data.get("phone_number") or "").strip()
+    if "role_type" in request.data:
+        role_type = _normalise_official_role(
+            request.data.get("role_type"),
+            workspace_sport,
+        )
+
+        if role_type is None:
+            return _workspace_error(
+                f"The selected official role is not valid for {workspace_sport.title()}."
+            )
+
+        official.role_type = role_type
+    if "certification_level" in request.data:
+        official.certification_level = str(
+            request.data.get("certification_level") or ""
+        ).strip()
+    if "primary_sport" in request.data:
+        requested_sport = _normalise_official_sport(request.data.get("primary_sport"))
+
+        if requested_sport and requested_sport != workspace_sport:
+            return _workspace_error(
+                f"Officials in this workspace must belong to {workspace_sport.title()}."
+            )
+    if "competitions" in request.data:
+        official.competitions = str(request.data.get("competitions") or "").strip()
+    if "status" in request.data:
+        official.status = _normalise_official_status(request.data.get("status"))
+    if "notes" in request.data:
+        official.notes = str(request.data.get("notes") or "").strip()
+
+    official.primary_sport = workspace_sport
+    official.save()
+
+    log_governance_action(
+        actor=request.user,
+        action="match_official_updated",
+        details={
+            "workspace": workspace.slug,
+            "official": official.id,
+            "status": official.status,
+        },
+    )
+
+    return Response(
+        UnionMatchOfficialManagementSerializer(
+            official,
+            context={"request": request},
+        ).data
+    )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_fixture_official_appointments_view(request):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+
+    workspace = membership.workspace
+    workspace_sport = _workspace_sport_value(workspace)
+
+    permission_error = _require_permission(
+        request.user, workspace, "union.referees.manage"
+    )
+    if permission_error:
+        return permission_error
+
+    if request.method == "GET":
+        assignments = FixtureOfficialAssignment.objects.select_related(
+            "match",
+            "match__competition",
+            "match__home_club",
+            "match__away_club",
+            "official",
+        ).filter(match__competition__league__union=workspace.related_union)
+
+        match_id = request.query_params.get("match")
+        official_id = request.query_params.get("official")
+
+        if match_id:
+            assignments = assignments.filter(match_id=match_id)
+        if official_id:
+            assignments = assignments.filter(official_id=official_id)
+
+        return Response(
+            {
+                "count": assignments.count(),
+                "results": FixtureOfficialAssignmentManagementSerializer(
+                    assignments,
+                    many=True,
+                    context={"request": request},
+                ).data,
+            }
+        )
+
+    match = _get_workspace_match(workspace, request.data.get("match"))
+    if match is None:
+        return _workspace_error("A valid workspace fixture is required.")
+
+    fixture_sports = {
+        str(match.home_club.sport or "").strip().upper(),
+        str(match.away_club.sport or "").strip().upper(),
+    }
+
+    if fixture_sports != {workspace_sport}:
+        return _workspace_error(
+            "The selected fixture does not match the workspace sport."
+        )
+
+    official = _get_workspace_match_official(workspace, request.data.get("official"))
+    if official is None:
+        return _workspace_error("A valid match official is required.")
+
+    role_type = _normalise_official_role(
+        request.data.get("role_type"),
+        workspace_sport,
+    )
+
+    if role_type is None:
+        return _workspace_error(
+            f"The selected appointment role is not valid for {workspace_sport.title()}."
+        )
+
+    assignment_status = _normalise_assignment_status(request.data.get("status"))
+
+    assignment, created = FixtureOfficialAssignment.objects.update_or_create(
+        match=match,
+        official=official,
+        role_type=role_type,
+        defaults={
+            "status": assignment_status,
+            "notes": str(request.data.get("notes") or "").strip(),
+            "assigned_by": request.user,
+        },
+    )
+
+    log_governance_action(
+        actor=request.user,
+        action=(
+            "fixture_official_assigned"
+            if created
+            else "fixture_official_assignment_updated"
+        ),
+        details={
+            "workspace": workspace.slug,
+            "match": match.id,
+            "official": official.id,
+            "role_type": role_type,
+            "status": assignment.status,
+        },
+    )
+
+    return Response(
+        FixtureOfficialAssignmentManagementSerializer(
+            assignment,
+            context={"request": request},
+        ).data,
+        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+    )
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_fixture_official_appointment_detail_view(request, assignment_id):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+
+    workspace = membership.workspace
+    workspace_sport = _workspace_sport_value(workspace)
+
+    permission_error = _require_permission(
+        request.user, workspace, "union.referees.manage"
+    )
+    if permission_error:
+        return permission_error
+
+    assignment = (
+        FixtureOfficialAssignment.objects.select_related(
+            "match",
+            "match__competition",
+            "match__home_club",
+            "match__away_club",
+            "official",
+        )
+        .filter(
+            id=assignment_id, match__competition__league__union=workspace.related_union
+        )
+        .first()
+    )
+
+    if assignment is None:
+        return _workspace_error(
+            "Official appointment not found.", status.HTTP_404_NOT_FOUND
+        )
+
+    if request.method == "DELETE":
+        assignment.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    if "role_type" in request.data:
+        role_type = _normalise_official_role(
+            request.data.get("role_type"),
+            workspace_sport,
+        )
+
+        if role_type is None:
+            return _workspace_error(
+                f"The selected appointment role is not valid for {workspace_sport.title()}."
+            )
+
+        assignment.role_type = role_type
+    if "status" in request.data:
+        assignment.status = _normalise_assignment_status(request.data.get("status"))
+    if "notes" in request.data:
+        assignment.notes = str(request.data.get("notes") or "").strip()
+
+    assignment.save()
+
+    return Response(
+        FixtureOfficialAssignmentManagementSerializer(
+            assignment,
+            context={"request": request},
+        ).data
     )
 
 

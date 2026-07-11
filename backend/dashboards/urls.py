@@ -95,6 +95,26 @@ urlpatterns = [
         name="union-admin-promote-relegate",
     ),
     path(
+        "union-admin/referees/",
+        union_management_views.union_admin_match_officials_view,
+        name="union-admin-match-officials",
+    ),
+    path(
+        "union-admin/referees/<int:official_id>/",
+        union_management_views.union_admin_match_official_detail_view,
+        name="union-admin-match-official-detail",
+    ),
+    path(
+        "union-admin/fixture-official-appointments/",
+        union_management_views.union_admin_fixture_official_appointments_view,
+        name="union-admin-fixture-official-appointments",
+    ),
+    path(
+        "union-admin/fixture-official-appointments/<int:assignment_id>/",
+        union_management_views.union_admin_fixture_official_appointment_detail_view,
+        name="union-admin-fixture-official-appointment-detail",
+    ),
+    path(
         "union-admin/fixtures/<int:match_id>/reschedule/",
         union_management_views.union_admin_fixture_reschedule_view,
         name="union-admin-fixture-reschedule",
