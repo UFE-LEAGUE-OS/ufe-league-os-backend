@@ -413,3 +413,173 @@ class LeagueClubMembership(models.Model):
     @property
     def is_active_entry(self):
         return self.status in {self.Status.ACTIVE, self.Status.PROMOTED}
+
+
+class UnionMatchOfficial(models.Model):
+    """A referee or match official managed by a union workspace."""
+
+    class SportType(models.TextChoices):
+        RUGBY = "RUGBY", "Rugby"
+        FOOTBALL = "FOOTBALL", "Football"
+        BASKETBALL = "BASKETBALL", "Basketball"
+
+    class RoleType(models.TextChoices):
+        # Rugby and football referee roles
+        CENTRE_REFEREE = "CENTRE_REFEREE", "Centre Referee"
+        ASSISTANT_REFEREE = "ASSISTANT_REFEREE", "Assistant Referee"
+
+        # Rugby roles
+        TMO = "TMO", "Television Match Official"
+        CITING_COMMISSIONER = "CITING_COMMISSIONER", "Citing Commissioner"
+        SUBSTITUTION_CONTROLLER = (
+            "SUBSTITUTION_CONTROLLER",
+            "Substitution Controller",
+        )
+        TECHNICAL_ZONE_OFFICIAL = (
+            "TECHNICAL_ZONE_OFFICIAL",
+            "Technical Zone Official",
+        )
+        SCOREBOARD_OPERATOR = "SCOREBOARD_OPERATOR", "Scoreboard Operator"
+
+        # Football roles
+        FOURTH_OFFICIAL = "FOURTH_OFFICIAL", "Fourth Official"
+        VAR = "VAR", "Video Assistant Referee"
+        AVAR = "AVAR", "Assistant Video Assistant Referee"
+        MATCH_COORDINATOR = "MATCH_COORDINATOR", "Match Coordinator"
+
+        # Basketball roles
+        CREW_CHIEF = "CREW_CHIEF", "Crew Chief"
+        UMPIRE = "UMPIRE", "Umpire"
+        TABLE_OFFICIAL = "TABLE_OFFICIAL", "Table Official"
+        ASSISTANT_SCORER = "ASSISTANT_SCORER", "Assistant Scorer"
+        TIMER = "TIMER", "Timer"
+        SHOT_CLOCK_OPERATOR = "SHOT_CLOCK_OPERATOR", "Shot Clock Operator"
+
+        # Shared match-official roles
+        MATCH_COMMISSIONER = "MATCH_COMMISSIONER", "Match Commissioner"
+        ASSESSOR = "ASSESSOR", "Referee Assessor"
+        SCORER = "SCORER", "Scorer"
+        TIMEKEEPER = "TIMEKEEPER", "Timekeeper"
+        OTHER = "OTHER", "Other Match Official"
+
+    class Status(models.TextChoices):
+        AVAILABLE = "AVAILABLE", "Available"
+        UNAVAILABLE = "UNAVAILABLE", "Unavailable"
+        SUSPENDED = "SUSPENDED", "Suspended"
+        RETIRED = "RETIRED", "Retired"
+
+    union = models.ForeignKey(
+        Union,
+        on_delete=models.CASCADE,
+        related_name="match_officials",
+    )
+    user = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="match_official_profiles",
+    )
+    full_name = models.CharField(max_length=160)
+    email = models.EmailField(blank=True)
+    phone_number = models.CharField(max_length=30, blank=True)
+    role_type = models.CharField(
+        max_length=40,
+        choices=RoleType.choices,
+        default=RoleType.CENTRE_REFEREE,
+    )
+    certification_level = models.CharField(max_length=80, blank=True)
+    primary_sport = models.CharField(
+        max_length=20,
+        choices=SportType.choices,
+        blank=True,
+    )
+    competitions = models.TextField(blank=True)
+    status = models.CharField(
+        max_length=30,
+        choices=Status.choices,
+        default=Status.AVAILABLE,
+    )
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_match_officials",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["full_name"]
+        indexes = [
+            models.Index(fields=["union", "status"]),
+            models.Index(fields=["union", "role_type"]),
+            models.Index(fields=["email"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["union", "email"],
+                condition=~models.Q(email=""),
+                name="unique_union_match_official_email",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.full_name} - {self.get_role_type_display()}"
+
+
+class FixtureOfficialAssignment(models.Model):
+    """A referee or match official appointment to a fixture."""
+
+    class Status(models.TextChoices):
+        PROPOSED = "PROPOSED", "Proposed"
+        ASSIGNED = "ASSIGNED", "Assigned"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        DECLINED = "DECLINED", "Declined"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    match = models.ForeignKey(
+        Match,
+        on_delete=models.CASCADE,
+        related_name="official_assignments",
+    )
+    official = models.ForeignKey(
+        UnionMatchOfficial,
+        on_delete=models.CASCADE,
+        related_name="assignments",
+    )
+    role_type = models.CharField(
+        max_length=40,
+        choices=UnionMatchOfficial.RoleType.choices,
+        default=UnionMatchOfficial.RoleType.CENTRE_REFEREE,
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ASSIGNED,
+    )
+    notes = models.TextField(blank=True)
+    assigned_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="fixture_official_assignments",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["match__match_date", "role_type", "official__full_name"]
+        unique_together = ["match", "official", "role_type"]
+        indexes = [
+            models.Index(fields=["match", "status"]),
+            models.Index(fields=["official", "status"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.official.full_name} - {self.match} ({self.get_role_type_display()})"
+        )

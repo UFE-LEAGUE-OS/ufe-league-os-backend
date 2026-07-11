@@ -1,7 +1,15 @@
+from django.utils import timezone
 from rest_framework import serializers
 
 from accounts.models import Club
-from .models import Competition, League, LeagueClubMembership, Season
+from .models import (
+    Competition,
+    FixtureOfficialAssignment,
+    League,
+    LeagueClubMembership,
+    Season,
+    UnionMatchOfficial,
+)
 from .serializers import MatchListSerializer
 
 
@@ -277,3 +285,132 @@ class FixtureGenerationResultSerializer(serializers.Serializer):
     competition = CompetitionManagementSerializer(read_only=True)
     created_count = serializers.IntegerField(read_only=True)
     fixtures = MatchListSerializer(many=True, read_only=True)
+
+
+class UnionMatchOfficialManagementSerializer(serializers.ModelSerializer):
+    role_type_display = serializers.CharField(
+        source="get_role_type_display", read_only=True
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    user_email = serializers.EmailField(source="user.email", read_only=True)
+    assignment_count = serializers.SerializerMethodField()
+    next_match = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UnionMatchOfficial
+        fields = [
+            "id",
+            "union",
+            "user",
+            "user_email",
+            "full_name",
+            "email",
+            "phone_number",
+            "role_type",
+            "role_type_display",
+            "certification_level",
+            "primary_sport",
+            "competitions",
+            "status",
+            "status_display",
+            "notes",
+            "assignment_count",
+            "next_match",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "union",
+            "user_email",
+            "role_type_display",
+            "status_display",
+            "assignment_count",
+            "next_match",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_assignment_count(self, obj):
+        return obj.assignments.count()
+
+    def get_next_match(self, obj):
+        assignment = (
+            obj.assignments.select_related(
+                "match",
+                "match__home_club",
+                "match__away_club",
+                "match__competition",
+            )
+            .filter(match__match_date__gte=timezone.now())
+            .order_by("match__match_date")
+            .first()
+        )
+
+        if assignment is None:
+            return None
+
+        match = assignment.match
+        return {
+            "id": match.id,
+            "label": f"{match.home_club.name} vs {match.away_club.name}",
+            "competition": match.competition.name,
+            "match_date": match.match_date,
+            "venue": match.venue,
+            "role_type": assignment.role_type,
+            "role_type_display": assignment.get_role_type_display(),
+            "status": assignment.status,
+            "status_display": assignment.get_status_display(),
+        }
+
+
+class FixtureOfficialAssignmentManagementSerializer(serializers.ModelSerializer):
+    match_label = serializers.SerializerMethodField()
+    competition_name = serializers.CharField(
+        source="match.competition.name", read_only=True
+    )
+    match_date = serializers.DateTimeField(source="match.match_date", read_only=True)
+    venue = serializers.CharField(source="match.venue", read_only=True)
+    official_name = serializers.CharField(source="official.full_name", read_only=True)
+    official_email = serializers.EmailField(source="official.email", read_only=True)
+    role_type_display = serializers.CharField(
+        source="get_role_type_display", read_only=True
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = FixtureOfficialAssignment
+        fields = [
+            "id",
+            "match",
+            "match_label",
+            "competition_name",
+            "match_date",
+            "venue",
+            "official",
+            "official_name",
+            "official_email",
+            "role_type",
+            "role_type_display",
+            "status",
+            "status_display",
+            "notes",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "match_label",
+            "competition_name",
+            "match_date",
+            "venue",
+            "official_name",
+            "official_email",
+            "role_type_display",
+            "status_display",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_match_label(self, obj):
+        return f"{obj.match.home_club.name} vs {obj.match.away_club.name}"
