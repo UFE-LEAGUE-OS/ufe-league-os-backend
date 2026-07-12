@@ -30,6 +30,7 @@ from .models import (
     Match,
     Season,
     UnionMatchOfficial,
+    UnionWorkspaceMembership,
 )
 from .views import (
     _get_membership_for_workspace,
@@ -1278,6 +1279,40 @@ def _normalise_official_role(value, sport_value):
     return role_value if role_value in allowed_roles else None
 
 
+def _ensure_match_official_workspace_membership(workspace, user):
+    if user is None:
+        return None
+
+    membership = UnionWorkspaceMembership.objects.filter(
+        user=user,
+        workspace=workspace,
+    ).first()
+
+    if membership is None:
+        return UnionWorkspaceMembership.objects.create(
+            user=user,
+            workspace=workspace,
+            role=UnionWorkspaceMembership.Role.MATCH_OFFICIAL,
+            is_active=True,
+        )
+
+    update_fields = []
+
+    if not membership.is_active:
+        membership.is_active = True
+        update_fields.append("is_active")
+
+    if membership.role == UnionWorkspaceMembership.Role.VIEWER:
+        membership.role = UnionWorkspaceMembership.Role.MATCH_OFFICIAL
+        update_fields.append("role")
+
+    if update_fields:
+        update_fields.append("updated_at")
+        membership.save(update_fields=update_fields)
+
+    return membership
+
+
 def _normalise_official_status(value):
     status_value = str(value or "").strip().upper()
 
@@ -1402,6 +1437,11 @@ def union_admin_match_officials_view(request):
         )
         created = True
 
+    _ensure_match_official_workspace_membership(
+        workspace,
+        official.user,
+    )
+
     log_governance_action(
         actor=request.user,
         action="match_official_created" if created else "match_official_updated",
@@ -1468,6 +1508,11 @@ def union_admin_match_official_detail_view(request, official_id):
         ).strip()
     if "email" in request.data:
         official.email = str(request.data.get("email") or "").strip().lower()
+        official.user = (
+            get_user_model().objects.filter(email__iexact=official.email).first()
+            if official.email
+            else None
+        )
     if "phone_number" in request.data:
         official.phone_number = str(request.data.get("phone_number") or "").strip()
     if "role_type" in request.data:
@@ -1502,6 +1547,11 @@ def union_admin_match_official_detail_view(request, official_id):
 
     official.primary_sport = workspace_sport
     official.save()
+
+    _ensure_match_official_workspace_membership(
+        workspace,
+        official.user,
+    )
 
     log_governance_action(
         actor=request.user,

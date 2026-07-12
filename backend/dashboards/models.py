@@ -172,6 +172,11 @@ UNION_WORKSPACE_ROLE_PERMISSIONS = {
         "union.reports.view",
         "union.communications.manage",
         "union.users.manage",
+        "union.official.appointments.view",
+        "union.official.reports.manage",
+        "union.official.availability.manage",
+        "union.official.documents.view",
+        "union.official.payments.view",
     },
     "UNION_ADMIN": {
         "union.dashboard.view",
@@ -182,6 +187,11 @@ UNION_WORKSPACE_ROLE_PERMISSIONS = {
         "union.reports.view",
         "union.communications.manage",
         "union.users.manage",
+        "union.official.appointments.view",
+        "union.official.reports.manage",
+        "union.official.availability.manage",
+        "union.official.documents.view",
+        "union.official.payments.view",
     },
     "COMPETITIONS_MANAGER": {
         "union.dashboard.view",
@@ -198,6 +208,18 @@ UNION_WORKSPACE_ROLE_PERMISSIONS = {
         "union.dashboard.view",
         "union.referees.manage",
         "union.reports.view",
+        "union.official.appointments.view",
+        "union.official.reports.manage",
+        "union.official.availability.manage",
+        "union.official.documents.view",
+    },
+    "MATCH_OFFICIAL": {
+        "union.dashboard.view",
+        "union.official.appointments.view",
+        "union.official.reports.manage",
+        "union.official.availability.manage",
+        "union.official.documents.view",
+        "union.official.payments.view",
     },
     "FINANCE_OFFICER": {
         "union.dashboard.view",
@@ -273,6 +295,7 @@ class UnionWorkspaceMembership(models.Model):
         COMPETITIONS_MANAGER = "COMPETITIONS_MANAGER", "Competitions Manager"
         REGISTRAR = "REGISTRAR", "Player Registrar"
         REFEREE_MANAGER = "REFEREE_MANAGER", "Referee Manager"
+        MATCH_OFFICIAL = "MATCH_OFFICIAL", "Match Official"
         FINANCE_OFFICER = "FINANCE_OFFICER", "Finance Officer"
         COMMUNICATIONS_OFFICER = "COMMUNICATIONS_OFFICER", "Communications Officer"
         VIEWER = "VIEWER", "Viewer"
