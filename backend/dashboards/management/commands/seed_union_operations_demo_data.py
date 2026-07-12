@@ -5,7 +5,14 @@ from django.utils import timezone
 from django.utils.text import slugify
 
 from accounts.models import Club
-from dashboards.models import Competition, League, Match, Union, UnionWorkspace
+from dashboards.models import (
+    Competition,
+    League,
+    LeagueClubMembership,
+    Match,
+    Union,
+    UnionWorkspace,
+)
 
 WORKSPACE_DATA = {
     "URU": {
@@ -230,6 +237,34 @@ class Command(BaseCommand):
                         "is_active": True,
                     },
                 )
+
+                for club in clubs:
+                    membership = (
+                        LeagueClubMembership.objects.filter(
+                            league=league,
+                            club=club,
+                            season__isnull=True,
+                        )
+                        .order_by("id")
+                        .first()
+                    )
+
+                    if membership is None:
+                        LeagueClubMembership.objects.create(
+                            league=league,
+                            club=club,
+                            season=None,
+                            status=(LeagueClubMembership.Status.ACTIVE),
+                            notes=("Created by the workspace operations " "demo seed."),
+                        )
+                    elif membership.status != LeagueClubMembership.Status.ACTIVE:
+                        membership.status = LeagueClubMembership.Status.ACTIVE
+                        membership.save(
+                            update_fields=[
+                                "status",
+                                "updated_at",
+                            ]
+                        )
 
                 competitions = []
 

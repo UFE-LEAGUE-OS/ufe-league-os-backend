@@ -158,19 +158,12 @@ class Command(BaseCommand):
                 account_type="Union ticketing officer",
             )
 
-            # The membership model currently has no dedicated
-            # TICKETING_OFFICER choice. Keep VIEWER membership plus
-            # explicit ticketing permissions while the primary role
-            # controls dashboard access.
             UnionWorkspaceMembership.objects.update_or_create(
                 user=union_ticketing,
                 workspace=workspace,
                 defaults={
-                    "role": UnionWorkspaceMembership.Role.VIEWER,
-                    "extra_permissions": [
-                        "union.ticketing.manage",
-                        "ticketing.validate",
-                    ],
+                    "role": (UnionWorkspaceMembership.Role.TICKETING_OFFICER),
+                    "extra_permissions": [],
                     "is_active": True,
                 },
             )

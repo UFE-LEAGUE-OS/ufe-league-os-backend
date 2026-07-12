@@ -135,9 +135,7 @@ class AdminWorkspaceDashboardTests(APITestCase):
 
         self.client.force_authenticate(user)
 
-        response = self.client.get(
-            "/api/dashboards/league-admin/workspace/"
-        )
+        response = self.client.get("/api/dashboards/league-admin/workspace/")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -164,9 +162,7 @@ class AdminWorkspaceDashboardTests(APITestCase):
 
         self.client.force_authenticate(user)
 
-        response = self.client.get(
-            "/api/dashboards/club-admin/workspace/"
-        )
+        response = self.client.get("/api/dashboards/club-admin/workspace/")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -191,18 +187,13 @@ class AdminWorkspaceDashboardTests(APITestCase):
         UnionWorkspaceMembership.objects.create(
             user=user,
             workspace=self.workspace,
-            role=(
-                UnionWorkspaceMembership.Role
-                .TICKETING_OFFICER
-            ),
+            role=(UnionWorkspaceMembership.Role.TICKETING_OFFICER),
             is_active=True,
         )
 
         self.client.force_authenticate(user)
 
-        response = self.client.get(
-            "/api/dashboards/ticketing-officer/workspace/"
-        )
+        response = self.client.get("/api/dashboards/ticketing-officer/workspace/")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -224,9 +215,7 @@ class AdminWorkspaceDashboardTests(APITestCase):
 
         self.client.force_authenticate(user)
 
-        response = self.client.get(
-            "/api/dashboards/ticketing-officer/workspace/"
-        )
+        response = self.client.get("/api/dashboards/ticketing-officer/workspace/")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -237,4 +226,71 @@ class AdminWorkspaceDashboardTests(APITestCase):
         self.assertEqual(
             response.data["events"][0]["id"],
             self.match.id,
+        )
+
+    def test_union_club_lists_are_strictly_workspace_scoped(self):
+        user = self.create_user(
+            "union-admin-scope-test@leagueos.test",
+            User.Role.UNION_ADMIN,
+        )
+
+        UnionWorkspaceMembership.objects.create(
+            user=user,
+            workspace=self.workspace,
+            role=UnionWorkspaceMembership.Role.UNION_ADMIN,
+            is_active=True,
+        )
+
+        self.client.force_authenticate(user)
+
+        management_response = self.client.get(
+            "/api/dashboards/union-admin/clubs/",
+            {
+                "workspace": self.workspace.slug,
+            },
+        )
+
+        self.assertEqual(
+            management_response.status_code,
+            200,
+        )
+
+        management_club_ids = {
+            item["id"] for item in management_response.data["results"]
+        }
+
+        self.assertIn(self.club.id, management_club_ids)
+        self.assertIn(
+            self.opponent.id,
+            management_club_ids,
+        )
+        self.assertNotIn(
+            self.other_club.id,
+            management_club_ids,
+        )
+
+        operations_response = self.client.get(
+            "/api/dashboards/union-admin/operations/",
+            {
+                "workspace": self.workspace.slug,
+            },
+        )
+
+        self.assertEqual(
+            operations_response.status_code,
+            200,
+        )
+
+        operations_club_ids = {
+            int(item["id"]) for item in operations_response.data["clubs"]
+        }
+
+        self.assertIn(self.club.id, operations_club_ids)
+        self.assertIn(
+            self.opponent.id,
+            operations_club_ids,
+        )
+        self.assertNotIn(
+            self.other_club.id,
+            operations_club_ids,
         )

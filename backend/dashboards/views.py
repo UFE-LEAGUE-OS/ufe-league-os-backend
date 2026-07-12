@@ -1102,31 +1102,34 @@ def _workspace_matches(workspace):
 
 
 def _workspace_clubs(workspace):
-    clubs = Club.objects.none()
+    """
+    Return clubs connected to this union through membership,
+    fixtures or standings.
 
-    if workspace.related_union:
-        league_member_clubs = Club.objects.filter(
-            league_memberships__league__union=workspace.related_union,
-            league_memberships__status__in=[
-                LeagueClubMembership.Status.ACTIVE,
-                LeagueClubMembership.Status.PROMOTED,
-            ],
-        )
+    Never fall back to all clubs sharing the workspace sport,
+    because community leagues and national federations may use
+    the same sport while remaining separate organisations.
+    """
+    if not workspace.related_union_id:
+        return Club.objects.none()
 
-        match_clubs = Club.objects.filter(
-            models.Q(home_matches__competition__league__union=workspace.related_union)
+    return (
+        Club.objects.filter(
+            models.Q(
+                league_memberships__league__union=workspace.related_union,
+                league_memberships__status__in=[
+                    LeagueClubMembership.Status.ACTIVE,
+                    LeagueClubMembership.Status.PROMOTED,
+                    LeagueClubMembership.Status.INVITED,
+                ],
+            )
+            | models.Q(home_matches__competition__league__union=workspace.related_union)
             | models.Q(away_matches__competition__league__union=workspace.related_union)
             | models.Q(standings__competition__league__union=workspace.related_union)
         )
-
-        clubs = (league_member_clubs | match_clubs).distinct().order_by("name")
-
-    if not clubs.exists() and workspace.sport:
-        clubs = Club.objects.filter(sport=_workspace_sport_value(workspace)).order_by(
-            "name"
-        )
-
-    return clubs
+        .distinct()
+        .order_by("name")
+    )
 
 
 def _club_admin_label(club):

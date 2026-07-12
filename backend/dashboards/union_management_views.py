@@ -96,26 +96,30 @@ def _workspace_sport_value(workspace):
 
 
 def _workspace_management_clubs(workspace):
-    sport_value = _workspace_sport_value(workspace)
-    sport_clubs = Club.objects.filter(sport=sport_value)
+    """
+    Return only clubs explicitly connected to the selected workspace.
 
-    if workspace.related_union:
-        union_clubs = Club.objects.filter(
-            league_memberships__league__union=workspace.related_union
-        )
-        return (
-            (sport_clubs | union_clubs)
-            .distinct()
-            .select_related("admin")
-            .prefetch_related(
-                "league_memberships__league", "league_memberships__season"
-            )
-            .order_by("name")
-        )
+    A shared sport is not sufficient evidence of workspace ownership.
+    For example, FUFA, Budo League and SMACK League are all football
+    workspaces but must never inherit one another's clubs.
+    """
+    if not workspace.related_union_id:
+        return Club.objects.none()
+
+    clubs = Club.objects.filter(
+        models.Q(league_memberships__league__union=workspace.related_union)
+        | models.Q(home_matches__competition__league__union=workspace.related_union)
+        | models.Q(away_matches__competition__league__union=workspace.related_union)
+        | models.Q(standings__competition__league__union=workspace.related_union)
+    )
 
     return (
-        sport_clubs.select_related("admin")
-        .prefetch_related("league_memberships__league", "league_memberships__season")
+        clubs.distinct()
+        .select_related("admin")
+        .prefetch_related(
+            "league_memberships__league",
+            "league_memberships__season",
+        )
         .order_by("name")
     )
 
@@ -168,7 +172,7 @@ def _get_workspace_club(workspace, value):
     if not value:
         return None
 
-    qs = Club.objects.all()
+    qs = _workspace_management_clubs(workspace)
 
     if str(value).isdigit():
         return qs.filter(id=value).first()
