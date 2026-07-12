@@ -99,6 +99,25 @@ class DashboardAPITests(TestCase):
         )
         self.assertEqual(response.data["dashboard"]["title"], "Fan Dashboard")
 
+    def test_referee_my_dashboard_uses_restricted_frontend_route(self):
+        user = self.create_user(
+            "referee-dashboard-route@example.com",
+            User.Role.REFEREE,
+        )
+        self.authenticate(user)
+
+        response = self.client.get("/api/dashboards/me/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data["frontend_dashboard_route"],
+            "/dashboard/referee",
+        )
+        self.assertEqual(
+            response.data["backend_dashboard_route"],
+            "/api/dashboards/referee/",
+        )
+
     def test_all_roles_can_resolve_my_dashboard(self):
         role_data = [
             (User.Role.FAN, "/api/dashboards/fan/"),

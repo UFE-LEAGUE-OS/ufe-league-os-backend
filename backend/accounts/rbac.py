@@ -41,7 +41,7 @@ FRONTEND_DASHBOARD_ROUTES = {
     User.Role.LEAGUE_ADMIN: "/dashboard/league-admin",
     User.Role.UNION_ADMIN: "/dashboard/union-admin",
     User.Role.SUPER_ADMIN: "/dashboard/super-admin",
-    User.Role.REFEREE: "/dashboard/union-admin",
+    User.Role.REFEREE: "/dashboard/referee",
     User.Role.TICKETING_OFFICER: "/dashboard/ticketing-officer",
     User.Role.SPONSOR: "/dashboard/sponsor",
 }
