@@ -20,7 +20,6 @@ from dashboards.models import (
     UnionWorkspaceMembership,
 )
 
-
 TEST_DOMAIN = "leagueos.test"
 FIXED_TEST_PASSWORD = "StrongPass123!"
 PASSWORD_SYMBOLS = "!@#$%^&*"
@@ -36,15 +35,10 @@ def make_password(length=20):
         secrets.choice(PASSWORD_SYMBOLS),
     ]
 
-    alphabet = (
-        string.ascii_letters
-        + string.digits
-        + PASSWORD_SYMBOLS
-    )
+    alphabet = string.ascii_letters + string.digits + PASSWORD_SYMBOLS
 
     characters.extend(
-        secrets.choice(alphabet)
-        for _ in range(max(length - len(characters), 0))
+        secrets.choice(alphabet) for _ in range(max(length - len(characters), 0))
     )
 
     random_source.shuffle(characters)
@@ -127,11 +121,9 @@ class Command(BaseCommand):
         # ------------------------------------------------------------
         # Union and community workspace accounts
         # ------------------------------------------------------------
-        workspaces = (
-            UnionWorkspace.objects
-            .filter(status=UnionWorkspace.Status.ACTIVE)
-            .order_by("name")
-        )
+        workspaces = UnionWorkspace.objects.filter(
+            status=UnionWorkspace.Status.ACTIVE
+        ).order_by("name")
 
         for workspace in workspaces:
             token = safe_token(
@@ -187,8 +179,7 @@ class Command(BaseCommand):
         # League and competition accounts
         # ------------------------------------------------------------
         leagues = (
-            League.objects
-            .filter(is_active=True)
+            League.objects.filter(is_active=True)
             .select_related("union")
             .order_by("union__name", "name")
         )
@@ -214,11 +205,9 @@ class Command(BaseCommand):
                 },
             )
 
-            competitions = (
-                Competition.objects
-                .filter(league=league, is_active=True)
-                .order_by("name")
-            )
+            competitions = Competition.objects.filter(
+                league=league, is_active=True
+            ).order_by("name")
 
             for competition in competitions:
                 competition_token = safe_token(
@@ -228,8 +217,7 @@ class Command(BaseCommand):
 
                 competition_admin = ensure_user(
                     email=(
-                        f"qa.competition-admin."
-                        f"{competition_token}@{TEST_DOMAIN}"
+                        f"qa.competition-admin." f"{competition_token}@{TEST_DOMAIN}"
                     ),
                     first_name=competition.name,
                     last_name="Test Competition Administrator",
@@ -242,9 +230,7 @@ class Command(BaseCommand):
                     league=league,
                     competition=competition,
                     defaults={
-                        "role": (
-                            LeagueAdminScope.Role.COMPETITION_ADMIN
-                        ),
+                        "role": (LeagueAdminScope.Role.COMPETITION_ADMIN),
                         "is_active": True,
                     },
                 )
@@ -268,11 +254,8 @@ class Command(BaseCommand):
             )
 
             # Do not replace a real club administrator.
-            if (
-                club.admin_id is None
-                or club.admin.email.lower().endswith(
-                    f"@{TEST_DOMAIN}"
-                )
+            if club.admin_id is None or club.admin.email.lower().endswith(
+                f"@{TEST_DOMAIN}"
             ):
                 club.admin = club_admin
                 club.save(update_fields=["admin"])
@@ -291,8 +274,7 @@ class Command(BaseCommand):
         # complete, including older test users created previously.
         # ------------------------------------------------------------
         test_users = list(
-            User.objects
-            .filter(email__iendswith=f"@{TEST_DOMAIN}")
+            User.objects.filter(email__iendswith=f"@{TEST_DOMAIN}")
             .select_related("club")
             .order_by("email")
         )
@@ -318,23 +300,18 @@ class Command(BaseCommand):
 
         for user in test_users:
             memberships = (
-                user.union_workspace_memberships
-                .filter(is_active=True)
+                user.union_workspace_memberships.filter(is_active=True)
                 .select_related("workspace")
                 .order_by("workspace__name")
             )
 
             membership_text = "; ".join(
-                (
-                    f"{membership.workspace.acronym}:"
-                    f"{membership.role}"
-                )
+                (f"{membership.workspace.acronym}:" f"{membership.role}")
                 for membership in memberships
             )
 
             scopes = (
-                user.league_admin_scopes
-                .filter(is_active=True)
+                user.league_admin_scopes.filter(is_active=True)
                 .select_related("league", "competition")
                 .order_by("league__name", "competition__name")
             )
@@ -358,9 +335,7 @@ class Command(BaseCommand):
                     "password": password_map[user.email],
                     "primary_role": user.role,
                     "frontend_dashboard": get_dashboard_route(user),
-                    "backend_dashboard": (
-                        get_backend_dashboard_route(user)
-                    ),
+                    "backend_dashboard": (get_backend_dashboard_route(user)),
                     "workspace_memberships": membership_text,
                     "league_competition_scopes": scope_text,
                     "club": user.club.name if user.club else "",
@@ -403,9 +378,7 @@ class Command(BaseCommand):
                 "| Type | Email | Password | Role | Dashboard | "
                 "Workspace | League/Competition | Club |\n"
             )
-            markdown_file.write(
-                "|---|---|---|---|---|---|---|---|\n"
-            )
+            markdown_file.write("|---|---|---|---|---|---|---|---|\n")
 
             for row in rows:
                 markdown_file.write(
@@ -416,15 +389,9 @@ class Command(BaseCommand):
                             markdown_value(row["email"]),
                             markdown_value(row["password"]),
                             markdown_value(row["primary_role"]),
-                            markdown_value(
-                                row["frontend_dashboard"]
-                            ),
-                            markdown_value(
-                                row["workspace_memberships"]
-                            ),
-                            markdown_value(
-                                row["league_competition_scopes"]
-                            ),
+                            markdown_value(row["frontend_dashboard"]),
+                            markdown_value(row["workspace_memberships"]),
+                            markdown_value(row["league_competition_scopes"]),
                             markdown_value(row["club"]),
                         ]
                     )
@@ -433,35 +400,21 @@ class Command(BaseCommand):
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"Created {created_count} new comprehensive "
-                f"test accounts."
+                f"Created {created_count} new comprehensive " f"test accounts."
             )
         )
         self.stdout.write(
             self.style.SUCCESS(
-                f"Updated {updated_count} comprehensive "
-                f"test accounts."
+                f"Updated {updated_count} comprehensive " f"test accounts."
             )
         )
         self.stdout.write(
             self.style.SUCCESS(
-                f"Reset and exported {len(rows)} total "
-                f"@{TEST_DOMAIN} accounts."
+                f"Reset and exported {len(rows)} total " f"@{TEST_DOMAIN} accounts."
             )
         )
+        self.stdout.write(self.style.SUCCESS(f"CSV: {output_path}"))
+        self.stdout.write(self.style.SUCCESS(f"Markdown: {markdown_path}"))
         self.stdout.write(
-            self.style.SUCCESS(
-                f"CSV: {output_path}"
-            )
-        )
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Markdown: {markdown_path}"
-            )
-        )
-        self.stdout.write(
-            self.style.WARNING(
-                "All @leagueos.test accounts now use "
-                "StrongPass123!."
-            )
+            self.style.WARNING("All @leagueos.test accounts now use " "StrongPass123!.")
         )
