@@ -1,5 +1,5 @@
 from django.urls import path
-from . import views, union_management_views
+from . import official_appointment_views, union_management_views, views
 
 urlpatterns = [
     # Authenticated role dashboards
@@ -113,6 +113,53 @@ urlpatterns = [
         "union-admin/fixture-official-appointments/<int:assignment_id>/",
         union_management_views.union_admin_fixture_official_appointment_detail_view,
         name="union-admin-fixture-official-appointment-detail",
+    ),
+    path(
+        "union-admin/league-admin-scopes/",
+        official_appointment_views.union_admin_league_admin_scopes_view,
+        name="union-admin-league-admin-scopes",
+    ),
+    path(
+        "union-admin/league-admin-scopes/<int:scope_id>/",
+        official_appointment_views.union_admin_league_admin_scope_detail_view,
+        name="union-admin-league-admin-scope-detail",
+    ),
+    # League/competition-scoped match official operations
+    path(
+        "league-admin/scopes/",
+        official_appointment_views.league_admin_scopes_view,
+        name="league-admin-scopes",
+    ),
+    path(
+        "league-admin/fixtures/",
+        official_appointment_views.league_admin_fixtures_view,
+        name="league-admin-fixtures",
+    ),
+    path(
+        "league-admin/match-officials/",
+        official_appointment_views.league_admin_match_officials_view,
+        name="league-admin-match-officials",
+    ),
+    path(
+        "league-admin/fixture-official-appointments/",
+        official_appointment_views.league_admin_appointments_view,
+        name="league-admin-fixture-official-appointments",
+    ),
+    path(
+        "league-admin/fixture-official-appointments/<int:assignment_id>/",
+        official_appointment_views.league_admin_appointment_detail_view,
+        name="league-admin-fixture-official-appointment-detail",
+    ),
+    # Match official self-service
+    path(
+        "match-official/appointments/",
+        official_appointment_views.match_official_appointments_view,
+        name="match-official-appointments",
+    ),
+    path(
+        "match-official/appointments/<int:assignment_id>/response/",
+        official_appointment_views.match_official_appointment_response_view,
+        name="match-official-appointment-response",
     ),
     path(
         "union-admin/fixtures/<int:match_id>/reschedule/",

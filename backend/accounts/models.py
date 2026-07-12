@@ -97,6 +97,12 @@ class User(AbstractUser):
             if sponsor_memberships.filter(is_active=True).exists():
                 roles.add(self.Role.SPONSOR)
 
+        league_scopes = getattr(self, "league_admin_scopes", None)
+
+        if self.pk and league_scopes is not None:
+            if league_scopes.filter(is_active=True).exclude(role="VIEWER").exists():
+                roles.add(self.Role.LEAGUE_ADMIN)
+
         union_memberships = getattr(self, "union_workspace_memberships", None)
 
         if self.pk and union_memberships is not None:

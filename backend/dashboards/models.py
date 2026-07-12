@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -69,6 +70,98 @@ class Competition(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.season})"
+
+
+class LeagueAdminScope(models.Model):
+    """Scopes league/competition administrators to the records they may manage."""
+
+    class Role(models.TextChoices):
+        LEAGUE_ADMIN = "LEAGUE_ADMIN", "League Administrator"
+        COMPETITION_ADMIN = "COMPETITION_ADMIN", "Competition Administrator"
+        OFFICIALS_COORDINATOR = "OFFICIALS_COORDINATOR", "Officials Coordinator"
+        VIEWER = "VIEWER", "Viewer"
+
+    user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        related_name="league_admin_scopes",
+    )
+    league = models.ForeignKey(
+        League,
+        on_delete=models.CASCADE,
+        related_name="admin_scopes",
+    )
+    competition = models.ForeignKey(
+        Competition,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="admin_scopes",
+        help_text="Leave blank to grant access to the whole league.",
+    )
+    role = models.CharField(
+        max_length=40,
+        choices=Role.choices,
+        default=Role.LEAGUE_ADMIN,
+    )
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_league_admin_scopes",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["league__name", "competition__name", "user__email"]
+        indexes = [
+            models.Index(
+                fields=["user", "is_active"],
+                name="dashboards_user_id_482361_idx",
+            ),
+            models.Index(
+                fields=["league", "is_active"],
+                name="dashboards_league__6316d7_idx",
+            ),
+            models.Index(
+                fields=["competition", "is_active"],
+                name="dashboards_competi_c7b452_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "league"],
+                condition=models.Q(competition__isnull=True),
+                name="unique_user_full_league_admin_scope",
+            ),
+            models.UniqueConstraint(
+                fields=["user", "competition"],
+                condition=models.Q(competition__isnull=False),
+                name="unique_user_competition_admin_scope",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.competition_id and self.competition.league_id != self.league_id:
+            raise ValidationError(
+                {"competition": "The competition must belong to the selected league."}
+            )
+
+    @property
+    def can_manage_appointments(self):
+        return self.role in {
+            self.Role.LEAGUE_ADMIN,
+            self.Role.COMPETITION_ADMIN,
+            self.Role.OFFICIALS_COORDINATOR,
+        }
+
+    def __str__(self):
+        target = self.competition.name if self.competition_id else self.league.name
+        return f"{self.user.email} -> {target} ({self.get_role_display()})"
 
 
 class Match(models.Model):
@@ -584,6 +677,8 @@ class FixtureOfficialAssignment(models.Model):
         default=Status.ASSIGNED,
     )
     notes = models.TextField(blank=True)
+    response_note = models.TextField(blank=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
     assigned_by = models.ForeignKey(
         "accounts.User",
         null=True,
