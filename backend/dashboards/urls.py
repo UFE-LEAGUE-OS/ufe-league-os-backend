@@ -1,5 +1,10 @@
 from django.urls import path
-from . import official_appointment_views, union_management_views, views
+from . import (
+    admin_workspace_views,
+    official_appointment_views,
+    union_management_views,
+    views,
+)
 
 urlpatterns = [
     # Authenticated role dashboards
@@ -10,6 +15,21 @@ urlpatterns = [
         "league-admin/",
         views.league_admin_dashboard_view,
         name="league-admin-dashboard",
+    ),
+    path(
+        "league-admin/workspace/",
+        admin_workspace_views.league_admin_workspace_view,
+        name="league-admin-workspace",
+    ),
+    path(
+        "club-admin/workspace/",
+        admin_workspace_views.club_admin_workspace_view,
+        name="club-admin-workspace",
+    ),
+    path(
+        "ticketing-officer/workspace/",
+        admin_workspace_views.ticketing_officer_workspace_view,
+        name="ticketing-officer-workspace",
     ),
     path(
         "union-admin/", views.union_admin_dashboard_view, name="union-admin-dashboard"
