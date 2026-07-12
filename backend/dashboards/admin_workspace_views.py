@@ -24,7 +24,6 @@ from .models import (
     UnionWorkspaceMembership,
 )
 
-
 UPCOMING_STATUSES = (
     Match.Status.SCHEDULED,
     Match.Status.LIVE,
@@ -74,49 +73,48 @@ def _serialize_ticket_event(match):
 
 def _matches_for_league_scopes(scopes):
     full_league_ids = {
-        scope.league_id
-        for scope in scopes
-        if scope.competition_id is None
+        scope.league_id for scope in scopes if scope.competition_id is None
     }
     competition_ids = {
-        scope.competition_id
-        for scope in scopes
-        if scope.competition_id is not None
+        scope.competition_id for scope in scopes if scope.competition_id is not None
     }
 
     if not full_league_ids and not competition_ids:
         return Match.objects.none()
 
-    return Match.objects.filter(
-        Q(competition__league_id__in=full_league_ids)
-        | Q(competition_id__in=competition_ids)
-    ).select_related(
-        "competition",
-        "competition__league",
-        "home_club",
-        "away_club",
-    ).distinct()
+    return (
+        Match.objects.filter(
+            Q(competition__league_id__in=full_league_ids)
+            | Q(competition_id__in=competition_ids)
+        )
+        .select_related(
+            "competition",
+            "competition__league",
+            "home_club",
+            "away_club",
+        )
+        .distinct()
+    )
 
 
 def _competitions_for_league_scopes(scopes):
     full_league_ids = {
-        scope.league_id
-        for scope in scopes
-        if scope.competition_id is None
+        scope.league_id for scope in scopes if scope.competition_id is None
     }
     competition_ids = {
-        scope.competition_id
-        for scope in scopes
-        if scope.competition_id is not None
+        scope.competition_id for scope in scopes if scope.competition_id is not None
     }
 
     if not full_league_ids and not competition_ids:
         return Competition.objects.none()
 
-    return Competition.objects.filter(
-        Q(league_id__in=full_league_ids)
-        | Q(id__in=competition_ids)
-    ).select_related("league").distinct()
+    return (
+        Competition.objects.filter(
+            Q(league_id__in=full_league_ids) | Q(id__in=competition_ids)
+        )
+        .select_related("league")
+        .distinct()
+    )
 
 
 def _club_for_user(user):
@@ -130,14 +128,16 @@ def _club_matches(club):
     if club is None:
         return Match.objects.none()
 
-    return Match.objects.filter(
-        Q(home_club=club) | Q(away_club=club)
-    ).select_related(
-        "competition",
-        "competition__league",
-        "home_club",
-        "away_club",
-    ).distinct()
+    return (
+        Match.objects.filter(Q(home_club=club) | Q(away_club=club))
+        .select_related(
+            "competition",
+            "competition__league",
+            "home_club",
+            "away_club",
+        )
+        .distinct()
+    )
 
 
 def _ticketing_scopes(user):
@@ -160,8 +160,7 @@ def _ticketing_scopes(user):
         )
 
     memberships = (
-        UnionWorkspaceMembership.objects
-        .filter(
+        UnionWorkspaceMembership.objects.filter(
             user=user,
             is_active=True,
             workspace__status="ACTIVE",
@@ -209,22 +208,23 @@ def _matches_for_ticketing_scope(scope):
     if workspace is None or workspace.related_union_id is None:
         return Match.objects.none()
 
-    return Match.objects.filter(
-        competition__league__union_id=workspace.related_union_id
-    ).select_related(
-        "competition",
-        "competition__league",
-        "home_club",
-        "away_club",
-    ).distinct()
+    return (
+        Match.objects.filter(competition__league__union_id=workspace.related_union_id)
+        .select_related(
+            "competition",
+            "competition__league",
+            "home_club",
+            "away_club",
+        )
+        .distinct()
+    )
 
 
 @api_view(["GET"])
 @permission_classes([IsLeagueAdmin])
 def league_admin_workspace_view(request):
     scopes = list(
-        LeagueAdminScope.objects
-        .filter(user=request.user, is_active=True)
+        LeagueAdminScope.objects.filter(user=request.user, is_active=True)
         .select_related(
             "league",
             "league__union",
@@ -244,16 +244,16 @@ def league_admin_workspace_view(request):
 
     recent_results = matches.filter(
         status=Match.Status.COMPLETED,
-    ).order_by("-match_date")[:8]
+    ).order_by(
+        "-match_date"
+    )[:8]
 
     scope_data = [
         {
             "id": scope.id,
             "role": scope.role,
             "role_display": scope.get_role_display(),
-            "can_manage_appointments": (
-                scope.can_manage_appointments
-            ),
+            "can_manage_appointments": (scope.can_manage_appointments),
             "league": {
                 "id": scope.league_id,
                 "name": scope.league.name,
@@ -279,9 +279,7 @@ def league_admin_workspace_view(request):
             "scope_type": "LEAGUE",
             "scopes": scope_data,
             "summary": {
-                "leagues": len(
-                    {scope.league_id for scope in scopes}
-                ),
+                "leagues": len({scope.league_id for scope in scopes}),
                 "competitions": competitions.count(),
                 "upcoming_fixtures": matches.filter(
                     status__in=UPCOMING_STATUSES,
@@ -291,19 +289,11 @@ def league_admin_workspace_view(request):
                     status=Match.Status.COMPLETED,
                 ).count(),
                 "official_appointments": (
-                    FixtureOfficialAssignment.objects
-                    .filter(match__in=matches)
-                    .count()
+                    FixtureOfficialAssignment.objects.filter(match__in=matches).count()
                 ),
             },
-            "upcoming_fixtures": [
-                _serialize_match(match)
-                for match in upcoming
-            ],
-            "recent_results": [
-                _serialize_match(match)
-                for match in recent_results
-            ],
+            "upcoming_fixtures": [_serialize_match(match) for match in upcoming],
+            "recent_results": [_serialize_match(match) for match in recent_results],
         },
         status=status.HTTP_200_OK,
     )
@@ -316,12 +306,7 @@ def club_admin_workspace_view(request):
 
     if club is None:
         return Response(
-            {
-                "detail": (
-                    "This club administrator is not attached "
-                    "to a club."
-                )
-            },
+            {"detail": ("This club administrator is not attached " "to a club.")},
             status=status.HTTP_404_NOT_FOUND,
         )
 
@@ -338,11 +323,12 @@ def club_admin_workspace_view(request):
 
     recent_results = matches.filter(
         status=Match.Status.COMPLETED,
-    ).order_by("-match_date")[:8]
+    ).order_by(
+        "-match_date"
+    )[:8]
 
     ticket_events = (
-        matches
-        .filter(match_date__gte=now)
+        matches.filter(match_date__gte=now)
         .annotate(
             ticket_types_count=Count(
                 "ticket_types",
@@ -362,23 +348,17 @@ def club_admin_workspace_view(request):
         .order_by("match_date")[:10]
     )
 
-    memberships = (
-        club.league_memberships
-        .select_related("league", "season")
-        .order_by("league__name", "-created_at")
+    memberships = club.league_memberships.select_related("league", "season").order_by(
+        "league__name", "-created_at"
     )
 
-    staff = (
-        club.members
-        .filter(
-            role__in=[
-                User.Role.CLUB_ADMIN,
-                User.Role.TICKETING_OFFICER,
-            ],
-            is_active=True,
-        )
-        .order_by("role", "email")[:20]
-    )
+    staff = club.members.filter(
+        role__in=[
+            User.Role.CLUB_ADMIN,
+            User.Role.TICKETING_OFFICER,
+        ],
+        is_active=True,
+    ).order_by("role", "email")[:20]
 
     return Response(
         {
@@ -395,12 +375,7 @@ def club_admin_workspace_view(request):
                 "secondary_color": club.secondary_color,
             },
             "summary": {
-                "competitions": (
-                    matches
-                    .values("competition_id")
-                    .distinct()
-                    .count()
-                ),
+                "competitions": (matches.values("competition_id").distinct().count()),
                 "upcoming_fixtures": matches.filter(
                     status__in=UPCOMING_STATUSES,
                     match_date__gte=now,
@@ -423,28 +398,17 @@ def club_admin_workspace_view(request):
                     "league": membership.league.name,
                     "league_slug": membership.league.slug,
                     "season": (
-                        membership.season.name
-                        if membership.season_id
-                        else None
+                        membership.season.name if membership.season_id else None
                     ),
                     "status": membership.status,
-                    "status_display": (
-                        membership.get_status_display()
-                    ),
+                    "status_display": (membership.get_status_display()),
                 }
                 for membership in memberships
             ],
-            "upcoming_fixtures": [
-                _serialize_match(match)
-                for match in upcoming
-            ],
-            "recent_results": [
-                _serialize_match(match)
-                for match in recent_results
-            ],
+            "upcoming_fixtures": [_serialize_match(match) for match in upcoming],
+            "recent_results": [_serialize_match(match) for match in recent_results],
             "ticket_events": [
-                _serialize_ticket_event(match)
-                for match in ticket_events
+                _serialize_ticket_event(match) for match in ticket_events
             ],
             "staff": [
                 {
@@ -482,11 +446,7 @@ def ticketing_officer_workspace_view(request):
 
     if requested_scope:
         selected = next(
-            (
-                scope
-                for scope in scopes
-                if scope["key"] == requested_scope
-            ),
+            (scope for scope in scopes if scope["key"] == requested_scope),
             None,
         )
 
@@ -505,8 +465,7 @@ def ticketing_officer_workspace_view(request):
     tickets = Ticket.objects.filter(match__in=matches)
 
     events = (
-        matches
-        .filter(
+        matches.filter(
             status__in=UPCOMING_STATUSES,
             match_date__gte=now,
         )
@@ -530,8 +489,7 @@ def ticketing_officer_workspace_view(request):
     )
 
     logs = (
-        TicketValidationLog.objects
-        .filter(match__in=matches)
+        TicketValidationLog.objects.filter(match__in=matches)
         .select_related(
             "match",
             "match__home_club",
@@ -569,28 +527,19 @@ def ticketing_officer_workspace_view(request):
                     status=Ticket.Status.USED,
                 ).count(),
                 "pending_issues": (
-                    TicketValidationLog.objects
-                    .filter(match__in=matches)
+                    TicketValidationLog.objects.filter(match__in=matches)
                     .exclude(result=TicketValidationLog.Result.VALID)
                     .count()
                 ),
             },
-            "events": [
-                _serialize_ticket_event(match)
-                for match in events
-            ],
+            "events": [_serialize_ticket_event(match) for match in events],
             "recent_logs": [
                 {
                     "id": log.id,
                     "match_id": log.match_id,
-                    "match": (
-                        str(log.match)
-                        if log.match_id
-                        else "Unknown match"
-                    ),
+                    "match": (str(log.match) if log.match_id else "Unknown match"),
                     "scanned_by": (
-                        log.scanned_by.full_name
-                        or log.scanned_by.email
+                        log.scanned_by.full_name or log.scanned_by.email
                         if log.scanned_by_id
                         else "System"
                     ),
