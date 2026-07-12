@@ -25,7 +25,6 @@ from .models import (
 from .serializers import MatchListSerializer
 from .union_management_views import _require_permission, _resolve_membership
 
-
 MANAGER_SCOPE_ROLES = {
     LeagueAdminScope.Role.LEAGUE_ADMIN,
     LeagueAdminScope.Role.COMPETITION_ADMIN,
@@ -96,13 +95,17 @@ def _user_can_manage_match(user, match):
     if _is_super_admin(user):
         return True
 
-    return _active_scopes(user, manage_only=True).filter(
-        models.Q(
-            league_id=match.competition.league_id,
-            competition__isnull=True,
+    return (
+        _active_scopes(user, manage_only=True)
+        .filter(
+            models.Q(
+                league_id=match.competition.league_id,
+                competition__isnull=True,
+            )
+            | models.Q(competition_id=match.competition_id)
         )
-        | models.Q(competition_id=match.competition_id)
-    ).exists()
+        .exists()
+    )
 
 
 def _user_can_view_league(user, league_id):
@@ -180,9 +183,11 @@ def union_admin_league_admin_scopes_view(request):
     if str(user_value or "").isdigit():
         user = get_user_model().objects.filter(id=user_value).first()
     elif user_value:
-        user = get_user_model().objects.filter(
-            email__iexact=str(user_value).strip()
-        ).first()
+        user = (
+            get_user_model()
+            .objects.filter(email__iexact=str(user_value).strip())
+            .first()
+        )
     if user is None:
         return _error("Select an existing user for this administration scope.")
 
@@ -203,9 +208,11 @@ def union_admin_league_admin_scopes_view(request):
         if competition is None:
             return _error("Select a competition belonging to the selected league.")
 
-    scope_role = str(
-        request.data.get("role") or LeagueAdminScope.Role.LEAGUE_ADMIN
-    ).strip().upper()
+    scope_role = (
+        str(request.data.get("role") or LeagueAdminScope.Role.LEAGUE_ADMIN)
+        .strip()
+        .upper()
+    )
     valid_roles = {choice[0] for choice in LeagueAdminScope.Role.choices}
     if scope_role not in valid_roles:
         return _error("Select a valid league administration role.")
@@ -228,9 +235,7 @@ def union_admin_league_admin_scopes_view(request):
         actor=request.user,
         target_user=user,
         action=(
-            "league_admin_scope_created"
-            if created
-            else "league_admin_scope_updated"
+            "league_admin_scope_created" if created else "league_admin_scope_updated"
         ),
         details={
             "workspace": workspace.slug,
@@ -275,7 +280,9 @@ def union_admin_league_admin_scope_detail_view(request, scope_id):
         .first()
     )
     if scope is None:
-        return _error("League administration scope not found.", status.HTTP_404_NOT_FOUND)
+        return _error(
+            "League administration scope not found.", status.HTTP_404_NOT_FOUND
+        )
 
     if request.method == "GET":
         return Response(LeagueAdminScopeSerializer(scope).data)
@@ -395,23 +402,33 @@ def league_admin_match_officials_view(request):
 
     league = None
     if competition_value:
-        competition = Competition.objects.select_related("league", "league__union").filter(
-            id=competition_value
-        ).first()
+        competition = (
+            Competition.objects.select_related("league", "league__union")
+            .filter(id=competition_value)
+            .first()
+        )
         if competition is None:
             return _error("Competition not found.", status.HTTP_404_NOT_FOUND)
         if not _user_can_view_league(request.user, competition.league_id):
-            return _error("You cannot access this competition.", status.HTTP_403_FORBIDDEN)
+            return _error(
+                "You cannot access this competition.", status.HTTP_403_FORBIDDEN
+            )
         if not _is_super_admin(request.user):
-            has_competition_access = _active_scopes(request.user).filter(
-                models.Q(
-                    league_id=competition.league_id,
-                    competition__isnull=True,
+            has_competition_access = (
+                _active_scopes(request.user)
+                .filter(
+                    models.Q(
+                        league_id=competition.league_id,
+                        competition__isnull=True,
+                    )
+                    | models.Q(competition_id=competition.id)
                 )
-                | models.Q(competition_id=competition.id)
-            ).exists()
+                .exists()
+            )
             if not has_competition_access:
-                return _error("You cannot access this competition.", status.HTTP_403_FORBIDDEN)
+                return _error(
+                    "You cannot access this competition.", status.HTTP_403_FORBIDDEN
+                )
         league = competition.league
     elif league_value:
         league = League.objects.select_related("union").filter(id=league_value).first()
@@ -447,8 +464,8 @@ def league_admin_match_officials_view(request):
             | models.Q(certification_level__icontains=query)
         )
 
-    officials = officials.select_related("user", "union").distinct().order_by(
-        "full_name"
+    officials = (
+        officials.select_related("user", "union").distinct().order_by("full_name")
     )
     labels = dict(UnionMatchOfficial.RoleType.choices)
 
@@ -456,8 +473,7 @@ def league_admin_match_officials_view(request):
         {
             "count": officials.count(),
             "role_options": [
-                {"value": value, "label": label}
-                for value, label in labels.items()
+                {"value": value, "label": label} for value, label in labels.items()
             ],
             "results": UnionMatchOfficialManagementSerializer(
                 officials,
@@ -545,7 +561,10 @@ def league_admin_appointments_view(request):
         return _error("Select a valid official role.")
 
     appointment_status = _admin_status(request.data.get("status"))
-    if appointment_status is None or appointment_status == FixtureOfficialAssignment.Status.CANCELLED:
+    if (
+        appointment_status is None
+        or appointment_status == FixtureOfficialAssignment.Status.CANCELLED
+    ):
         return _error("New appointments must be PROPOSED or ASSIGNED.")
 
     with transaction.atomic():
@@ -595,9 +614,7 @@ def league_admin_appointment_detail_view(request, assignment_id):
     if assignment is None:
         return _error("Official appointment not found.", status.HTTP_404_NOT_FOUND)
     if not _user_can_manage_match(request.user, assignment.match):
-        return _error(
-            "You cannot manage this appointment.", status.HTTP_403_FORBIDDEN
-        )
+        return _error("You cannot manage this appointment.", status.HTTP_403_FORBIDDEN)
 
     if request.method == "GET":
         return Response(
@@ -713,9 +730,7 @@ def match_official_appointment_response_view(request, assignment_id):
         FixtureOfficialAssignment.Status.PROPOSED,
         FixtureOfficialAssignment.Status.ASSIGNED,
     }:
-        return _error(
-            "Only proposed or assigned appointments can receive a response."
-        )
+        return _error("Only proposed or assigned appointments can receive a response.")
 
     response_status = str(request.data.get("status") or "").strip().upper()
     if response_status not in OFFICIAL_RESPONSE_STATUSES:
@@ -731,12 +746,14 @@ def match_official_appointment_response_view(request, assignment_id):
     assignment.status = response_status
     assignment.response_note = response_note
     assignment.responded_at = timezone.now()
-    assignment.save(update_fields=[
-        "status",
-        "response_note",
-        "responded_at",
-        "updated_at",
-    ])
+    assignment.save(
+        update_fields=[
+            "status",
+            "response_note",
+            "responded_at",
+            "updated_at",
+        ]
+    )
 
     log_governance_action(
         actor=request.user,

@@ -1757,7 +1757,8 @@ def union_admin_fixture_official_appointment_detail_view(request, assignment_id)
                 "Administrators may only set PROPOSED, ASSIGNED or CANCELLED. Officials control ACCEPTED and DECLINED responses."
             )
         if (
-            assignment.status in {
+            assignment.status
+            in {
                 FixtureOfficialAssignment.Status.ACCEPTED,
                 FixtureOfficialAssignment.Status.DECLINED,
             }

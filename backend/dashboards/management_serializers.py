@@ -408,11 +408,15 @@ class LeagueAdminScopeSerializer(serializers.ModelSerializer):
 
 class FixtureOfficialAssignmentManagementSerializer(serializers.ModelSerializer):
     match_label = serializers.SerializerMethodField()
-    league = serializers.IntegerField(source="match.competition.league_id", read_only=True)
+    league = serializers.IntegerField(
+        source="match.competition.league_id", read_only=True
+    )
     league_name = serializers.CharField(
         source="match.competition.league.name", read_only=True
     )
-    competition = serializers.IntegerField(source="match.competition_id", read_only=True)
+    competition = serializers.IntegerField(
+        source="match.competition_id", read_only=True
+    )
     competition_name = serializers.CharField(
         source="match.competition.name", read_only=True
     )

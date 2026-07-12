@@ -232,9 +232,7 @@ class SharedOfficialAppointmentWorkflowTests(APITestCase):
         )
         self.authenticate(self.official_user)
 
-        listing = self.client.get(
-            "/api/dashboards/match-official/appointments/"
-        )
+        listing = self.client.get("/api/dashboards/match-official/appointments/")
         accepted = self.client.patch(
             f"/api/dashboards/match-official/appointments/{own_assignment.id}/response/",
             {"status": "ACCEPTED"},
