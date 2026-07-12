@@ -100,11 +100,32 @@ class User(AbstractUser):
         union_memberships = getattr(self, "union_workspace_memberships", None)
 
         if self.pk and union_memberships is not None:
-            if union_memberships.filter(
+            active_union_memberships = union_memberships.filter(
                 is_active=True,
                 workspace__status="ACTIVE",
+            )
+
+            management_union_roles = (
+                "OWNER",
+                "UNION_ADMIN",
+                "COMPETITIONS_MANAGER",
+                "REGISTRAR",
+                "REFEREE_MANAGER",
+                "FINANCE_OFFICER",
+                "COMMUNICATIONS_OFFICER",
+                "TICKETING_OFFICER",
+                "TECHNICAL_OFFICER",
+            )
+
+            if active_union_memberships.filter(
+                role__in=management_union_roles,
             ).exists():
                 roles.add(self.Role.UNION_ADMIN)
+
+            if active_union_memberships.filter(
+                role="MATCH_OFFICIAL",
+            ).exists():
+                roles.add(self.Role.REFEREE)
 
         return roles
 

@@ -29,8 +29,10 @@ from .models import (
     Competition,
     League,
     LeagueClubMembership,
+    FixtureOfficialAssignment,
     Match,
     Standing,
+    UnionMatchOfficial,
     Union,
     UnionWorkspace,
     UnionWorkspaceMembership,
@@ -1203,6 +1205,44 @@ def union_admin_operations_dashboard_view(request):
     competitions_qs = list(_workspace_competitions(workspace))
     clubs_qs = list(_workspace_clubs(workspace))
     matches_qs = list(_workspace_matches(workspace)[:12])
+    current_official = None
+    official_assignments = None
+
+    if membership.role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL:
+        current_official = (
+            UnionMatchOfficial.objects.filter(
+                union=workspace.related_union,
+                user=request.user,
+            )
+            .select_related("union", "user")
+            .first()
+        )
+
+        if current_official is None:
+            return Response(
+                {
+                    "detail": (
+                        "No match official profile is linked to this "
+                        "workspace account."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        official_assignments = (
+            FixtureOfficialAssignment.objects.filter(
+                official=current_official,
+                match__competition__league__union=workspace.related_union,
+            )
+            .select_related(
+                "match",
+                "match__competition",
+                "match__home_club",
+                "match__away_club",
+                "official",
+            )
+            .order_by("match__match_date")
+        )
 
     competition_rows = []
 
@@ -1263,19 +1303,44 @@ def union_admin_operations_dashboard_view(request):
         for index, club in enumerate(clubs_qs[:20])
     ]
 
-    appointment_rows = [
-        {
-            "match": f"{match.home_club.name} vs {match.away_club.name}",
-            "competition": match.competition.name,
-            "date": match.match_date.strftime("%d %b %Y, %H:%M"),
-            "venue": match.venue or "Venue TBC",
-            "role": (
-                "Centre Referee" if "BASKETBALL" not in sport_value else "Crew Chief"
-            ),
-            "report": "Due after match",
-        }
-        for match in matches_qs[:8]
-    ]
+    if official_assignments is not None:
+        appointment_rows = [
+            {
+                "id": assignment.id,
+                "match": (
+                    f"{assignment.match.home_club.name} vs "
+                    f"{assignment.match.away_club.name}"
+                ),
+                "competition": assignment.match.competition.name,
+                "date": assignment.match.match_date.strftime("%d %b %Y, %H:%M"),
+                "venue": assignment.match.venue or "Venue TBC",
+                "role": assignment.get_role_type_display(),
+                "status": assignment.get_status_display(),
+                "report": (
+                    "Due after match"
+                    if assignment.match.match_date >= timezone.now()
+                    else "Report due"
+                ),
+            }
+            for assignment in official_assignments[:20]
+        ]
+    else:
+        appointment_rows = [
+            {
+                "match": (f"{match.home_club.name} vs " f"{match.away_club.name}"),
+                "competition": match.competition.name,
+                "date": match.match_date.strftime("%d %b %Y, %H:%M"),
+                "venue": match.venue or "Venue TBC",
+                "role": (
+                    "Centre Referee"
+                    if "BASKETBALL" not in sport_value
+                    else "Crew Chief"
+                ),
+                "status": "Assignment required",
+                "report": "Due after match",
+            }
+            for match in matches_qs[:8]
+        ]
 
     registration_rows = [
         {
@@ -1297,13 +1362,60 @@ def union_admin_operations_dashboard_view(request):
                 "name": workspace.name,
                 "sport": workspace.sport,
             },
-            "competitions": competition_rows,
-            "clubs": club_rows,
-            "national_teams": NATIONAL_TEAM_ROWS.get(workspace.acronym.upper(), []),
-            "registrations": registration_rows,
-            "referees": _workspace_referees(workspace, competitions_qs),
+            "competitions": (
+                []
+                if membership.role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL
+                else competition_rows
+            ),
+            "clubs": (
+                []
+                if membership.role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL
+                else club_rows
+            ),
+            "national_teams": (
+                []
+                if membership.role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL
+                else NATIONAL_TEAM_ROWS.get(
+                    workspace.acronym.upper(),
+                    [],
+                )
+            ),
+            "registrations": (
+                []
+                if membership.role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL
+                else registration_rows
+            ),
+            "referees": (
+                []
+                if membership.role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL
+                else _workspace_referees(
+                    workspace,
+                    competitions_qs,
+                )
+            ),
+            "current_official": (
+                {
+                    "id": current_official.id,
+                    "name": current_official.full_name,
+                    "email": current_official.email,
+                    "role": current_official.get_role_type_display(),
+                    "grade": current_official.certification_level,
+                    "status": current_official.get_status_display(),
+                    "competitions": current_official.competitions,
+                    "union": current_official.union.name,
+                }
+                if current_official is not None
+                else None
+            ),
             "appointments": appointment_rows,
-            "player_positions": PLAYER_POSITIONS_BY_SPORT.get(sport_value, []),
+            "player_positions": (
+                []
+                if membership.role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL
+                else PLAYER_POSITIONS_BY_SPORT.get(
+                    sport_value,
+                    [],
+                )
+            ),
         }
     )
 
@@ -1619,6 +1731,21 @@ def union_admin_workspace_users_view(request):
             "invited_by": request.user,
         },
     )
+
+    linked_official = None
+
+    if (
+        role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL
+        and workspace.related_union is not None
+    ):
+        linked_official = UnionMatchOfficial.objects.filter(
+            union=workspace.related_union,
+            email__iexact=email,
+        ).first()
+
+        if linked_official is not None and linked_official.user_id != user.id:
+            linked_official.user = user
+            linked_official.save(update_fields=["user", "updated_at"])
 
     serializer = UnionWorkspaceUserSerializer(
         membership,
