@@ -1644,6 +1644,13 @@ def union_admin_fixture_official_appointments_view(request):
         )
 
     assignment_status = _normalise_assignment_status(request.data.get("status"))
+    if assignment_status not in {
+        FixtureOfficialAssignment.Status.PROPOSED,
+        FixtureOfficialAssignment.Status.ASSIGNED,
+    }:
+        return _workspace_error(
+            "New appointments must be PROPOSED or ASSIGNED. Officials control ACCEPTED and DECLINED responses."
+        )
 
     assignment, created = FixtureOfficialAssignment.objects.update_or_create(
         match=match,
@@ -1717,6 +1724,13 @@ def union_admin_fixture_official_appointment_detail_view(request, assignment_id)
         )
 
     if request.method == "DELETE":
+        if assignment.status in {
+            FixtureOfficialAssignment.Status.ACCEPTED,
+            FixtureOfficialAssignment.Status.DECLINED,
+        }:
+            return _workspace_error(
+                "Accepted or declined appointments must be cancelled rather than deleted."
+            )
         assignment.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1733,7 +1747,32 @@ def union_admin_fixture_official_appointment_detail_view(request, assignment_id)
 
         assignment.role_type = role_type
     if "status" in request.data:
-        assignment.status = _normalise_assignment_status(request.data.get("status"))
+        next_status = _normalise_assignment_status(request.data.get("status"))
+        if next_status not in {
+            FixtureOfficialAssignment.Status.PROPOSED,
+            FixtureOfficialAssignment.Status.ASSIGNED,
+            FixtureOfficialAssignment.Status.CANCELLED,
+        }:
+            return _workspace_error(
+                "Administrators may only set PROPOSED, ASSIGNED or CANCELLED. Officials control ACCEPTED and DECLINED responses."
+            )
+        if (
+            assignment.status in {
+                FixtureOfficialAssignment.Status.ACCEPTED,
+                FixtureOfficialAssignment.Status.DECLINED,
+            }
+            and next_status != FixtureOfficialAssignment.Status.CANCELLED
+        ):
+            return _workspace_error(
+                "An official response can only be preserved or cancelled; it cannot be reset by an administrator."
+            )
+        assignment.status = next_status
+        if next_status in {
+            FixtureOfficialAssignment.Status.PROPOSED,
+            FixtureOfficialAssignment.Status.ASSIGNED,
+        }:
+            assignment.response_note = ""
+            assignment.responded_at = None
     if "notes" in request.data:
         assignment.notes = str(request.data.get("notes") or "").strip()
 

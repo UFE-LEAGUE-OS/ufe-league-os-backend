@@ -6,6 +6,7 @@ from .models import (
     Competition,
     FixtureOfficialAssignment,
     League,
+    LeagueAdminScope,
     LeagueClubMembership,
     Season,
     UnionMatchOfficial,
@@ -364,19 +365,81 @@ class UnionMatchOfficialManagementSerializer(serializers.ModelSerializer):
         }
 
 
+class LeagueAdminScopeSerializer(serializers.ModelSerializer):
+    user_email = serializers.EmailField(source="user.email", read_only=True)
+    user_full_name = serializers.CharField(source="user.full_name", read_only=True)
+    role_display = serializers.CharField(source="get_role_display", read_only=True)
+    league_name = serializers.CharField(source="league.name", read_only=True)
+    league_slug = serializers.CharField(source="league.slug", read_only=True)
+    union_id = serializers.IntegerField(source="league.union_id", read_only=True)
+    union_name = serializers.CharField(source="league.union.name", read_only=True)
+    competition_name = serializers.CharField(
+        source="competition.name", read_only=True, allow_null=True
+    )
+    competition_slug = serializers.CharField(
+        source="competition.slug", read_only=True, allow_null=True
+    )
+    can_manage_appointments = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = LeagueAdminScope
+        fields = [
+            "id",
+            "user",
+            "user_email",
+            "user_full_name",
+            "league",
+            "league_name",
+            "league_slug",
+            "union_id",
+            "union_name",
+            "competition",
+            "competition_name",
+            "competition_slug",
+            "role",
+            "role_display",
+            "can_manage_appointments",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
 class FixtureOfficialAssignmentManagementSerializer(serializers.ModelSerializer):
     match_label = serializers.SerializerMethodField()
+    league = serializers.IntegerField(source="match.competition.league_id", read_only=True)
+    league_name = serializers.CharField(
+        source="match.competition.league.name", read_only=True
+    )
+    competition = serializers.IntegerField(source="match.competition_id", read_only=True)
     competition_name = serializers.CharField(
         source="match.competition.name", read_only=True
     )
+    competition_season = serializers.CharField(
+        source="match.competition.season", read_only=True
+    )
     match_date = serializers.DateTimeField(source="match.match_date", read_only=True)
     venue = serializers.CharField(source="match.venue", read_only=True)
+    round = serializers.CharField(source="match.round", read_only=True)
+    home_club = serializers.IntegerField(source="match.home_club_id", read_only=True)
+    home_club_name = serializers.CharField(
+        source="match.home_club.name", read_only=True
+    )
+    away_club = serializers.IntegerField(source="match.away_club_id", read_only=True)
+    away_club_name = serializers.CharField(
+        source="match.away_club.name", read_only=True
+    )
     official_name = serializers.CharField(source="official.full_name", read_only=True)
     official_email = serializers.EmailField(source="official.email", read_only=True)
+    official_user = serializers.IntegerField(source="official.user_id", read_only=True)
     role_type_display = serializers.CharField(
         source="get_role_type_display", read_only=True
     )
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    assigned_by_email = serializers.EmailField(
+        source="assigned_by.email", read_only=True, allow_null=True
+    )
 
     class Meta:
         model = FixtureOfficialAssignment
@@ -384,10 +447,20 @@ class FixtureOfficialAssignmentManagementSerializer(serializers.ModelSerializer)
             "id",
             "match",
             "match_label",
+            "league",
+            "league_name",
+            "competition",
             "competition_name",
+            "competition_season",
             "match_date",
             "venue",
+            "round",
+            "home_club",
+            "home_club_name",
+            "away_club",
+            "away_club_name",
             "official",
+            "official_user",
             "official_name",
             "official_email",
             "role_type",
@@ -395,19 +468,37 @@ class FixtureOfficialAssignmentManagementSerializer(serializers.ModelSerializer)
             "status",
             "status_display",
             "notes",
+            "response_note",
+            "responded_at",
+            "assigned_by",
+            "assigned_by_email",
             "created_at",
             "updated_at",
         ]
         read_only_fields = [
             "id",
             "match_label",
+            "league",
+            "league_name",
+            "competition",
             "competition_name",
+            "competition_season",
             "match_date",
             "venue",
+            "round",
+            "home_club",
+            "home_club_name",
+            "away_club",
+            "away_club_name",
+            "official_user",
             "official_name",
             "official_email",
             "role_type_display",
             "status_display",
+            "response_note",
+            "responded_at",
+            "assigned_by",
+            "assigned_by_email",
             "created_at",
             "updated_at",
         ]
