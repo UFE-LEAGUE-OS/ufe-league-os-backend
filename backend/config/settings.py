@@ -235,6 +235,14 @@ if USE_S3_MEDIA:
         "S3_PUBLIC_CACHE_CONTROL",
         default="public, max-age=86400",
     )
+    S3_PRIVATE_EXTERNAL_BASE_URL = (
+        config(
+            "S3_PRIVATE_EXTERNAL_BASE_URL",
+            default="",
+        )
+        .strip()
+        .rstrip("/")
+    )
 
     if not S3_PUBLIC_URL_PROTOCOL.endswith(":"):
         S3_PUBLIC_URL_PROTOCOL = f"{S3_PUBLIC_URL_PROTOCOL}:"
