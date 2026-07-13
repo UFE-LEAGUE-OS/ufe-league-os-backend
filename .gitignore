@@ -29,3 +29,6 @@ htmlcov/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local object-storage credentials
+.env.storage
