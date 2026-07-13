@@ -19,6 +19,7 @@ try:
 except ImportError:
     dj_database_url = None
 from decouple import Csv, config
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -172,48 +173,165 @@ STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 USE_S3_MEDIA = config("USE_S3_MEDIA", default=False, cast=bool)
+PRIVATE_MEDIA_URL_EXPIRY = config(
+    "S3_PRIVATE_URL_EXPIRY",
+    default=900,
+    cast=int,
+)
+
+if PRIVATE_MEDIA_URL_EXPIRY <= 0:
+    raise ImproperlyConfigured("S3_PRIVATE_URL_EXPIRY must be greater than zero.")
 
 if USE_S3_MEDIA:
-    AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY_ID")
-    AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_ACCESS_KEY")
-    AWS_STORAGE_BUCKET_NAME = config("AWS_STORAGE_BUCKET_NAME")
-    AWS_S3_REGION_NAME = config("AWS_S3_REGION_NAME", default="fra1")
-    AWS_S3_ENDPOINT_URL = config(
-        "AWS_S3_ENDPOINT_URL",
-        default=f"https://{AWS_S3_REGION_NAME}.digitaloceanspaces.com",
+    S3_ACCESS_KEY_ID = config(
+        "S3_ACCESS_KEY_ID",
+        default=config("AWS_ACCESS_KEY_ID", default=""),
     )
-    AWS_S3_CUSTOM_DOMAIN = config(
-        "AWS_S3_CUSTOM_DOMAIN",
-        default=f"{AWS_STORAGE_BUCKET_NAME}.{AWS_S3_REGION_NAME}.digitaloceanspaces.com",
+    S3_SECRET_ACCESS_KEY = config(
+        "S3_SECRET_ACCESS_KEY",
+        default=config("AWS_SECRET_ACCESS_KEY", default=""),
     )
-    AWS_QUERYSTRING_AUTH = config("AWS_QUERYSTRING_AUTH", default=False, cast=bool)
-    AWS_S3_FILE_OVERWRITE = False
-    AWS_DEFAULT_ACL = config("AWS_DEFAULT_ACL", default="public-read")
 
-    STORAGES = {
-        "default": {
-            "BACKEND": "storages.backends.s3.S3Storage",
-            "OPTIONS": {
-                "access_key": AWS_ACCESS_KEY_ID,
-                "secret_key": AWS_SECRET_ACCESS_KEY,
-                "bucket_name": AWS_STORAGE_BUCKET_NAME,
-                "region_name": AWS_S3_REGION_NAME,
-                "endpoint_url": AWS_S3_ENDPOINT_URL,
-                "custom_domain": AWS_S3_CUSTOM_DOMAIN,
-                "querystring_auth": AWS_QUERYSTRING_AUTH,
-                "file_overwrite": AWS_S3_FILE_OVERWRITE,
-                "default_acl": AWS_DEFAULT_ACL,
-            },
-        },
-        "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    if not S3_ACCESS_KEY_ID or not S3_SECRET_ACCESS_KEY:
+        raise ImproperlyConfigured(
+            "S3 media is enabled but storage credentials are missing."
+        )
+
+    S3_PUBLIC_BUCKET_NAME = config(
+        "S3_PUBLIC_BUCKET_NAME",
+        default=config(
+            "AWS_STORAGE_BUCKET_NAME",
+            default="league-os-public",
+        ),
+    )
+    S3_PRIVATE_BUCKET_NAME = config(
+        "S3_PRIVATE_BUCKET_NAME",
+        default="league-os-private",
+    )
+    S3_REGION_NAME = config(
+        "S3_REGION_NAME",
+        default=config("AWS_S3_REGION_NAME", default="us-east-1"),
+    )
+    S3_ENDPOINT_URL = config(
+        "S3_ENDPOINT_URL",
+        default=config(
+            "AWS_S3_ENDPOINT_URL",
+            default=f"https://{S3_REGION_NAME}.digitaloceanspaces.com",
+        ),
+    ).rstrip("/")
+    S3_ADDRESSING_STYLE = config(
+        "S3_ADDRESSING_STYLE",
+        default="path",
+    )
+    S3_PUBLIC_CUSTOM_DOMAIN = config(
+        "S3_PUBLIC_CUSTOM_DOMAIN",
+        default=config("AWS_S3_CUSTOM_DOMAIN", default=""),
+    ).strip()
+    S3_PUBLIC_URL_PROTOCOL = config(
+        "S3_PUBLIC_URL_PROTOCOL",
+        default="https:",
+    ).strip()
+    S3_PUBLIC_CACHE_CONTROL = config(
+        "S3_PUBLIC_CACHE_CONTROL",
+        default="public, max-age=86400",
+    )
+    S3_PRIVATE_EXTERNAL_BASE_URL = (
+        config(
+            "S3_PRIVATE_EXTERNAL_BASE_URL",
+            default="",
+        )
+        .strip()
+        .rstrip("/")
+    )
+
+    if not S3_PUBLIC_URL_PROTOCOL.endswith(":"):
+        S3_PUBLIC_URL_PROTOCOL = f"{S3_PUBLIC_URL_PROTOCOL}:"
+
+    common_s3_options = {
+        "access_key": S3_ACCESS_KEY_ID,
+        "secret_key": S3_SECRET_ACCESS_KEY,
+        "region_name": S3_REGION_NAME,
+        "endpoint_url": S3_ENDPOINT_URL,
+        "addressing_style": S3_ADDRESSING_STYLE,
+        "signature_version": "s3v4",
+        "file_overwrite": False,
+    }
+
+    public_s3_options = {
+        **common_s3_options,
+        "bucket_name": S3_PUBLIC_BUCKET_NAME,
+        "default_acl": "public-read",
+        "querystring_auth": False,
+        "object_parameters": {
+            "CacheControl": S3_PUBLIC_CACHE_CONTROL,
         },
     }
 
-    MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/"
+    if S3_PUBLIC_CUSTOM_DOMAIN:
+        public_s3_options.update(
+            {
+                "custom_domain": S3_PUBLIC_CUSTOM_DOMAIN,
+                "url_protocol": S3_PUBLIC_URL_PROTOCOL,
+            }
+        )
+
+    private_s3_options = {
+        **common_s3_options,
+        "bucket_name": S3_PRIVATE_BUCKET_NAME,
+        "default_acl": "private",
+        "querystring_auth": True,
+        "querystring_expire": PRIVATE_MEDIA_URL_EXPIRY,
+        "object_parameters": {
+            "CacheControl": "private, no-store",
+        },
+    }
+
+    STORAGES = {
+        "default": {
+            "BACKEND": "config.storage_backends.PublicMediaStorage",
+            "OPTIONS": public_s3_options,
+        },
+        "private": {
+            "BACKEND": "config.storage_backends.PrivateMediaStorage",
+            "OPTIONS": private_s3_options,
+        },
+        "staticfiles": {
+            "BACKEND": ("django.contrib.staticfiles.storage.StaticFilesStorage"),
+        },
+    }
+
+    if S3_PUBLIC_CUSTOM_DOMAIN:
+        MEDIA_URL = (
+            f"{S3_PUBLIC_URL_PROTOCOL}//" f"{S3_PUBLIC_CUSTOM_DOMAIN.rstrip('/')}/"
+        )
+    else:
+        MEDIA_URL = f"{S3_ENDPOINT_URL}/" f"{S3_PUBLIC_BUCKET_NAME}/"
 else:
     MEDIA_URL = "/media/"
     MEDIA_ROOT = BASE_DIR / "media"
+
+    PRIVATE_MEDIA_URL = "/private-media/"
+    PRIVATE_MEDIA_ROOT = BASE_DIR / "private_media"
+
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+            "OPTIONS": {
+                "location": MEDIA_ROOT,
+                "base_url": MEDIA_URL,
+            },
+        },
+        "private": {
+            "BACKEND": ("config.storage_backends.LocalPrivateMediaStorage"),
+            "OPTIONS": {
+                "location": PRIVATE_MEDIA_ROOT,
+                "base_url": PRIVATE_MEDIA_URL,
+            },
+        },
+        "staticfiles": {
+            "BACKEND": ("django.contrib.staticfiles.storage.StaticFilesStorage"),
+        },
+    }
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
