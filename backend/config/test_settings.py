@@ -77,7 +77,34 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "/static/"
+
+USE_S3_MEDIA = False
 MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "test_media"
+
+PRIVATE_MEDIA_URL = "/private-media/"
+PRIVATE_MEDIA_ROOT = BASE_DIR / "test_private_media"
+PRIVATE_MEDIA_URL_EXPIRY = 900
+
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {
+            "location": MEDIA_ROOT,
+            "base_url": MEDIA_URL,
+        },
+    },
+    "private": {
+        "BACKEND": "config.storage_backends.LocalPrivateMediaStorage",
+        "OPTIONS": {
+            "location": PRIVATE_MEDIA_ROOT,
+            "base_url": PRIVATE_MEDIA_URL,
+        },
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
