@@ -37,7 +37,7 @@ Django and boto3 must use path-style S3 addressing.
 - The S3 host port binds only to `127.0.0.1`.
 - SeaweedFS administration ports are not published.
 - Production credentials must be generated separately.
-- Public browser access is not enabled by this feature.
+- The local S3 host port remains bound to `127.0.0.1`; production exposure requires TLS and reverse-proxy configuration.
 - Off-server backup is required before production media is enabled.
 
 ## Persistent data
@@ -56,6 +56,7 @@ being destroyed and a verified backup exists.
 
     docker compose \
       --env-file .env.storage \
+      -f docker-compose.yml \
       -f docker-compose.storage.yml \
       up -d
 
@@ -63,18 +64,44 @@ being destroyed and a verified backup exists.
 
     docker compose \
       --env-file .env.storage \
+      -f docker-compose.yml \
       -f docker-compose.storage.yml \
       down
 
 Do not add `--volumes` when stopping the service.
 
-## Future features
+
+## Django storage aliases
+
+When `USE_S3_MEDIA=True`, Django provides these storage aliases:
+
+- `default`: public media in `league-os-public`
+- `private`: signed private media in `league-os-private`
+- `staticfiles`: local collected static files
+
+Existing avatars, logos, banners, and sport-variant icons use the public
+`default` storage.
+
+Restricted future fields such as identity documents, contracts,
+certificates, receipts, and compliance files must use the `private`
+storage alias.
+
+Public objects use unsigned URLs. SeaweedFS public downloads are enabled by
+an explicit bucket policy granting anonymous `s3:GetObject` access only to the
+public bucket. The bootstrap runs when `S3_MANAGE_BUCKET_POLICIES=True`.
+
+Private URLs are signed and expire after the configured
+`S3_PRIVATE_URL_EXPIRY` period. The private bucket receives no anonymous-read
+policy.
+
+Local filesystem development uses separate `media` and `private_media`
+directories. Django only exposes the public media directory during debug
+development.
+## Remaining features
 
 The following work is implemented separately:
 
-1. Public Django media storage.
-2. Private Django media storage and signed URLs.
-3. Production reverse proxy and TLS.
-4. Existing-media migration.
-5. Off-server backup.
-6. Restore verification.
+1. Production reverse proxy and TLS.
+2. Existing-media migration.
+3. Off-server backup.
+4. Restore verification.
