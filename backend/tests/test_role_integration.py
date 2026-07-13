@@ -1383,7 +1383,7 @@ class TestFollowingAndFeedIntegration:
         # Verify all follows
         follows = client.get("/api/accounts/follow/")
         assert len(follows.data) == 3
- 
+
         # Verify content types are present
         followed_types = {item["content_type"] for item in follows.data}
         assert "CLUB" in followed_types
