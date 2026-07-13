@@ -323,6 +323,12 @@ UNION_WORKSPACE_ROLE_PERMISSIONS = {
         "union.dashboard.view",
         "union.communications.manage",
     },
+    "TICKETING_OFFICER": {
+        "union.dashboard.view",
+        "union.ticketing.manage",
+        "union.ticketing.scan",
+        "union.reports.view",
+    },
     "VIEWER": {
         "union.dashboard.view",
         "union.reports.view",
@@ -391,6 +397,7 @@ class UnionWorkspaceMembership(models.Model):
         MATCH_OFFICIAL = "MATCH_OFFICIAL", "Match Official"
         FINANCE_OFFICER = "FINANCE_OFFICER", "Finance Officer"
         COMMUNICATIONS_OFFICER = "COMMUNICATIONS_OFFICER", "Communications Officer"
+        TICKETING_OFFICER = "TICKETING_OFFICER", "Ticketing Officer"
         VIEWER = "VIEWER", "Viewer"
 
     user = models.ForeignKey(

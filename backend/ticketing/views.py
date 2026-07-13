@@ -1,4 +1,5 @@
 from io import BytesIO
+from django.db.models import Q
 from django.http import HttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -11,7 +12,12 @@ import qrcode
 import qrcode.image.svg
 
 from accounts.models import User
-from dashboards.models import Match
+from dashboards.models import (
+    LeagueAdminScope,
+    Match,
+    UnionWorkspace,
+    UnionWorkspaceMembership,
+)
 from sponsorships.flutterwave import FlutterwaveError
 
 from .models import Ticket, TicketOrder, TicketType, TicketValidationLog
@@ -59,6 +65,114 @@ def user_can_validate_tickets(user):
         and user.is_authenticated
         and (user.is_staff or user.role in TICKET_VALIDATION_ROLES)
     )
+
+
+def ticket_validation_matches_for_user(user):
+    """
+    Return only matches the authenticated user may validate.
+
+    The ticketing dashboard already scopes visible matches, but
+    this server-side check prevents users from manually posting
+    an unrelated match ID to the validation endpoint.
+    """
+    if user.is_staff or user.role == User.Role.SUPER_ADMIN:
+        return Match.objects.all()
+
+    scope_filters = []
+
+    if user.role in {
+        User.Role.CLUB_ADMIN,
+        User.Role.TICKETING_OFFICER,
+    }:
+        club_ids = set()
+
+        if user.club_id:
+            club_ids.add(user.club_id)
+
+        club_ids.update(
+            user.administered_clubs.values_list(
+                "id",
+                flat=True,
+            )
+        )
+
+        if club_ids:
+            scope_filters.append(
+                Q(home_club_id__in=club_ids) | Q(away_club_id__in=club_ids)
+            )
+
+    if user.role == User.Role.LEAGUE_ADMIN:
+        scopes = list(
+            LeagueAdminScope.objects.filter(
+                user=user,
+                is_active=True,
+            ).values_list(
+                "league_id",
+                "competition_id",
+            )
+        )
+
+        full_league_ids = {
+            league_id for league_id, competition_id in scopes if competition_id is None
+        }
+
+        competition_ids = {
+            competition_id for _, competition_id in scopes if competition_id is not None
+        }
+
+        if full_league_ids:
+            scope_filters.append(Q(competition__league_id__in=(full_league_ids)))
+
+        if competition_ids:
+            scope_filters.append(Q(competition_id__in=competition_ids))
+
+    if user.role in {
+        User.Role.UNION_ADMIN,
+        User.Role.TICKETING_OFFICER,
+    }:
+        memberships = UnionWorkspaceMembership.objects.filter(
+            user=user,
+            is_active=True,
+            workspace__status=(UnionWorkspace.Status.ACTIVE),
+            workspace__related_union__isnull=False,
+        ).select_related("workspace")
+
+        union_ids = set()
+
+        for membership in memberships:
+            may_scan = False
+
+            if user.role == User.Role.UNION_ADMIN:
+                may_scan = membership.role in {
+                    UnionWorkspaceMembership.Role.OWNER,
+                    UnionWorkspaceMembership.Role.UNION_ADMIN,
+                }
+
+            if user.role == User.Role.TICKETING_OFFICER:
+                permissions = set(membership.effective_permissions)
+
+                may_scan = bool(
+                    {
+                        "union.ticketing.manage",
+                        "union.ticketing.scan",
+                    }.intersection(permissions)
+                )
+
+            if may_scan:
+                union_ids.add(membership.workspace.related_union_id)
+
+        if union_ids:
+            scope_filters.append(Q(competition__league__union_id__in=(union_ids)))
+
+    if not scope_filters:
+        return Match.objects.none()
+
+    combined_filter = scope_filters[0]
+
+    for scope_filter in scope_filters[1:]:
+        combined_filter |= scope_filter
+
+    return Match.objects.filter(combined_filter).distinct()
 
 
 def serialize_order(order, request):
@@ -507,12 +621,26 @@ def ticket_validate_view(request):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     scanned_code = serializer.validated_data["scanned_code"]
-    match_id = serializer.validated_data.get("match_id")
+    match_id = serializer.validated_data["match_id"]
+
+    allowed_match = (
+        ticket_validation_matches_for_user(request.user).filter(id=match_id).first()
+    )
+
+    if allowed_match is None:
+        return Response(
+            {
+                "detail": (
+                    "You are not authorised to validate " "tickets for this match."
+                )
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     ticket, log = validate_ticket_code(
         scanned_code=scanned_code,
         scanned_by=request.user,
-        match_id=match_id,
+        match_id=allowed_match.id,
     )
 
     response_status = status.HTTP_200_OK

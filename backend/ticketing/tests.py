@@ -8,7 +8,14 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from accounts.models import Club, User
-from dashboards.models import Competition, League, Match, Union
+from dashboards.models import (
+    Competition,
+    League,
+    Match,
+    Union,
+    UnionWorkspace,
+    UnionWorkspaceMembership,
+)
 
 from .models import Ticket, TicketOrder, TicketType, TicketValidationLog
 from .services.orders import (
@@ -55,6 +62,22 @@ class TicketingTestMixin:
             name="Uganda Rugby Union",
             slug="uganda-rugby-union",
             country="Uganda",
+        )
+
+        self.workspace = UnionWorkspace.objects.create(
+            related_union=self.union,
+            name="Uganda Rugby Union Workspace",
+            slug="uganda-rugby-union-workspace",
+            acronym="URU",
+            sport="Rugby",
+            status=UnionWorkspace.Status.ACTIVE,
+        )
+
+        UnionWorkspaceMembership.objects.create(
+            user=self.ticketing_officer,
+            workspace=self.workspace,
+            role=(UnionWorkspaceMembership.Role.TICKETING_OFFICER),
+            is_active=True,
         )
 
         self.league = League.objects.create(
@@ -540,6 +563,178 @@ class TicketingAPITests(TicketingTestMixin, APITestCase):
         ticket.refresh_from_db()
         self.assertEqual(ticket.status, Ticket.Status.USED)
         self.assertEqual(ticket.checked_in_by, self.ticketing_officer)
+
+    def test_ticket_validation_requires_match_id(self):
+        ticket = Ticket.objects.create(
+            order=self.order,
+            ticket_type=self.ticket_type,
+            match=self.match,
+            owner=self.user,
+        )
+
+        self.client.force_authenticate(user=self.ticketing_officer)
+
+        response = self.client.post(
+            "/api/ticketing/validate/",
+            {
+                "scanned_code": str(ticket.ticket_code),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("match_id", response.data)
+
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.status, Ticket.Status.ACTIVE)
+
+    def test_union_ticketing_officer_cannot_validate_other_union_match(
+        self,
+    ):
+        other_union = Union.objects.create(
+            name="Other Rugby Union",
+            slug="other-rugby-union",
+            country="Uganda",
+        )
+
+        other_league = League.objects.create(
+            union=other_union,
+            name="Other Rugby League",
+            slug="other-rugby-league",
+        )
+
+        other_competition = Competition.objects.create(
+            league=other_league,
+            name="Other Rugby League 2026",
+            slug="other-rugby-league-2026",
+            season="2026",
+        )
+
+        other_home = Club.objects.create(
+            name="Other Home Club",
+            slug="other-home-club",
+        )
+
+        other_away = Club.objects.create(
+            name="Other Away Club",
+            slug="other-away-club",
+        )
+
+        other_match = Match.objects.create(
+            competition=other_competition,
+            home_club=other_home,
+            away_club=other_away,
+            match_date=timezone.now() + timedelta(days=8),
+            venue="Other Stadium",
+            status=Match.Status.SCHEDULED,
+        )
+
+        other_ticket_type = TicketType.objects.create(
+            match=other_match,
+            name="Other Ordinary",
+            description="Other match access.",
+            price=Decimal("10000.00"),
+            currency="UGX",
+            quantity_available=100,
+            quantity_sold=0,
+            status=TicketType.Status.ACTIVE,
+            created_by=self.ticketing_officer,
+        )
+
+        ticket = Ticket.objects.create(
+            order=self.order,
+            ticket_type=other_ticket_type,
+            match=other_match,
+            owner=self.user,
+        )
+
+        self.client.force_authenticate(user=self.ticketing_officer)
+
+        response = self.client.post(
+            "/api/ticketing/validate/",
+            {
+                "scanned_code": str(ticket.ticket_code),
+                "match_id": other_match.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.status, Ticket.Status.ACTIVE)
+        self.assertFalse(
+            TicketValidationLog.objects.filter(
+                ticket=ticket,
+                scanned_by=self.ticketing_officer,
+            ).exists()
+        )
+
+    def test_club_ticketing_officer_cannot_validate_unrelated_club_match(
+        self,
+    ):
+        club_officer = User.objects.create_user(
+            email="club-ticketing@example.com",
+            password="StrongPass123!",
+            first_name="Club",
+            last_name="Officer",
+            role=User.Role.TICKETING_OFFICER,
+            club=self.home_club,
+        )
+
+        unrelated_home = Club.objects.create(
+            name="Unrelated Home Club",
+            slug="unrelated-home-club",
+        )
+
+        unrelated_away = Club.objects.create(
+            name="Unrelated Away Club",
+            slug="unrelated-away-club",
+        )
+
+        unrelated_match = Match.objects.create(
+            competition=self.competition,
+            home_club=unrelated_home,
+            away_club=unrelated_away,
+            match_date=timezone.now() + timedelta(days=9),
+            venue="Unrelated Stadium",
+            status=Match.Status.SCHEDULED,
+        )
+
+        unrelated_type = TicketType.objects.create(
+            match=unrelated_match,
+            name="Unrelated Ordinary",
+            description="Unrelated match access.",
+            price=Decimal("10000.00"),
+            currency="UGX",
+            quantity_available=100,
+            quantity_sold=0,
+            status=TicketType.Status.ACTIVE,
+            created_by=club_officer,
+        )
+
+        ticket = Ticket.objects.create(
+            order=self.order,
+            ticket_type=unrelated_type,
+            match=unrelated_match,
+            owner=self.user,
+        )
+
+        self.client.force_authenticate(user=club_officer)
+
+        response = self.client.post(
+            "/api/ticketing/validate/",
+            {
+                "scanned_code": str(ticket.ticket_code),
+                "match_id": unrelated_match.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.status, Ticket.Status.ACTIVE)
 
     def test_fan_cannot_validate_ticket(self):
         self.client.force_authenticate(user=self.user)
