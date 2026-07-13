@@ -215,7 +215,10 @@ class TicketSerializer(serializers.ModelSerializer):
 
 class TicketValidationSerializer(serializers.Serializer):
     scanned_code = serializers.CharField(max_length=120)
-    match_id = serializers.IntegerField(required=False)
+    match_id = serializers.IntegerField(
+        required=True,
+        min_value=1,
+    )
 
 
 class TicketValidationResultSerializer(serializers.ModelSerializer):
