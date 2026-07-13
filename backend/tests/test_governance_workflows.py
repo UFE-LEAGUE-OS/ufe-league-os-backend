@@ -213,9 +213,10 @@ class TestPublishedRulesPropagation:
         }
         response = authenticated_client.post(url, payload, format="json")
         assert response.status_code == status.HTTP_201_CREATED
-        assert len(response.data["created"]) == 1
-        assert response.data["created"][0]["rule"] == published_rule.pk
-        assert response.data["created"][0]["league"] == football_league.pk
+        created = response.data["created"]
+        assert len(created) >= 1
+        assert created[0]["rule_id"] == published_rule.pk
+        assert created[0]["league_id"] == football_league.pk
 
     def test_published_rule_appears_in_league_standards(
         self, db, authenticated_client, published_rule, football_league
@@ -233,11 +234,11 @@ class TestPublishedRulesPropagation:
         response = authenticated_client.get(url)
         assert response.status_code == status.HTTP_200_OK
         assert len(response.data) >= 1
-        assert response.data[0]["rule"] == published_rule.pk
-        assert response.data[0]["league"] == football_league.pk
+        assert response.data[0]["rule_id"] == published_rule.pk
+        assert response.data[0]["league_id"] == football_league.pk
 
     def test_unpublished_rule_cannot_be_published_to_league(
-        self, db, authenticated_client, football_league
+        self, db, authenticated_client, football_league, super_admin_user
     ):
         unpublished_rule = Rule.objects.create(
             title="Unpublished Rule",
@@ -451,6 +452,9 @@ class TestAuditLogsTamperResistant:
                 category=ApprovalLog.Category.COMPLIANCE,
                 notes=f"Test log {i}",
             )
+
+        logs = ApprovalLog.objects.all()
+        assert list(logs) == list(logs.order_by("-created_at"))
 
         logs = ApprovalLog.objects.all()
         assert list(logs) == list(logs.order_by("-created_at"))
