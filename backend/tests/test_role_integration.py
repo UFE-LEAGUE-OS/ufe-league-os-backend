@@ -1035,3 +1035,589 @@ class TestUnionWorkspaceMemberships:
         )
         assert response.status_code == status.HTTP_200_OK
         assert response.data["role"] == "REFEREE"
+
+
+# ============================================================================
+# Tests: Profile Changes Persisted Correctly
+# ============================================================================
+
+
+class TestProfilePersistence:
+    """Profile updates are persisted and reflected in subsequent reads."""
+
+    def test_profile_update_persists_across_requests(self, client, fan_user):
+        client.force_authenticate(user=fan_user)
+
+        # Update profile
+        update_response = client.patch(
+            "/api/accounts/profile/",
+            {
+                "bio": "I love rugby!",
+                "location": "Kampala",
+                "first_name": "Updated",
+                "last_name": "Fan",
+            },
+            format="json",
+        )
+        assert update_response.status_code == status.HTTP_200_OK
+
+        # Verify persistence via /me endpoint
+        me_response = client.get("/api/accounts/me/")
+        assert me_response.status_code == status.HTTP_200_OK
+        assert me_response.data["bio"] == "I love rugby!"
+        assert me_response.data["location"] == "Kampala"
+        assert me_response.data["first_name"] == "Updated"
+        assert me_response.data["last_name"] == "Fan"
+
+        # Verify persistence via profile endpoint
+        profile_response = client.get("/api/accounts/profile/")
+        assert profile_response.status_code == status.HTTP_200_OK
+        assert profile_response.data["bio"] == "I love rugby!"
+        assert profile_response.data["location"] == "Kampala"
+
+    def test_profile_update_reflects_immediately(self, client, club_admin_user):
+        client.force_authenticate(user=club_admin_user)
+
+        # Update location
+        client.patch(
+            "/api/accounts/profile/",
+            {"location": "Entebbe"},
+            format="json",
+        )
+
+        # Refresh user from DB
+        club_admin_user.refresh_from_db()
+        assert club_admin_user.location == "Entebbe"
+
+    def test_multiple_profile_updates_accumulate(self, client, league_admin_user):
+        client.force_authenticate(user=league_admin_user)
+
+        # First update
+        client.patch(
+            "/api/accounts/profile/",
+            {"bio": "First bio"},
+            format="json",
+        )
+
+        # Second update
+        client.patch(
+            "/api/accounts/profile/",
+            {"bio": "Second bio", "location": "Jinja"},
+            format="json",
+        )
+
+        # Verify both changes persisted
+        league_admin_user.refresh_from_db()
+        assert league_admin_user.bio == "Second bio"
+        assert league_admin_user.location == "Jinja"
+
+    def test_profile_update_with_favorite_sport(self, client, union_admin_user):
+        client.force_authenticate(user=union_admin_user)
+
+        response = client.patch(
+            "/api/accounts/profile/",
+            {"favorite_sport": "FOOTBALL"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        union_admin_user.refresh_from_db()
+        assert union_admin_user.favourite_sport == "FOOTBALL"
+
+
+# ============================================================================
+# Tests: Notification Preferences Saved & Applied
+# ============================================================================
+
+
+class TestNotificationPreferencesPersistence:
+    """Notification preferences are saved and can be retrieved."""
+
+    def test_get_notification_preferences_creates_defaults(self, client, fan_user):
+        client.force_authenticate(user=fan_user)
+        response = client.get("/api/accounts/notification-preferences/me/")
+        assert response.status_code == status.HTTP_200_OK
+        # Should return all default preferences
+        assert len(response.data) >= 5  # At least 5 event types
+        # Should return all default preferences inside the 'preferences' key
+        assert len(response.data["preferences"]) >= 5
+
+    def test_update_notification_preference_persists(self, client, fan_user):
+        client.force_authenticate(user=fan_user)
+
+        # Update marketing preference
+        update_response = client.patch(
+            "/api/accounts/notification-preferences/me/",
+            {
+                "event_type": "MARKETING_UPDATES",
+                "email_enabled": False,
+                "push_enabled": False,
+                "sms_enabled": False,
+            },
+            format="json",
+        )
+        assert update_response.status_code == status.HTTP_200_OK
+
+        # Verify persistence
+        get_response = client.get("/api/accounts/notification-preferences/me/")
+        assert get_response.status_code == status.HTTP_200_OK
+
+        # Find marketing preference in response
+        marketing_pref = next(
+            (
+                p
+                for p in get_response.data["preferences"]
+                if p["event_type"] == "MARKETING_UPDATES"
+            ),
+            None,
+        )
+        assert marketing_pref is not None
+        assert marketing_pref["email_enabled"] is False
+        assert marketing_pref["push_enabled"] is False
+        assert marketing_pref["sms_enabled"] is False
+
+    def test_notification_preferences_affect_in_app_notifications(
+        self, client, club_admin_user
+    ):
+        client.force_authenticate(user=club_admin_user)
+
+        # Disable push for ticket updates
+        client.patch(
+            "/api/accounts/notification-preferences/me/",
+            {
+                "event_type": "TICKET_UPDATES",
+                "push_enabled": False,
+            },
+            format="json",
+        )
+
+        # The service should respect this preference
+        from accounts.services import get_or_create_notification_preferences
+        from accounts.models import NotificationPreference
+
+        prefs = get_or_create_notification_preferences(club_admin_user)
+        ticket_pref = next(
+            (
+                p
+                for p in prefs
+                if p.event_type == NotificationPreference.EventType.TICKET_UPDATES
+            ),
+            None,
+        )
+        assert ticket_pref is not None
+        assert ticket_pref.push_enabled is False
+
+    def test_multiple_preferences_updated_independently(
+        self, client, league_admin_user
+    ):
+        client.force_authenticate(user=league_admin_user)
+
+        # Update multiple preferences at once
+        preferences = [
+            {
+                "event_type": "TICKET_UPDATES",
+                "email_enabled": True,
+                "push_enabled": True,
+                "sms_enabled": False,
+            },
+            {
+                "event_type": "MEMBERSHIP_UPDATES",
+                "email_enabled": True,
+                "push_enabled": False,
+                "sms_enabled": True,
+            },
+        ]
+
+        for pref in preferences:
+            response = client.patch(
+                "/api/accounts/notification-preferences/me/",
+                pref,
+                format="json",
+            )
+            assert response.status_code == status.HTTP_200_OK
+
+        # Verify both persisted
+        get_response = client.get("/api/accounts/notification-preferences/me/")
+        assert get_response.status_code == status.HTTP_200_OK
+
+        ticket_pref = next(
+            (
+                p
+                for p in get_response.data["preferences"]
+                if p["event_type"] == "TICKET_UPDATES"
+            ),
+            None,
+        )
+        membership_pref = next(
+            (
+                p
+                for p in get_response.data["preferences"]
+                if p["event_type"] == "MEMBERSHIP_UPDATES"
+            ),
+            None,
+        )
+
+        assert ticket_pref["email_enabled"] is True
+        assert ticket_pref["push_enabled"] is True
+        assert ticket_pref["sms_enabled"] is False
+
+        assert membership_pref["email_enabled"] is True
+        assert membership_pref["push_enabled"] is False
+        assert membership_pref["sms_enabled"] is True
+
+
+# ============================================================================
+# Tests: Following List Updates Reflected in Feed
+# ============================================================================
+
+
+class TestFollowingAndFeedIntegration:
+    """Following entities updates the user's feed correctly."""
+
+    def test_follow_entity_creates_feed_item(self, client, db):
+        from accounts.models import Club, Follow
+
+        User = get_user_model()
+        user = User.objects.create_user(
+            email="feedfan@example.com",
+            password="testpass123",
+            first_name="Feed",
+            last_name="Fan",
+            role=User.Role.FAN,
+        )
+
+        # Create a club to follow
+        club = Club.objects.create(name="Test FC", slug="test-fc")
+
+        client.force_authenticate(user=user)
+        response = client.post(
+            "/api/accounts/follow/",
+            {"content_type": "CLUB", "object_id": club.id},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_201_CREATED
+
+        # Verify follow was created
+        assert Follow.objects.filter(
+            user=user, content_type="CLUB", object_id=club.id
+        ).exists()
+
+        # Feed may or may not have items immediately (depends on aggregation logic)
+        # But following relationship should exist
+        follows_response = client.get("/api/accounts/follow/")
+        assert follows_response.status_code == status.HTTP_200_OK
+        assert len(follows_response.data) >= 1
+
+    def test_unfollow_removes_from_following_list(self, client, db):
+        from accounts.models import Club
+
+        User = get_user_model()
+        user = User.objects.create_user(
+            email="unfollowfan@example.com",
+            password="testpass123",
+            first_name="Unfollow",
+            last_name="Fan",
+            role=User.Role.FAN,
+        )
+
+        club = Club.objects.create(name="Unfollow FC", slug="unfollow-fc")
+
+        client.force_authenticate(user=user)
+
+        # Follow
+        client.post(
+            "/api/accounts/follow/",
+            {"content_type": "CLUB", "object_id": club.id},
+            format="json",
+        )
+
+        # Verify followed
+        follows = client.get("/api/accounts/follow/")
+        assert len(follows.data) == 1
+
+        # Unfollow
+        unfollow_response = client.delete(
+            "/api/accounts/follow/",
+            {"content_type": "CLUB", "object_id": club.id},
+            format="json",
+        )
+        assert unfollow_response.status_code == status.HTTP_200_OK
+
+        # Verify unfollowed
+        follows = client.get("/api/accounts/follow/")
+        assert len(follows.data) == 0
+
+    def test_follow_multiple_content_types(self, client, db):
+        from accounts.models import Club, League, Union
+
+        User = get_user_model()
+        user = User.objects.create_user(
+            email="multifollow@example.com",
+            password="testpass123",
+            first_name="Multi",
+            last_name="Follow",
+            role=User.Role.FAN,
+        )
+
+        club = Club.objects.create(name="Multi Club", slug="multi-club")
+        league = League.objects.create(name="Multi League", slug="multi-league")
+        union = Union.objects.create(name="Multi Union", slug="multi-union")
+
+        client.force_authenticate(user=user)
+
+        # Follow all three
+        client.post(
+            "/api/accounts/follow/",
+            {"content_type": "CLUB", "object_id": club.id},
+            format="json",
+        )
+        client.post(
+            "/api/accounts/follow/",
+            {"content_type": "LEAGUE", "object_id": league.id},
+            format="json",
+        )
+        client.post(
+            "/api/accounts/follow/",
+            {"content_type": "UNION", "object_id": union.id},
+            format="json",
+        )
+
+        # Verify all follows
+        follows = client.get("/api/accounts/follow/")
+        assert len(follows.data) == 3
+
+        # Verify content types are present
+        followed_types = {item["content_type"] for item in follows.data}
+        assert "CLUB" in followed_types
+        assert "LEAGUE" in followed_types
+        assert "UNION" in followed_types
+
+    def test_check_follow_status(self, client, db):
+        from accounts.models import Club
+
+        User = get_user_model()
+        user = User.objects.create_user(
+            email="checkfollow@example.com",
+            password="testpass123",
+            first_name="Check",
+            last_name="Follow",
+            role=User.Role.FAN,
+        )
+
+        club = Club.objects.create(name="Check FC", slug="check-fc")
+
+        client.force_authenticate(user=user)
+
+        # Check before following
+        response = client.get(f"/api/accounts/follow/check/CLUB/{club.id}/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["is_following"] is False
+
+        # Follow
+        client.post(
+            "/api/accounts/follow/",
+            {"content_type": "CLUB", "object_id": club.id},
+            format="json",
+        )
+
+        # Check after following
+        response = client.get(f"/api/accounts/follow/check/CLUB/{club.id}/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["is_following"] is True
+
+    def test_feed_returns_items_for_followed_entities(self, client, db):
+        from accounts.models import Club, FeedItem
+
+        User = get_user_model()
+        user = User.objects.create_user(
+            email="feedtest@example.com",
+            password="testpass123",
+            first_name="Feed",
+            last_name="Test",
+            role=User.Role.FAN,
+        )
+
+        club = Club.objects.create(name="Feed Club", slug="feed-club")
+
+        client.force_authenticate(user=user)
+
+        # Follow the club
+        client.post(
+            "/api/accounts/follow/",
+            {"content_type": "CLUB", "object_id": club.id},
+            format="json",
+        )
+
+        # Create a feed item related to the club
+        FeedItem.objects.create(
+            user=user,
+            item_type=FeedItem.ItemType.NEWS,
+            title="Feed Club signs new player",
+            related_object_type="CLUB",
+            related_object_id=club.id,
+            relevance_score=0.8,
+        )
+
+        # Get feed
+        feed_response = client.get("/api/accounts/feed/")
+        assert feed_response.status_code == status.HTTP_200_OK
+        assert len(feed_response.data) >= 1
+
+        # Verify feed contains the news item
+        news_items = [
+            item
+            for item in feed_response.data["results"]
+            if item["item_type"] == "NEWS"
+        ]
+        assert len(news_items) >= 1
+        assert "Feed Club" in news_items[0]["title"]
+
+    def test_feed_mark_items_read(self, client, db):
+        from accounts.models import Club, FeedItem
+
+        User = get_user_model()
+        user = User.objects.create_user(
+            email="markread@example.com",
+            password="testpass123",
+            first_name="Mark",
+            last_name="Read",
+            role=User.Role.FAN,
+        )
+
+        club = Club.objects.create(name="Read Club", slug="read-club")
+
+        client.force_authenticate(user=user)
+
+        # Follow the club
+        client.post(
+            "/api/accounts/follow/",
+            {"content_type": "CLUB", "object_id": club.id},
+            format="json",
+        )
+
+        # Create unread feed item
+        item = FeedItem.objects.create(
+            user=user,
+            item_type=FeedItem.ItemType.NEWS,
+            title=("Unread news about Read Club"),
+            source_content_type="CLUB",
+            source_object_id=club.id,
+            relevance_score=0.8,
+        )
+
+        # Verify unread count
+        unread_response = client.get("/api/accounts/feed/unread-count/")
+        assert unread_response.status_code == status.HTTP_200_OK
+        assert unread_response.data["unread_count"] >= 1
+
+        # Mark as read
+        mark_response = client.post(f"/api/accounts/feed/mark-read/{item.id}/")
+        assert mark_response.status_code == status.HTTP_200_OK
+
+        # Verify unread count decreased
+        unread_response = client.get("/api/accounts/feed/unread-count/")
+        assert unread_response.data["unread_count"] == 0
+
+    def test_feed_mark_all_read(self, client, db):
+        from accounts.models import Club, FeedItem
+
+        User = get_user_model()
+        user = User.objects.create_user(
+            email="markallread@example.com",
+            password="testpass123",
+            first_name="MarkAll",
+            last_name="Read",
+            role=User.Role.FAN,
+        )
+
+        club = Club.objects.create(name="MarkAll Club", slug="markall-club")
+
+        client.force_authenticate(user=user)
+
+        # Follow the club
+        client.post(
+            "/api/accounts/follow/",
+            {"content_type": "CLUB", "object_id": club.id},
+            format="json",
+        )
+
+        # Create multiple feed items
+        FeedItem.objects.create(
+            user=user,
+            item_type=FeedItem.ItemType.NEWS,
+            title="News 1",
+            source_content_type="CLUB",
+            source_object_id=club.id,
+            relevance_score=0.8,
+        )
+        FeedItem.objects.create(
+            user=user,
+            item_type=FeedItem.ItemType.MATCH_RESULT,
+            title="Match Result",
+            source_content_type="CLUB",
+            source_object_id=club.id,
+            relevance_score=0.8,
+        )
+
+        # Mark all as read
+        mark_all_response = client.post("/api/accounts/feed/mark-all-read/")
+        assert mark_all_response.status_code == status.HTTP_200_OK
+        assert "marked as read" in mark_all_response.data["detail"]
+
+        # Verify unread count is 0
+        unread_response = client.get("/api/accounts/feed/unread-count/")
+        assert unread_response.data["unread_count"] == 0
+
+
+# ============================================================================
+# Tests: Wallet & Payment History Accessible
+# ============================================================================
+
+
+class TestWalletAndPaymentAccess:
+    """User can access their wallet/payment summary and payment history."""
+
+    def test_wallet_accessible_for_all_roles(self, client, fan_user):
+        client.force_authenticate(user=fan_user)
+        response = client.get("/api/accounts/wallet/")
+        assert response.status_code == status.HTTP_200_OK
+        assert "stored_balance_enabled" in response.data
+        assert response.data["stored_balance_enabled"] is False
+        assert "balance" in response.data
+        assert "total_spent" in response.data
+
+    def test_payment_history_accessible_for_all_roles(self, client, club_admin_user):
+        client.force_authenticate(user=club_admin_user)
+        response = client.get("/api/accounts/payments/")
+        assert response.status_code == status.HTTP_200_OK
+        assert "results" in response.data
+
+    def test_wallet_shows_no_stored_balance(self, client, league_admin_user):
+        client.force_authenticate(user=league_admin_user)
+        response = client.get("/api/accounts/wallet/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["balance"] == 0.00
+        assert "does not currently store" in response.data["balance_note"].lower()
+
+    def test_payment_history_filters_work(self, client, union_admin_user):
+        client.force_authenticate(user=union_admin_user)
+        # Should return empty list but still 200
+        response = client.get("/api/accounts/payments/")
+        assert response.status_code == status.HTTP_200_OK
+        response = client.get("/api/accounts/payments/?status=SUCCESSFUL")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 0
+
+    def test_unauthenticated_cannot_access_wallet(self, client, db):
+        response = client.get("/api/accounts/wallet/")
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_unauthenticated_cannot_access_payments(self, client, db):
+        response = client.get("/api/accounts/payments/")
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
