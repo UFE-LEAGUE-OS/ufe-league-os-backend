@@ -1207,7 +1207,9 @@ class TestNotificationPreferencesPersistence:
         assert ticket_pref is not None
         assert ticket_pref.push_enabled is False
 
-    def test_multiple_preferences_updated_independently(self, client, league_admin_user):
+    def test_multiple_preferences_updated_independently(
+        self, client, league_admin_user
+    ):
         client.force_authenticate(user=league_admin_user)
 
         # Update multiple preferences at once
@@ -1273,7 +1275,7 @@ class TestFollowingAndFeedIntegration:
     """Following entities updates the user's feed correctly."""
 
     def test_follow_entity_creates_feed_item(self, client, db):
-        from accounts.models import Club, Follow, FeedItem
+        from accounts.models import Club, Follow
 
         User = get_user_model()
         user = User.objects.create_user(
@@ -1307,7 +1309,7 @@ class TestFollowingAndFeedIntegration:
         assert len(follows_response.data) >= 1
 
     def test_unfollow_removes_from_following_list(self, client, db):
-        from accounts.models import Club, Follow
+        from accounts.models import Club
 
         User = get_user_model()
         user = User.objects.create_user(
@@ -1346,7 +1348,7 @@ class TestFollowingAndFeedIntegration:
         assert len(follows.data) == 0
 
     def test_follow_multiple_content_types(self, client, db):
-        from accounts.models import Club, Follow, League, Union
+        from accounts.models import Club, League, Union
 
         User = get_user_model()
         user = User.objects.create_user(
@@ -1391,7 +1393,7 @@ class TestFollowingAndFeedIntegration:
         assert "UNION" in followed_types
 
     def test_check_follow_status(self, client, db):
-        from accounts.models import Club, Follow
+        from accounts.models import Club
 
         User = get_user_model()
         user = User.objects.create_user(
@@ -1462,7 +1464,11 @@ class TestFollowingAndFeedIntegration:
         assert len(feed_response.data) >= 1
 
         # Verify feed contains the news item
-        news_items = [item for item in feed_response.data["results"] if item["item_type"] == "NEWS"]
+        news_items = [
+            item
+            for item in feed_response.data["results"]
+            if item["item_type"] == "NEWS"
+        ]
         assert len(news_items) >= 1
         assert "Feed Club" in news_items[0]["title"]
 
@@ -1493,9 +1499,7 @@ class TestFollowingAndFeedIntegration:
         item = FeedItem.objects.create(
             user=user,
             item_type=FeedItem.ItemType.NEWS,
-            title=(
-                "Unread news about Read Club"
-            ),
+            title=("Unread news about Read Club"),
             source_content_type="CLUB",
             source_object_id=club.id,
             relevance_score=0.8,
@@ -1583,7 +1587,7 @@ class TestWalletAndPaymentAccess:
         assert "total_spent" in response.data
 
     def test_payment_history_accessible_for_all_roles(self, client, club_admin_user):
-        client.force_authenticate(user=club_admin_user) 
+        client.force_authenticate(user=club_admin_user)
         response = client.get("/api/accounts/payments/")
         assert response.status_code == status.HTTP_200_OK
         assert "results" in response.data
