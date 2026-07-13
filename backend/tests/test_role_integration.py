@@ -1139,6 +1139,8 @@ class TestNotificationPreferencesPersistence:
         assert response.status_code == status.HTTP_200_OK
         # Should return all default preferences
         assert len(response.data) >= 5  # At least 5 event types
+        # Should return all default preferences inside the 'preferences' key
+        assert len(response.data["preferences"]) >= 5
 
     def test_update_notification_preference_persists(self, client, fan_user):
         client.force_authenticate(user=fan_user)
@@ -1162,7 +1164,11 @@ class TestNotificationPreferencesPersistence:
 
         # Find marketing preference in response
         marketing_pref = next(
-            (p for p in get_response.data if p["event_type"] == "MARKETING_UPDATES"),
+            (
+                p
+                for p in get_response.data["preferences"]
+                if p["event_type"] == "MARKETING_UPDATES"
+            ),
             None,
         )
         assert marketing_pref is not None
@@ -1191,7 +1197,11 @@ class TestNotificationPreferencesPersistence:
 
         prefs = get_or_create_notification_preferences(club_admin_user)
         ticket_pref = next(
-            (p for p in prefs if p.event_type == NotificationPreference.EventType.TICKET_UPDATES),
+            (
+                p
+                for p in prefs
+                if p.event_type == NotificationPreference.EventType.TICKET_UPDATES
+            ),
             None,
         )
         assert ticket_pref is not None
@@ -1229,11 +1239,19 @@ class TestNotificationPreferencesPersistence:
         assert get_response.status_code == status.HTTP_200_OK
 
         ticket_pref = next(
-            (p for p in get_response.data if p["event_type"] == "TICKET_UPDATES"),
+            (
+                p
+                for p in get_response.data["preferences"]
+                if p["event_type"] == "TICKET_UPDATES"
+            ),
             None,
         )
         membership_pref = next(
-            (p for p in get_response.data if p["event_type"] == "MEMBERSHIP_UPDATES"),
+            (
+                p
+                for p in get_response.data["preferences"]
+                if p["event_type"] == "MEMBERSHIP_UPDATES"
+            ),
             None,
         )
 
@@ -1444,9 +1462,7 @@ class TestFollowingAndFeedIntegration:
         assert len(feed_response.data) >= 1
 
         # Verify feed contains the news item
-        news_items = [
-            item for item in feed_response.data if item["item_type"] == "NEWS"
-        ]
+        news_items = [item for item in feed_response.data["results"] if item["item_type"] == "NEWS"]
         assert len(news_items) >= 1
         assert "Feed Club" in news_items[0]["title"]
 
@@ -1567,24 +1583,26 @@ class TestWalletAndPaymentAccess:
         assert "total_spent" in response.data
 
     def test_payment_history_accessible_for_all_roles(self, client, club_admin_user):
-        client.force_authenticate(user=club_admin_user)
+        client.force_authenticate(user=club_admin_user) 
         response = client.get("/api/accounts/payments/")
         assert response.status_code == status.HTTP_200_OK
-        assert isinstance(response.data, list)
+        assert "results" in response.data
 
     def test_wallet_shows_no_stored_balance(self, client, league_admin_user):
         client.force_authenticate(user=league_admin_user)
         response = client.get("/api/accounts/wallet/")
         assert response.status_code == status.HTTP_200_OK
         assert response.data["balance"] == 0.00
-        assert "does not currently store" in response.data["balance_note"]
+        assert "does not currently store" in response.data["balance_note"].lower()
 
     def test_payment_history_filters_work(self, client, union_admin_user):
         client.force_authenticate(user=union_admin_user)
         # Should return empty list but still 200
         response = client.get("/api/accounts/payments/")
         assert response.status_code == status.HTTP_200_OK
-        assert isinstance(response.data, list)
+        response = client.get("/api/accounts/payments/?status=SUCCESSFUL")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["count"] == 0
 
     def test_unauthenticated_cannot_access_wallet(self, client, db):
         response = client.get("/api/accounts/wallet/")
