@@ -12,77 +12,195 @@ responses suitable for mobile and web clients:
 
 import pytest
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient
 
 from accounts.models import User
-from accounts.tests.factories import UserFactory
+
+# ============================================================================
+# Fixtures
+# ============================================================================
 
 
-class TestPublicAPIResponses(APITestCase):
+@pytest.fixture
+def fan_user(db):
+    return User.objects.create_user(
+        email="fan@example.com",
+        password="testpass123",
+        first_name="Fan",
+        last_name="User",
+        role=User.Role.FAN,
+        is_email_verified=True,
+    )
+
+
+@pytest.fixture
+def club_admin_user(db):
+    return User.objects.create_user(
+        email="clubadmin@example.com",
+        password="testpass123",
+        first_name="Club",
+        last_name="Admin",
+        role=User.Role.CLUB_ADMIN,
+        is_email_verified=True,
+    )
+
+
+@pytest.fixture
+def league_admin_user(db):
+    return User.objects.create_user(
+        email="leagueadmin@example.com",
+        password="testpass123",
+        first_name="League",
+        last_name="Admin",
+        role=User.Role.LEAGUE_ADMIN,
+        is_email_verified=True,
+    )
+
+
+@pytest.fixture
+def union_admin_user(db):
+    return User.objects.create_user(
+        email="unionadmin@example.com",
+        password="testpass123",
+        first_name="Union",
+        last_name="Admin",
+        role=User.Role.UNION_ADMIN,
+        is_email_verified=True,
+    )
+
+
+@pytest.fixture
+def super_admin_user(db):
+    return User.objects.create_user(
+        email="superadmin@example.com",
+        password="testpass123",
+        first_name="Super",
+        last_name="Admin",
+        role=User.Role.SUPER_ADMIN,
+        is_email_verified=True,
+        is_staff=True,
+        is_superuser=True,
+    )
+
+
+@pytest.fixture
+def referee_user(db):
+    return User.objects.create_user(
+        email="referee@example.com",
+        password="testpass123",
+        first_name="Referee",
+        last_name="User",
+        role=User.Role.REFEREE,
+        is_email_verified=True,
+    )
+
+
+@pytest.fixture
+def ticketing_officer_user(db):
+    return User.objects.create_user(
+        email="ticketing@example.com",
+        password="testpass123",
+        first_name="Ticketing",
+        last_name="Officer",
+        role=User.Role.TICKETING_OFFICER,
+        is_email_verified=True,
+    )
+
+
+@pytest.fixture
+def sponsor_user(db):
+    return User.objects.create_user(
+        email="sponsor@example.com",
+        password="testpass123",
+        first_name="Sponsor",
+        last_name="User",
+        role=User.Role.FAN,
+        is_sponsor=True,
+        sponsor_type=User.SponsorType.INDIVIDUAL,
+        is_email_verified=True,
+    )
+
+
+@pytest.fixture
+def client():
+    return APIClient()
+
+
+@pytest.fixture
+def authenticated_client(client, fan_user):
+    client.force_authenticate(user=fan_user)
+    return client
+
+
+# ============================================================================
+# Tests: Public API Responses
+# ============================================================================
+
+
+class TestPublicAPIResponses:
     """Public endpoints should be accessible without authentication."""
 
-    def test_public_fixtures_returns_json(self):
-        response = self.client.get("/api/dashboards/fixtures/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response["Content-Type"], "application/json")
-        # Should return a list
-        self.assertIsInstance(response.json(), list)
+    def test_public_fixtures_returns_json(self, client):
+        response = client.get("/api/dashboards/fixtures/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response["Content-Type"] == "application/json"
+        assert isinstance(response.json(), list)
 
-    def test_public_results_returns_json(self):
-        response = self.client.get("/api/dashboards/results/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response["Content-Type"], "application/json")
-        self.assertIsInstance(response.json(), list)
+    def test_public_results_returns_json(self, client):
+        response = client.get("/api/dashboards/results/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response["Content-Type"] == "application/json"
+        assert isinstance(response.json(), list)
 
-    def test_public_clubs_returns_json(self):
-        response = self.client.get("/api/dashboards/clubs/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response["Content-Type"], "application/json")
+    def test_public_clubs_returns_json(self, client):
+        response = client.get("/api/dashboards/clubs/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response["Content-Type"] == "application/json"
         data = response.json()
-        self.assertIsInstance(data, list)
+        assert isinstance(data, list)
 
-    def test_public_unions_returns_json(self):
-        response = self.client.get("/api/dashboards/unions/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response["Content-Type"], "application/json")
+    def test_public_unions_returns_json(self, client):
+        response = client.get("/api/dashboards/unions/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response["Content-Type"] == "application/json"
         data = response.json()
-        self.assertIsInstance(data, list)
+        assert isinstance(data, list)
 
-    def test_public_leagues_returns_json(self):
-        response = self.client.get("/api/dashboards/leagues/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response["Content-Type"], "application/json")
+    def test_public_leagues_returns_json(self, client):
+        response = client.get("/api/dashboards/leagues/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response["Content-Type"] == "application/json"
         data = response.json()
-        self.assertIsInstance(data, list)
+        assert isinstance(data, list)
 
-    def test_public_competitions_returns_json(self):
-        response = self.client.get("/api/dashboards/competitions/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response["Content-Type"], "application/json")
+    def test_public_competitions_returns_json(self, client):
+        response = client.get("/api/dashboards/competitions/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response["Content-Type"] == "application/json"
         data = response.json()
-        self.assertIsInstance(data, list)
+        assert isinstance(data, list)
 
-    def test_public_roles_endpoint_accessible(self):
-        response = self.client.get("/api/accounts/roles/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+    def test_public_roles_endpoint_accessible(self, client):
+        response = client.get("/api/accounts/roles/")
+        assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        self.assertIn("roles", data)
-        self.assertIsInstance(data["roles"], list)
+        assert "roles" in data
+        assert isinstance(data["roles"], list)
 
 
-class TestDashboardAPIStructure(APITestCase):
+# ============================================================================
+# Tests: Dashboard API Structure
+# ============================================================================
+
+
+class TestDashboardAPIStructure:
     """Dashboard APIs should return consistent, mobile-friendly structures."""
 
-    def setUp(self):
-        self.user = UserFactory(role=User.Role.FAN)
-        self.client.force_authenticate(user=self.user)
-
-    def test_my_dashboard_response_structure(self):
-        response = self.client.get("/api/dashboards/me/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+    def test_my_dashboard_response_structure(self, authenticated_client, fan_user):
+        response = authenticated_client.get("/api/dashboards/me/")
+        assert response.status_code == status.HTTP_200_OK
         data = response.json()
 
-        # Verify top-level keys for consistent mobile rendering
         required_keys = [
             "message",
             "role",
@@ -95,67 +213,68 @@ class TestDashboardAPIStructure(APITestCase):
             "user",
         ]
         for key in required_keys:
-            self.assertIn(key, data, f"Missing key: {key}")
+            assert key in data, f"Missing key: {key}"
 
-    def test_dashboard_contains_required_fields(self):
-        response = self.client.get("/api/dashboards/me/")
+    def test_dashboard_contains_required_fields(self, authenticated_client, fan_user):
+        response = authenticated_client.get("/api/dashboards/me/")
         data = response.json()
 
-        # Dashboard content should have mobile-renderable structure
         dashboard = data["dashboard"]
-        self.assertIn("title", dashboard)
-        self.assertIn("description", dashboard)
-        self.assertIn("summary_cards", dashboard)
-        self.assertIn("modules", dashboard)
-        self.assertIn("quick_actions", dashboard)
+        assert "title" in dashboard
+        assert "description" in dashboard
+        assert "summary_cards" in dashboard
+        assert "modules" in dashboard
+        assert "quick_actions" in dashboard
 
-    def test_summary_cards_structure_for_mobile(self):
+    def test_summary_cards_structure_for_mobile(self, authenticated_client, fan_user):
         """Summary cards should be simple key-value pairs for mobile rendering."""
-        response = self.client.get("/api/dashboards/me/")
+        response = authenticated_client.get("/api/dashboards/me/")
         data = response.json()
 
         for card in data["dashboard"]["summary_cards"]:
-            self.assertIn("label", card)
-            self.assertIn("value", card)
-            # Values should be simple types (strings/numbers) for mobile UI
-            self.assertIsInstance(card["value"], (str, int, float))
+            assert "label" in card
+            assert "value" in card
+            assert isinstance(card["value"], (str, int, float))
 
-    def test_available_dashboards_structure(self):
-        response = self.client.get("/api/dashboards/me/")
+    def test_available_dashboards_structure(self, authenticated_client, fan_user):
+        response = authenticated_client.get("/api/dashboards/me/")
         data = response.json()
 
         dashboards = data["available_dashboards"]
-        self.assertIsInstance(dashboards, list)
+        assert isinstance(dashboards, list)
 
         for dashboard in dashboards:
-            self.assertIn("label", dashboard)
-            self.assertIn("frontend_route", dashboard)
-            self.assertIn("backend_route", dashboard)
+            assert "label" in dashboard
+            assert "frontend_route" in dashboard
+            assert "backend_route" in dashboard
 
-    def test_user_data_is_serialized(self):
-        response = self.client.get("/api/dashboards/me/")
+    def test_user_data_is_serialized(self, authenticated_client, fan_user):
+        response = authenticated_client.get("/api/dashboards/me/")
         data = response.json()
 
         user_data = data["user"]
-        self.assertIn("email", user_data)
-        self.assertIn("first_name", user_data)
-        self.assertIn("last_name", user_data)
-        self.assertIn("role", user_data)
+        assert "email" in user_data
+        assert "first_name" in user_data
+        assert "last_name" in user_data
+        assert "role" in user_data
 
-    def test_route_fields_are_strings(self):
-        response = self.client.get("/api/dashboards/me/")
+    def test_route_fields_are_strings(self, authenticated_client, fan_user):
+        response = authenticated_client.get("/api/dashboards/me/")
         data = response.json()
 
-        self.assertIsInstance(data["frontend_dashboard_route"], str)
-        self.assertIsInstance(data["backend_dashboard_route"], str)
-        # Routes should start with expected prefixes
-        self.assertTrue(
-            data["frontend_dashboard_route"].startswith("/dashboard/")
-            or data["frontend_dashboard_route"].startswith("/")
-        )
+        assert isinstance(data["frontend_dashboard_route"], str)
+        assert isinstance(data["backend_dashboard_route"], str)
+        assert data["frontend_dashboard_route"].startswith("/dashboard/") or data[
+            "frontend_dashboard_route"
+        ].startswith("/")
 
 
-class TestRoleSpecificDashboardStructure(APITestCase):
+# ============================================================================
+# Tests: Role-Specific Dashboard Structure
+# ============================================================================
+
+
+class TestRoleSpecificDashboardStructure:
     """Each role's dashboard should return consistent structure."""
 
     @pytest.mark.parametrize(
@@ -171,34 +290,40 @@ class TestRoleSpecificDashboardStructure(APITestCase):
             User.Role.SPONSOR,
         ],
     )
-    def test_all_roles_get_consistent_dashboard_structure(self, role):
-        user = UserFactory(role=role)
-        self.client.force_authenticate(user=user)
+    def test_all_roles_get_consistent_dashboard_structure(self, client, role):
+        user = User.objects.create_user(
+            email=f"{role.lower()}@example.com",
+            password="testpass123",
+            first_name=role,
+            last_name="User",
+            role=role,
+            is_email_verified=True,
+        )
+        client.force_authenticate(user=user)
 
-        response = self.client.get("/api/dashboards/me/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response = client.get("/api/dashboards/me/")
+        assert response.status_code == status.HTTP_200_OK
         data = response.json()
 
-        # All roles should get the same structure
-        self.assertIn("dashboard", data)
-        self.assertIn("title", data["dashboard"])
-        self.assertIn("modules", data["dashboard"])
-        self.assertIn("quick_actions", data["dashboard"])
+        assert "dashboard" in data
+        assert "title" in data["dashboard"]
+        assert "modules" in data["dashboard"]
+        assert "quick_actions" in data["dashboard"]
 
 
-class TestProfileAPIStructure(APITestCase):
+# ============================================================================
+# Tests: Profile API Structure
+# ============================================================================
+
+
+class TestProfileAPIStructure:
     """Profile APIs should return consistent structure for mobile apps."""
 
-    def setUp(self):
-        self.user = UserFactory(role=User.Role.FAN)
-        self.client.force_authenticate(user=self.user)
-
-    def test_profile_response_structure(self):
-        response = self.client.get("/api/accounts/profile/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+    def test_profile_response_structure(self, authenticated_client, fan_user):
+        response = authenticated_client.get("/api/accounts/profile/")
+        assert response.status_code == status.HTTP_200_OK
         data = response.json()
 
-        # Basic profile fields that mobile apps expect
         expected_fields = [
             "email",
             "first_name",
@@ -209,92 +334,89 @@ class TestProfileAPIStructure(APITestCase):
             "location",
         ]
         for field in expected_fields:
-            self.assertIn(field, data, f"Profile missing field: {field}")
+            assert field in data, f"Profile missing field: {field}"
 
-    def test_me_endpoint_response_structure(self):
-        response = self.client.get("/api/accounts/me/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+    def test_me_endpoint_response_structure(self, authenticated_client, fan_user):
+        response = authenticated_client.get("/api/accounts/me/")
+        assert response.status_code == status.HTTP_200_OK
         data = response.json()
 
-        # Me endpoint should include role
-        self.assertIn("email", data)
-        self.assertIn("role", data)
+        assert "email" in data
+        assert "role" in data
 
-    def test_profile_update_returns_updated_data(self):
-        response = self.client.patch(
+    def test_profile_update_returns_updated_data(self, authenticated_client, fan_user):
+        response = authenticated_client.patch(
             "/api/accounts/profile/",
             {"bio": "Mobile test bio"},
             format="json",
         )
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        self.assertEqual(data["bio"], "Mobile test bio")
+        assert data["bio"] == "Mobile test bio"
 
 
-class TestAPIResponseFormatting(APITestCase):
+# ============================================================================
+# Tests: API Response Formatting
+# ============================================================================
+
+
+class TestAPIResponseFormatting:
     """API responses should be properly formatted for JSON consumption."""
 
-    def setUp(self):
-        self.user = UserFactory(role=User.Role.FAN)
-        self.client.force_authenticate(user=self.user)
-
-    def test_dashboard_response_is_valid_json(self):
-        response = self.client.get("/api/dashboards/me/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # Should not raise JSON decode error
+    def test_dashboard_response_is_valid_json(self, authenticated_client, fan_user):
+        response = authenticated_client.get("/api/dashboards/me/")
+        assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        self.assertIsNotNone(data)
-        self.assertIsInstance(data, dict)
+        assert data is not None
+        assert isinstance(data, dict)
 
-    def test_list_endpoints_return_arrays(self):
-        response = self.client.get("/api/dashboards/clubs/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+    def test_list_endpoints_return_arrays(self, authenticated_client, fan_user):
+        response = authenticated_client.get("/api/dashboards/clubs/")
+        assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        self.assertIsInstance(data, list)
+        assert isinstance(data, list)
 
-    def test_error_responses_have_detail_field(self):
-        # Unauthenticated request should return 401/403 with detail
-        self.client.logout()
-        response = self.client.get("/api/dashboards/me/")
-        self.assertIn(response.status_code, [401, 403])
+    def test_error_responses_have_detail_field(self, client, db):
+        response = client.get("/api/dashboards/me/")
+        assert response.status_code in [401, 403]
         data = response.json()
-        self.assertIn("detail", data)
+        assert "detail" in data
 
 
-class TestMobileSpecificConcerns(APITestCase):
+# ============================================================================
+# Tests: Mobile-Specific Concerns
+# ============================================================================
+
+
+class TestMobileSpecificConcerns:
     """Tests for mobile-specific API behavior."""
 
-    def setUp(self):
-        self.user = UserFactory(role=User.Role.FAN)
-        self.client.force_authenticate(user=self.user)
-
-    def test_case_insensitive_query_params(self):
+    def test_case_insensitive_query_params(self, authenticated_client, fan_user):
         """Mobile apps should be able to use any case for query params."""
-        response = self.client.get("/api/dashboards/clubs/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response = authenticated_client.get("/api/dashboards/clubs/")
+        assert response.status_code == status.HTTP_200_OK
 
-    def test_api_accepts_json_content_type(self):
+    def test_api_accepts_json_content_type(self, authenticated_client, fan_user):
         """API should properly handle JSON content type."""
-        response = self.client.post(
+        response = authenticated_client.post(
             "/api/accounts/switch-workspace/",
             {"role": "FAN"},
             format="json",
         )
-        self.assertIn(response.status_code, [200, 400, 403])
+        assert response.status_code in [200, 400, 403]
 
-    def test_response_fields_are_not_null(self):
+    def test_response_fields_are_not_null(self, authenticated_client, fan_user):
         """Critical fields should never be null in responses."""
-        response = self.client.get("/api/dashboards/me/")
+        response = authenticated_client.get("/api/dashboards/me/")
         data = response.json()
 
-        self.assertIsNotNone(data["role"])
-        self.assertIsNotNone(data["dashboard_role"])
-        self.assertIsNotNone(data["frontend_dashboard_route"])
+        assert data["role"] is not None
+        assert data["dashboard_role"] is not None
+        assert data["frontend_dashboard_route"] is not None
 
-    def test_pagination_structure_if_applicable(self):
+    def test_pagination_structure_if_applicable(self, authenticated_client, fan_user):
         """If pagination is used, structure should be consistent."""
-        response = self.client.get("/api/dashboards/clubs/")
+        response = authenticated_client.get("/api/dashboards/clubs/")
         data = response.json()
 
-        # If paginated, should have count/results or just be a list
-        self.assertTrue(isinstance(data, list) or "results" in data or "count" in data)
+        assert isinstance(data, list) or "results" in data or "count" in data
