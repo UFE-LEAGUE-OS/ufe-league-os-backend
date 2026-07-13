@@ -1278,7 +1278,9 @@ class TestFollowingAndFeedIntegration:
         assert response.status_code == status.HTTP_201_CREATED
 
         # Verify follow was created
-        assert Follow.objects.filter(user=user, content_type="CLUB", object_id=club.id).exists()
+        assert Follow.objects.filter(
+            user=user, content_type="CLUB", object_id=club.id
+        ).exists()
 
         # Feed may or may not have items immediately (depends on aggregation logic)
         # But following relationship should exist
@@ -1442,7 +1444,9 @@ class TestFollowingAndFeedIntegration:
         assert len(feed_response.data) >= 1
 
         # Verify feed contains the news item
-        news_items = [item for item in feed_response.data if item["item_type"] == "NEWS"]
+        news_items = [
+            item for item in feed_response.data if item["item_type"] == "NEWS"
+        ]
         assert len(news_items) >= 1
         assert "Feed Club" in news_items[0]["title"]
 
