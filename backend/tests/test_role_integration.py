@@ -1477,9 +1477,11 @@ class TestFollowingAndFeedIntegration:
         item = FeedItem.objects.create(
             user=user,
             item_type=FeedItem.ItemType.NEWS,
-            title="Unread news about Read Club",
-            related_object_type="CLUB",
-            related_object_id=club.id,
+            title=(
+                "Unread news about Read Club"
+            ),
+            source_content_type="CLUB",
+            source_object_id=club.id,
             relevance_score=0.8,
         )
 
@@ -1524,16 +1526,16 @@ class TestFollowingAndFeedIntegration:
             user=user,
             item_type=FeedItem.ItemType.NEWS,
             title="News 1",
-            related_object_type="CLUB",
-            related_object_id=club.id,
+            source_content_type="CLUB",
+            source_object_id=club.id,
             relevance_score=0.8,
         )
         FeedItem.objects.create(
             user=user,
             item_type=FeedItem.ItemType.MATCH_RESULT,
             title="Match Result",
-            related_object_type="CLUB",
-            related_object_id=club.id,
+            source_content_type="CLUB",
+            source_object_id=club.id,
             relevance_score=0.8,
         )
 
