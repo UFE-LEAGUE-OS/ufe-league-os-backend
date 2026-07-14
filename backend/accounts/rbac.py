@@ -1,4 +1,4 @@
-from .models import AuditLog, RoleApproval, User
+from .models import AuditLog, RoleApproval, User, Club
 
 ROLE_PERMISSIONS = {
     User.Role.FAN: {
@@ -8,6 +8,11 @@ ROLE_PERMISSIONS = {
     User.Role.CLUB_ADMIN: {
         "dashboard.club_admin",
         "dashboard.me",
+        "club.profile.view",
+        "club.profile.edit",
+        "club.squad.manage",
+        "club.members.manage",
+        "club.ticketing.manage",
     },
     User.Role.LEAGUE_ADMIN: {
         "dashboard.league_admin",
@@ -256,6 +261,31 @@ def get_union_workspace_permissions(user):
     return permissions
 
 
+def get_club_workspace_permissions(user):
+    """Return permissions granted through active club admin scope memberships."""
+    if user is None or not getattr(user, "is_authenticated", False):
+        return set()
+
+    # Using the related_name 'club_admin_scopes' from the new model
+    club_scopes = getattr(user, "club_admin_scopes", None)
+    if club_scopes is None:
+        return set()
+
+    permissions = set()
+    # This is a placeholder for more granular sub-role permissions.
+    # For now, any active scope grants the base Club Admin permissions.
+    if club_scopes.filter(is_active=True).exists():
+        permissions.update(ROLE_PERMISSIONS.get(User.Role.CLUB_ADMIN, set()))
+
+    return permissions
+
+
+def user_has_club_workspace_access(user):
+    """Return True if the user has an active club admin scope."""
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+    return getattr(user, "club_admin_scopes", None).filter(is_active=True).exists()
+
 def user_has_sponsor_access(user):
     """
     Return True when the user can access sponsor features.
@@ -293,6 +323,8 @@ def get_user_permissions(user):
         permissions |= get_role_permissions(User.Role.SPONSOR)
 
     permissions |= get_union_workspace_permissions(user)
+
+    permissions |= get_club_workspace_permissions(user)
 
     return permissions
 
@@ -336,6 +368,16 @@ def get_dashboard_routes(user):
                 "role_display": "Union Admin Workspace",
                 "route": FRONTEND_DASHBOARD_ROUTES[User.Role.UNION_ADMIN],
                 "backend_route": BACKEND_DASHBOARD_ROUTES[User.Role.UNION_ADMIN],
+            }
+        )
+
+    if user_has_club_workspace_access(user) and user.role != User.Role.CLUB_ADMIN:
+        routes.append(
+            {
+                "role": User.Role.CLUB_ADMIN,
+                "role_display": "Club Admin Workspace",
+                "route": FRONTEND_DASHBOARD_ROUTES[User.Role.CLUB_ADMIN],
+                "backend_route": BACKEND_DASHBOARD_ROUTES[User.Role.CLUB_ADMIN],
             }
         )
 

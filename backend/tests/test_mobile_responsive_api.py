@@ -16,6 +16,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 
+
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -140,40 +141,40 @@ def authenticated_client(client, fan_user):
 class TestPublicAPIResponses:
     """Public endpoints should be accessible without authentication."""
 
-    def test_public_fixtures_returns_json(self, client):
+    def test_public_fixtures_returns_json(self, client, db):
         response = client.get("/api/dashboards/public/fixtures/")
         assert response.status_code == status.HTTP_200_OK
         assert response["Content-Type"] == "application/json"
         assert isinstance(response.json(), list)
 
-    def test_public_results_returns_json(self, client):
+    def test_public_results_returns_json(self, client, db):
         response = client.get("/api/dashboards/public/results/")
         assert response.status_code == status.HTTP_200_OK
         assert response["Content-Type"] == "application/json"
         assert isinstance(response.json(), list)
 
-    def test_public_clubs_returns_json(self, client):
+    def test_public_clubs_returns_json(self, client, db):
         response = client.get("/api/dashboards/public/clubs/")
         assert response.status_code == status.HTTP_200_OK
         assert response["Content-Type"] == "application/json"
         data = response.json()
         assert isinstance(data, list)
 
-    def test_public_unions_returns_json(self, client):
+    def test_public_unions_returns_json(self, client, db):
         response = client.get("/api/dashboards/public/unions/")
         assert response.status_code == status.HTTP_200_OK
         assert response["Content-Type"] == "application/json"
         data = response.json()
         assert isinstance(data, list)
 
-    def test_public_leagues_returns_json(self, client):
+    def test_public_leagues_returns_json(self, client, db):
         response = client.get("/api/dashboards/public/leagues/")
         assert response.status_code == status.HTTP_200_OK
         assert response["Content-Type"] == "application/json"
         data = response.json()
         assert isinstance(data, list)
 
-    def test_public_competitions_returns_json(self, client):
+    def test_public_competitions_returns_json(self, client, db):
         response = client.get("/api/dashboards/public/competitions/")
         assert response.status_code == status.HTTP_200_OK
         assert response["Content-Type"] == "application/json"
@@ -264,9 +265,10 @@ class TestDashboardAPIStructure:
 
         assert isinstance(data["frontend_dashboard_route"], str)
         assert isinstance(data["backend_dashboard_route"], str)
-        assert data["frontend_dashboard_route"].startswith("/dashboard/") or data[
-            "frontend_dashboard_route"
-        ].startswith("/")
+        assert (
+            data["frontend_dashboard_route"].startswith("/dashboard/")
+            or data["frontend_dashboard_route"].startswith("/")
+        )
 
 
 # ============================================================================
@@ -349,7 +351,8 @@ class TestProfileAPIStructure:
         )
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert data.get("bio") == "Mobile test bio"
+        assert "user" in data
+        assert data["user"]["bio"] == "Mobile test bio"
 
 
 # ============================================================================

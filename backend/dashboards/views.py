@@ -1,5 +1,6 @@
 from decimal import Decimal
 from django.db import models, transaction
+from django.db.models.expressions import F
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -7,6 +8,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from accounts.models import Club, User
+from accounts.rbac import get_user_permissions
 from accounts.permissions import (
     IsAuthenticatedAudit,
     IsClubAdmin,
@@ -26,6 +28,7 @@ from accounts.routing import (
 from accounts.serializers import UserSerializer
 
 from .models import (
+    ClubAdminScope,
     Competition,
     League,
     LeagueClubMembership,
@@ -330,6 +333,49 @@ def fan_dashboard_view(request):
 @api_view(["GET"])
 @permission_classes([IsClubAdmin])
 def club_admin_dashboard_view(request):
+    user = request.user
+    # Find the user's active club scope
+    scope = (
+        ClubAdminScope.objects.filter(user=user, is_active=True)
+        .select_related("club")
+        .first()
+    )
+
+    if not scope:
+        # Fallback for users with the direct role but no scope object
+        return build_dashboard_response(request, User.Role.CLUB_ADMIN)
+
+    # Get all permissions (base role + club scope)
+    permissions = get_user_permissions(user)
+
+    # Dynamically build dashboard content based on permissions
+    dashboard_content = {
+        "title": f"{scope.club.name} Admin",
+        "description": f"Manage operations for {scope.club.name}.",
+        "summary_cards": [],
+        "modules": [],
+        "quick_actions": [],
+    }
+
+    if "club.profile.view" in permissions:
+        dashboard_content["modules"].append("Club Profile")
+        dashboard_content["quick_actions"].append("Update club profile")
+
+    if "club.squad.manage" in permissions:
+        dashboard_content["modules"].append("Squad Management")
+        dashboard_content["quick_actions"].append("Manage player roster")
+
+    if "club.members.manage" in permissions:
+        dashboard_content["modules"].append("Memberships")
+        dashboard_content["quick_actions"].append("Review memberships")
+
+    if "club.ticketing.manage" in permissions:
+        dashboard_content["modules"].append("Ticketing")
+        dashboard_content["quick_actions"].append("View ticket sales")
+
+    # Override the static content with our dynamic version
+    DASHBOARD_CONTENT[User.Role.CLUB_ADMIN] = dashboard_content
+
     return build_dashboard_response(request, User.Role.CLUB_ADMIN)
 
 
