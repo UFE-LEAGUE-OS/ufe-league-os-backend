@@ -7,6 +7,21 @@ urlpatterns = [
     path("fan/", views.fan_dashboard_view, name="fan-dashboard"),
     path("club-admin/", views.club_admin_dashboard_view, name="club-admin-dashboard"),
     path(
+        "club-admin/role/",
+        views.club_admin_role_detection_view,
+        name="club-admin-role-detection",
+    ),
+    path(
+        "club-admin/menu-items/",
+        views.club_admin_menu_items_view,
+        name="club-admin-menu-items",
+    ),
+    path(
+        "club-admin/workspace/",
+        views.club_admin_workspace_context_view,
+        name="club-admin-workspace-context",
+    ),
+    path(
         "league-admin/",
         views.league_admin_dashboard_view,
         name="league-admin-dashboard",

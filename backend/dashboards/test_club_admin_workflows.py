@@ -13,8 +13,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
 
-from accounts.models import Club
-from dashboards.models import ClubAdminScope
+from accounts.models import Club, ClubAdminScope
 
 User = get_user_model()
 
@@ -123,9 +122,8 @@ class TestClubAdminDashboard:
         assert club_admin_scope.club.name in response.data["dashboard"]["title"]
 
     def test_user_without_scope_cannot_access_dashboard(self, api_client, db):
-        """A user with CLUB_ADMIN role but no scope should be denied if logic is strict."""
-        # This test's outcome depends on how strictly we enforce scopes.
-        # The current implementation has a fallback, so this would pass.
+        """A user with CLUB_ADMIN role but no scope gets fallback dashboard."""
+        # The current implementation has a fallback, so this would pass with 200.
         # A stricter implementation would make this fail with 403.
         user = User.objects.create_user(
             email="noscope@example.com",
@@ -135,5 +133,5 @@ class TestClubAdminDashboard:
         api_client.force_authenticate(user=user)
         url = reverse("club-admin-dashboard")
         response = api_client.get(url)
-        assert response.status_code == status.HTTP_200_OK # Fallback is used
-        assert "Manage club profile" in response.data["dashboard"]["description"]
+        assert response.status_code == status.HTTP_200_OK  # Fallback is used
+        assert "Admin" in response.data["dashboard"]["title"]

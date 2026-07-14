@@ -1,4 +1,4 @@
-from .models import AuditLog, RoleApproval, User, Club
+from .models import AuditLog, RoleApproval, User, ClubAdminScope
 
 ROLE_PERMISSIONS = {
     User.Role.FAN: {
@@ -261,6 +261,74 @@ def get_union_workspace_permissions(user):
     return permissions
 
 
+# Sub-role specific permission sets for club admin
+CLUB_ADMIN_SUB_ROLE_PERMISSIONS = {
+    ClubAdminScope.Role.CLUB_ADMIN: {
+        "club.profile.view",
+        "club.profile.edit",
+        "club.squad.manage",
+        "club.members.manage",
+        "club.ticketing.manage",
+        "club.events.manage",
+        "club.reports.view",
+        "club.finance.view",
+        "dashboard.club_admin",
+        "dashboard.me",
+    },
+    ClubAdminScope.Role.CHAIRMAN: {
+        "club.profile.view",
+        "club.profile.edit",
+        "club.squad.manage",
+        "club.members.manage",
+        "club.ticketing.manage",
+        "club.events.manage",
+        "club.reports.view",
+        "club.finance.view",
+        "club.admin.manage",
+        "club.settings.manage",
+        "club.transfers.manage",
+        "club.sponsorship.manage",
+        "dashboard.club_admin",
+        "dashboard.me",
+    },
+    ClubAdminScope.Role.TREASURER: {
+        "club.profile.view",
+        "club.finance.view",
+        "club.finance.manage",
+        "club.members.manage",
+        "club.ticketing.manage",
+        "club.reports.view",
+        "club.sponsorship.view",
+        "dashboard.club_admin",
+        "dashboard.me",
+    },
+    ClubAdminScope.Role.TEAM_MANAGER: {
+        "club.profile.view",
+        "club.squad.manage",
+        "club.events.manage",
+        "club.training.manage",
+        "club.matches.manage",
+        "club.reports.view",
+        "dashboard.club_admin",
+        "dashboard.me",
+    },
+    ClubAdminScope.Role.TICKETING_OFFICER: {
+        "club.profile.view",
+        "club.ticketing.manage",
+        "club.events.manage",
+        "club.reports.view",
+        "club.ticketing.validate",
+        "dashboard.club_admin",
+        "dashboard.me",
+    },
+    ClubAdminScope.Role.CUSTOM: {
+        "club.profile.view",
+        "dashboard.club_admin",
+        "dashboard.me",
+    },
+}
+
+
 def get_club_workspace_permissions(user):
     """Return permissions granted through active club admin scope memberships."""
     if user is None or not getattr(user, "is_authenticated", False):
@@ -272,10 +340,10 @@ def get_club_workspace_permissions(user):
         return set()
 
     permissions = set()
-    # This is a placeholder for more granular sub-role permissions.
-    # For now, any active scope grants the base Club Admin permissions.
-    if club_scopes.filter(is_active=True).exists():
-        permissions.update(ROLE_PERMISSIONS.get(User.Role.CLUB_ADMIN, set()))
+    # Collect permissions from all active club admin scopes
+    for scope in club_scopes.filter(is_active=True).select_related("club"):
+        sub_role_perms = CLUB_ADMIN_SUB_ROLE_PERMISSIONS.get(scope.role, set())
+        permissions.update(sub_role_perms)
 
     return permissions
 
@@ -284,9 +352,28 @@ def user_has_club_workspace_access(user):
     """Return True if the user has an active club admin scope."""
     if user is None or not getattr(user, "is_authenticated", False):
         return False
-    return (
-        getattr(user, "club_admin_scopes", None).filter(is_active=True).exists()
-    )
+    return getattr(user, "club_admin_scopes", None).filter(is_active=True).exists()
+
+
+def get_club_admin_sub_role(user):
+    """Return the primary sub-role for a club admin user."""
+    if user is None or not getattr(user, "is_authenticated", False):
+        return None
+
+    club_scopes = getattr(user, "club_admin_scopes", None)
+    if club_scopes is None:
+        return None
+
+    active_scope = club_scopes.filter(is_active=True).select_related("club").first()
+    if active_scope:
+        return {
+            "role": active_scope.role,
+            "role_display": active_scope.get_role_display(),
+            "club_id": active_scope.club.id,
+            "club_name": active_scope.club.name,
+        }
+    return None
+
 
 def user_has_sponsor_access(user):
     """

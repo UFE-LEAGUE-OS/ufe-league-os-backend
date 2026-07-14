@@ -1,6 +1,5 @@
 from decimal import Decimal
 from django.db import models, transaction
-from django.db.models.expressions import F
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -8,7 +7,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from accounts.models import Club, User
-from accounts.rbac import get_user_permissions
+from accounts.rbac import get_user_permissions, get_club_admin_sub_role
 from accounts.permissions import (
     IsAuthenticatedAudit,
     IsClubAdmin,
@@ -348,30 +347,113 @@ def club_admin_dashboard_view(request):
     # Get all permissions (base role + club scope)
     permissions = get_user_permissions(user)
 
+    # Get sub-role info
+    sub_role_info = get_club_admin_sub_role(user)
+
+    # Define menu items based on permissions
+    menu_items = []
+
+    if "club.profile.view" in permissions:
+        menu_items.append(
+            {
+                "id": "club-profile",
+                "label": "Club Profile",
+                "icon": "club",
+                "path": "/dashboard/club-admin/profile",
+                "permissions": ["club.profile.view"],
+            }
+        )
+
+    if "club.squad.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "squad",
+                "label": "Squad Management",
+                "icon": "people",
+                "path": "/dashboard/club-admin/squad",
+                "permissions": ["club.squad.manage"],
+            }
+        )
+
+    if "club.members.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "members",
+                "label": "Memberships",
+                "icon": "membership",
+                "path": "/dashboard/club-admin/members",
+                "permissions": ["club.members.manage"],
+            }
+        )
+
+    if "club.ticketing.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "ticketing",
+                "label": "Ticketing",
+                "icon": "ticket",
+                "path": "/dashboard/club-admin/ticketing",
+                "permissions": ["club.ticketing.manage"],
+            }
+        )
+
+    if "club.events.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "events",
+                "label": "Events & Matchday",
+                "icon": "event",
+                "path": "/dashboard/club-admin/events",
+                "permissions": ["club.events.manage"],
+            }
+        )
+
+    if "club.reports.view" in permissions:
+        menu_items.append(
+            {
+                "id": "reports",
+                "label": "Reports",
+                "icon": "analytics",
+                "path": "/dashboard/club-admin/reports",
+                "permissions": ["club.reports.view"],
+            }
+        )
+
+    if "club.finance.view" in permissions or "club.finance.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "finance",
+                "label": "Finance",
+                "icon": "finance",
+                "path": "/dashboard/club-admin/finance",
+                "permissions": ["club.finance.view", "club.finance.manage"],
+            }
+        )
+
+    if "club.admin.manage" in permissions or "club.settings.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "settings",
+                "label": "Club Settings",
+                "icon": "settings",
+                "path": "/dashboard/club-admin/settings",
+                "permissions": ["club.admin.manage", "club.settings.manage"],
+            }
+        )
+
     # Dynamically build dashboard content based on permissions
     dashboard_content = {
         "title": f"{scope.club.name} Admin",
         "description": f"Manage operations for {scope.club.name}.",
+        "sub_role": sub_role_info,
         "summary_cards": [],
-        "modules": [],
-        "quick_actions": [],
+        "modules": [item["label"] for item in menu_items],
+        "quick_actions": [
+            item["label"] for item in menu_items[:4]
+        ],  # First 4 as quick actions
+        "menu_items": menu_items,
+        "permissions": sorted(list(permissions)),
     }
-
-    if "club.profile.view" in permissions:
-        dashboard_content["modules"].append("Club Profile")
-        dashboard_content["quick_actions"].append("Update club profile")
-
-    if "club.squad.manage" in permissions:
-        dashboard_content["modules"].append("Squad Management")
-        dashboard_content["quick_actions"].append("Manage player roster")
-
-    if "club.members.manage" in permissions:
-        dashboard_content["modules"].append("Memberships")
-        dashboard_content["quick_actions"].append("Review memberships")
-
-    if "club.ticketing.manage" in permissions:
-        dashboard_content["modules"].append("Ticketing")
-        dashboard_content["quick_actions"].append("View ticket sales")
 
     # Override the static content with our dynamic version
     DASHBOARD_CONTENT[User.Role.CLUB_ADMIN] = dashboard_content
@@ -413,6 +495,288 @@ def ticketing_officer_dashboard_view(request):
 @permission_classes([IsSponsor])
 def sponsor_dashboard_view(request):
     return build_dashboard_response(request, User.Role.SPONSOR)
+
+
+# ---------------------------------------------------------------------------
+# Club Admin Sub-Role Detection & Menu APIs
+# ---------------------------------------------------------------------------
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAudit])
+def club_admin_role_detection_view(request):
+    """
+    Return the current user's club admin sub-role information.
+    This helps the frontend understand which sub-role the user has
+    and personalize the UI accordingly.
+    """
+    sub_role_info = get_club_admin_sub_role(request.user)
+
+    if not sub_role_info:
+        return Response(
+            {"detail": "No active club admin scope found for this user."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Get permissions for this sub-role
+    permissions = get_user_permissions(request.user)
+
+    return Response(
+        {
+            "sub_role": sub_role_info,
+            "permissions": sorted(list(permissions)),
+            "role_display": sub_role_info["role_display"],
+            "club_id": sub_role_info["club_id"],
+            "club_name": sub_role_info["club_name"],
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAudit])
+def club_admin_menu_items_view(request):
+    """
+    Return menu items for the club admin dashboard based on the user's
+    sub-role permissions. This allows the frontend to dynamically build
+    the navigation menu.
+    """
+    sub_role_info = get_club_admin_sub_role(request.user)
+
+    if not sub_role_info:
+        return Response(
+            {"detail": "No active club admin scope found for this user."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    permissions = get_user_permissions(request.user)
+
+    # Define menu items based on permissions
+    menu_items = []
+
+    if "club.profile.view" in permissions:
+        menu_items.append(
+            {
+                "id": "club-profile",
+                "label": "Club Profile",
+                "icon": "club",
+                "path": "/dashboard/club-admin/profile",
+                "permissions": ["club.profile.view"],
+            }
+        )
+
+    if "club.squad.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "squad",
+                "label": "Squad Management",
+                "icon": "people",
+                "path": "/dashboard/club-admin/squad",
+                "permissions": ["club.squad.manage"],
+            }
+        )
+
+    if "club.members.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "members",
+                "label": "Memberships",
+                "icon": "membership",
+                "path": "/dashboard/club-admin/members",
+                "permissions": ["club.members.manage"],
+            }
+        )
+
+    if "club.ticketing.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "ticketing",
+                "label": "Ticketing",
+                "icon": "ticket",
+                "path": "/dashboard/club-admin/ticketing",
+                "permissions": ["club.ticketing.manage"],
+            }
+        )
+
+    if "club.events.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "events",
+                "label": "Events & Matchday",
+                "icon": "event",
+                "path": "/dashboard/club-admin/events",
+                "permissions": ["club.events.manage"],
+            }
+        )
+
+    if "club.reports.view" in permissions:
+        menu_items.append(
+            {
+                "id": "reports",
+                "label": "Reports",
+                "icon": "analytics",
+                "path": "/dashboard/club-admin/reports",
+                "permissions": ["club.reports.view"],
+            }
+        )
+
+    if "club.finance.view" in permissions or "club.finance.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "finance",
+                "label": "Finance",
+                "icon": "finance",
+                "path": "/dashboard/club-admin/finance",
+                "permissions": ["club.finance.view", "club.finance.manage"],
+            }
+        )
+
+    if "club.admin.manage" in permissions or "club.settings.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "settings",
+                "label": "Club Settings",
+                "icon": "settings",
+                "path": "/dashboard/club-admin/settings",
+                "permissions": ["club.admin.manage", "club.settings.manage"],
+            }
+        )
+
+    if "club.transfers.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "transfers",
+                "label": "Transfers",
+                "icon": "transfer",
+                "path": "/dashboard/club-admin/transfers",
+                "permissions": ["club.transfers.manage"],
+            }
+        )
+
+    if (
+        "club.sponsorship.view" in permissions
+        or "club.sponsorship.manage" in permissions
+    ):
+        menu_items.append(
+            {
+                "id": "sponsorship",
+                "label": "Sponsorship",
+                "icon": "sponsor",
+                "path": "/dashboard/club-admin/sponsorship",
+                "permissions": ["club.sponsorship.view", "club.sponsorship.manage"],
+            }
+        )
+
+    if "club.training.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "training",
+                "label": "Training",
+                "icon": "training",
+                "path": "/dashboard/club-admin/training",
+                "permissions": ["club.training.manage"],
+            }
+        )
+
+    if "club.matches.manage" in permissions:
+        menu_items.append(
+            {
+                "id": "matches",
+                "label": "Matches",
+                "icon": "match",
+                "path": "/dashboard/club-admin/matches",
+                "permissions": ["club.matches.manage"],
+            }
+        )
+
+    if "club.ticketing.validate" in permissions:
+        menu_items.append(
+            {
+                "id": "validation",
+                "label": "Ticket Validation",
+                "icon": "qr-code",
+                "path": "/dashboard/club-admin/validation",
+                "permissions": ["club.ticketing.validate"],
+            }
+        )
+
+    return Response(
+        {
+            "sub_role": sub_role_info,
+            "menu_items": menu_items,
+            "total_items": len(menu_items),
+            "permissions": sorted(list(permissions)),
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAudit])
+def club_admin_workspace_context_view(request):
+    """
+    Return the workspace context for the club admin user.
+    This includes club information, sub-role, and available permissions.
+    """
+    sub_role_info = get_club_admin_sub_role(request.user)
+
+    if not sub_role_info:
+        return Response(
+            {"detail": "No active club admin scope found for this user."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Get the club details
+    club = Club.objects.filter(id=sub_role_info["club_id"]).first()
+
+    if not club:
+        return Response(
+            {"detail": "Club not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    # Get all active scopes for this user
+    active_scopes = request.user.club_admin_scopes.filter(is_active=True)
+
+    permissions = get_user_permissions(request.user)
+
+    return Response(
+        {
+            "workspace": {
+                "type": "club",
+                "club": {
+                    "id": club.id,
+                    "name": club.name,
+                    "slug": club.slug,
+                    "short_name": club.short_name,
+                    "sport": club.sport,
+                    "logo": (
+                        request.build_absolute_uri(club.logo.url) if club.logo else None
+                    ),
+                    "banner": (
+                        request.build_absolute_uri(club.banner.url)
+                        if club.banner
+                        else None
+                    ),
+                    "primary_color": club.primary_color,
+                    "secondary_color": club.secondary_color,
+                },
+            },
+            "sub_role": sub_role_info,
+            "permissions": sorted(list(permissions)),
+            "active_scopes": [
+                {
+                    "id": scope.id,
+                    "role": scope.role,
+                    "role_display": scope.get_role_display(),
+                    "club_id": scope.club.id,
+                    "club_name": scope.club.name,
+                    "is_active": scope.is_active,
+                }
+                for scope in active_scopes
+            ],
+            "dashboard_route": "/dashboard/club-admin",
+            "backend_route": "/api/dashboards/club-admin/",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
