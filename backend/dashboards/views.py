@@ -28,7 +28,6 @@ from accounts.routing import (
 from accounts.serializers import UserSerializer
 
 from .models import (
-    ClubAdminScope,
     Competition,
     League,
     LeagueClubMembership,
@@ -40,6 +39,7 @@ from .models import (
     UnionWorkspace,
     UnionWorkspaceMembership,
 )
+from accounts.models import ClubAdminScope
 from .serializers import (
     ClubListSerializer,
     CompetitionSerializer,
