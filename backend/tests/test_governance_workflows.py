@@ -259,7 +259,13 @@ class TestPublishedRulesPropagation:
         assert "must be published" in response.data["detail"].lower()
 
     def test_multiple_rules_published_to_multiple_leagues(
-        self, db, authenticated_client, published_rule, football_league, rugby_league, super_admin_user
+        self,
+        db,
+        authenticated_client,
+        published_rule,
+        football_league,
+        rugby_league,
+        super_admin_user,
     ):
         rule2 = Rule.objects.create(
             title="Second Rule",
@@ -426,7 +432,9 @@ class TestAuditLogsTamperResistant:
         response = authenticated_client.post(url)
         assert response.status_code == status.HTTP_200_OK
 
-        logs = AuditLog.objects.filter(category=AuditLog.Category.GOVERNANCE, action="publish_rule")
+        logs = AuditLog.objects.filter(
+            category=AuditLog.Category.GOVERNANCE, action="publish_rule"
+        )
         assert logs.count() >= 1
         log = logs.first()
         assert log.actor is not None
@@ -448,7 +456,9 @@ class TestAuditLogsTamperResistant:
         url = reverse("rule-publish", kwargs={"pk": rule.pk})
         authenticated_client.post(url)
 
-        log = AuditLog.objects.filter(category=AuditLog.Category.GOVERNANCE, action="publish_rule").first()
+        log = AuditLog.objects.filter(
+            category=AuditLog.Category.GOVERNANCE, action="publish_rule"
+        ).first()
         assert log is not None
 
         # Verify log has required audit fields
@@ -459,7 +469,9 @@ class TestAuditLogsTamperResistant:
         # Verify timestamps are set
         assert log.created_at is not None
 
-    def test_audit_logs_ordered_by_created_at(self, db, authenticated_client, super_admin_user):
+    def test_audit_logs_ordered_by_created_at(
+        self, db, authenticated_client, super_admin_user
+    ):
         # Create an unpublished rule and publish it to generate an audit log
         temp_rule = Rule.objects.create(
             title="Temp Rule for Log Order",
@@ -474,7 +486,9 @@ class TestAuditLogsTamperResistant:
         url = reverse("rule-publish", kwargs={"pk": temp_rule.pk})
         authenticated_client.post(url)
 
-        logs = AuditLog.objects.filter(category=AuditLog.Category.GOVERNANCE, action="publish_rule")
+        logs = AuditLog.objects.filter(
+            category=AuditLog.Category.GOVERNANCE, action="publish_rule"
+        )
         assert logs.count() >= 1
         assert list(logs) == list(logs.order_by("-created_at"))
 
@@ -681,7 +695,9 @@ class TestComprehensiveAuditLogs:
         response = authenticated_client.post(url)
         assert response.status_code == status.HTTP_200_OK
 
-        logs = AuditLog.objects.filter(category=AuditLog.Category.GOVERNANCE, action="verify_competition_format")
+        logs = AuditLog.objects.filter(
+            category=AuditLog.Category.GOVERNANCE, action="verify_competition_format"
+        )
         assert logs.count() >= 1
 
     def test_sport_variant_verify_creates_log(
