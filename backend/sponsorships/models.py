@@ -252,8 +252,45 @@ class SponsorPackage(models.Model):
         AFTER_PLATFORM_FEE = "AFTER_PLATFORM_FEE", "After Platform Fee"
         IMMEDIATE = "IMMEDIATE", "Immediate"
 
+    class Objective(models.TextChoices):
+        VISIBILITY = "VISIBILITY", "Brand Visibility"
+        FAN_ENGAGEMENT = "FAN_ENGAGEMENT", "Fan Engagement"
+        HOSPITALITY = "HOSPITALITY", "Hospitality"
+        COMMUNITY_IMPACT = "COMMUNITY_IMPACT", "Community Impact"
+        GRASSROOTS = "GRASSROOTS", "Grassroots Development"
+
+    class DurationType(models.TextChoices):
+        ONE_MATCH = "ONE_MATCH", "One Match"
+        ONE_EVENT = "ONE_EVENT", "One Event"
+        MONTHLY = "MONTHLY", "Monthly"
+        SEASON = "SEASON", "Season-long"
+
+    class Sport(models.TextChoices):
+        GENERAL = "GENERAL", "All Sports"
+        RUGBY = "RUGBY", "Rugby"
+        FOOTBALL = "FOOTBALL", "Football"
+        BASKETBALL = "BASKETBALL", "Basketball"
+        COMMUNITY = "COMMUNITY", "Community Sport"
+
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
+
+    is_template = models.BooleanField(default=False)
+    objective = models.CharField(
+        max_length=30,
+        choices=Objective.choices,
+        default=Objective.VISIBILITY,
+    )
+    duration_type = models.CharField(
+        max_length=30,
+        choices=DurationType.choices,
+        default=DurationType.SEASON,
+    )
+    sport = models.CharField(
+        max_length=30,
+        choices=Sport.choices,
+        default=Sport.GENERAL,
+    )
 
     owner_type = models.CharField(
         max_length=20,
@@ -344,10 +381,78 @@ class SponsorPackage(models.Model):
             models.Index(fields=["category"]),
             models.Index(fields=["status"]),
             models.Index(fields=["is_exclusive"]),
+            models.Index(fields=["is_template"]),
+            models.Index(fields=["objective"]),
+            models.Index(fields=["duration_type"]),
+            models.Index(fields=["sport"]),
         ]
 
     def __str__(self):
         return f"{self.name} - {self.scope_name}"
+
+
+class SponsorshipOpportunity(models.Model):
+    """
+    Connects a neutral sponsorship package template to a real sports property.
+    """
+
+    class Status(models.TextChoices):
+        AVAILABLE = "AVAILABLE", "Available"
+        RESERVED = "RESERVED", "Reserved"
+        CLOSED = "CLOSED", "Closed"
+
+    sponsor_package = models.ForeignKey(
+        SponsorPackage,
+        on_delete=models.CASCADE,
+        related_name="opportunities",
+    )
+    property_type = models.CharField(
+        max_length=20,
+        choices=SponsorshipScopeType.choices,
+    )
+    property_identifier = models.CharField(
+        max_length=120,
+        blank=True,
+    )
+    property_name = models.CharField(max_length=255)
+    sport = models.CharField(
+        max_length=30,
+        choices=SponsorPackage.Sport.choices,
+        default=SponsorPackage.Sport.GENERAL,
+    )
+    location = models.CharField(
+        max_length=120,
+        blank=True,
+        default="Uganda",
+    )
+    price_amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(Decimal("0"))],
+    )
+    currency = models.CharField(max_length=3, default="UGX")
+    starts_at = models.DateField(blank=True, null=True)
+    ends_at = models.DateField(blank=True, null=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.AVAILABLE,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["property_type", "property_name"]
+        indexes = [
+            models.Index(fields=["sponsor_package", "status"]),
+            models.Index(fields=["property_type"]),
+            models.Index(fields=["sport"]),
+            models.Index(fields=["location"]),
+        ]
+
+    def __str__(self):
+        return f"{self.sponsor_package.name} - {self.property_name}"
 
 
 class SponsorBenefit(models.Model):
@@ -495,6 +600,13 @@ class SponsorAgreement(models.Model):
         SponsorPackage,
         on_delete=models.PROTECT,
         related_name="agreements",
+    )
+    opportunity = models.ForeignKey(
+        SponsorshipOpportunity,
+        on_delete=models.SET_NULL,
+        related_name="agreements",
+        null=True,
+        blank=True,
     )
 
     reference = models.CharField(max_length=80, blank=True)

@@ -17,6 +17,7 @@ from .models import (
     SponsorPayment,
     SponsorPaymentSchedule,
     SponsorWorkflowEvent,
+    SponsorshipOpportunity,
 )
 
 User = get_user_model()
@@ -481,6 +482,48 @@ class RevenueShareRuleSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class SponsorshipOpportunitySerializer(serializers.ModelSerializer):
+    property_type_display = serializers.CharField(
+        source="get_property_type_display",
+        read_only=True,
+    )
+    sport_display = serializers.CharField(
+        source="get_sport_display",
+        read_only=True,
+    )
+    status_display = serializers.CharField(
+        source="get_status_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = SponsorshipOpportunity
+        fields = (
+            "id",
+            "sponsor_package",
+            "property_type",
+            "property_type_display",
+            "property_identifier",
+            "property_name",
+            "sport",
+            "sport_display",
+            "location",
+            "price_amount",
+            "currency",
+            "starts_at",
+            "ends_at",
+            "status",
+            "status_display",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = (
+            "id",
+            "created_at",
+            "updated_at",
+        )
+
+
 class SponsorPackageSerializer(serializers.ModelSerializer):
     owner_type_display = serializers.CharField(
         source="get_owner_type_display",
@@ -506,6 +549,18 @@ class SponsorPackageSerializer(serializers.ModelSerializer):
         source="get_status_display",
         read_only=True,
     )
+    objective_display = serializers.CharField(
+        source="get_objective_display",
+        read_only=True,
+    )
+    duration_type_display = serializers.CharField(
+        source="get_duration_type_display",
+        read_only=True,
+    )
+    sport_display = serializers.CharField(
+        source="get_sport_display",
+        read_only=True,
+    )
     created_by_email = serializers.EmailField(
         source="created_by.email",
         read_only=True,
@@ -514,8 +569,18 @@ class SponsorPackageSerializer(serializers.ModelSerializer):
         source="approved_by.email",
         read_only=True,
     )
-    benefits = SponsorBenefitSerializer(many=True, read_only=True)
-    revenue_share_rules = RevenueShareRuleSerializer(many=True, read_only=True)
+    benefits = SponsorBenefitSerializer(
+        many=True,
+        read_only=True,
+    )
+    opportunities = SponsorshipOpportunitySerializer(
+        many=True,
+        read_only=True,
+    )
+    revenue_share_rules = RevenueShareRuleSerializer(
+        many=True,
+        read_only=True,
+    )
 
     class Meta:
         model = SponsorPackage
@@ -523,6 +588,13 @@ class SponsorPackageSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "description",
+            "is_template",
+            "objective",
+            "objective_display",
+            "duration_type",
+            "duration_type_display",
+            "sport",
+            "sport_display",
             "owner_type",
             "owner_type_display",
             "owner_identifier",
@@ -550,6 +622,7 @@ class SponsorPackageSerializer(serializers.ModelSerializer):
             "approved_by_email",
             "approved_at",
             "benefits",
+            "opportunities",
             "revenue_share_rules",
             "created_at",
             "updated_at",
@@ -566,11 +639,19 @@ class SponsorPackageSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         requires_platform_fee = attrs.get(
             "requires_platform_fee",
-            getattr(self.instance, "requires_platform_fee", False),
+            getattr(
+                self.instance,
+                "requires_platform_fee",
+                False,
+            ),
         )
         platform_fee_amount = attrs.get(
             "platform_fee_amount",
-            getattr(self.instance, "platform_fee_amount", 0),
+            getattr(
+                self.instance,
+                "platform_fee_amount",
+                0,
+            ),
         )
 
         if requires_platform_fee and platform_fee_amount <= 0:
@@ -758,6 +839,10 @@ class SponsorAgreementSerializer(serializers.ModelSerializer):
         source="sponsor_package",
         read_only=True,
     )
+    opportunity_detail = SponsorshipOpportunitySerializer(
+        source="opportunity",
+        read_only=True,
+    )
     agreement_type_display = serializers.CharField(
         source="get_agreement_type_display",
         read_only=True,
@@ -812,6 +897,8 @@ class SponsorAgreementSerializer(serializers.ModelSerializer):
             "sponsor_account_detail",
             "sponsor_package",
             "sponsor_package_detail",
+            "opportunity",
+            "opportunity_detail",
             "reference",
             "agreement_type",
             "agreement_type_display",
@@ -871,6 +958,29 @@ class SponsorAgreementSerializer(serializers.ModelSerializer):
         )
 
     def validate(self, attrs):
+        sponsor_package = attrs.get(
+            "sponsor_package",
+            getattr(self.instance, "sponsor_package", None),
+        )
+        opportunity = attrs.get(
+            "opportunity",
+            getattr(self.instance, "opportunity", None),
+        )
+
+        if (
+            opportunity
+            and sponsor_package
+            and opportunity.sponsor_package_id != sponsor_package.id
+        ):
+            raise serializers.ValidationError(
+                {
+                    "opportunity": (
+                        "The selected opportunity does not belong "
+                        "to this sponsorship package."
+                    )
+                }
+            )
+
         starts_at = attrs.get("starts_at", getattr(self.instance, "starts_at", None))
         ends_at = attrs.get("ends_at", getattr(self.instance, "ends_at", None))
 

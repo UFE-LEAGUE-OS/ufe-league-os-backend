@@ -83,6 +83,11 @@ urlpatterns = [
         name="sponsor-package-benefits",
     ),
     path(
+        "packages/<int:package_id>/opportunities/",
+        views.sponsor_package_opportunities_view,
+        name="sponsor-package-opportunities",
+    ),
+    path(
         "packages/<int:package_id>/revenue-share-rules/",
         views.sponsor_package_revenue_share_rules_view,
         name="sponsor-package-revenue-share-rules",
