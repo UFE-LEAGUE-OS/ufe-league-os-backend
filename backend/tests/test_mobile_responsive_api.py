@@ -140,40 +140,40 @@ def authenticated_client(client, fan_user):
 class TestPublicAPIResponses:
     """Public endpoints should be accessible without authentication."""
 
-    def test_public_fixtures_returns_json(self, client):
+    def test_public_fixtures_returns_json(self, client, db):
         response = client.get("/api/dashboards/public/fixtures/")
         assert response.status_code == status.HTTP_200_OK
         assert response["Content-Type"] == "application/json"
         assert isinstance(response.json(), list)
 
-    def test_public_results_returns_json(self, client):
+    def test_public_results_returns_json(self, client, db):
         response = client.get("/api/dashboards/public/results/")
         assert response.status_code == status.HTTP_200_OK
         assert response["Content-Type"] == "application/json"
         assert isinstance(response.json(), list)
 
-    def test_public_clubs_returns_json(self, client):
+    def test_public_clubs_returns_json(self, client, db):
         response = client.get("/api/dashboards/public/clubs/")
         assert response.status_code == status.HTTP_200_OK
         assert response["Content-Type"] == "application/json"
         data = response.json()
         assert isinstance(data, list)
 
-    def test_public_unions_returns_json(self, client):
+    def test_public_unions_returns_json(self, client, db):
         response = client.get("/api/dashboards/public/unions/")
         assert response.status_code == status.HTTP_200_OK
         assert response["Content-Type"] == "application/json"
         data = response.json()
         assert isinstance(data, list)
 
-    def test_public_leagues_returns_json(self, client):
+    def test_public_leagues_returns_json(self, client, db):
         response = client.get("/api/dashboards/public/leagues/")
         assert response.status_code == status.HTTP_200_OK
         assert response["Content-Type"] == "application/json"
         data = response.json()
         assert isinstance(data, list)
 
-    def test_public_competitions_returns_json(self, client):
+    def test_public_competitions_returns_json(self, client, db):
         response = client.get("/api/dashboards/public/competitions/")
         assert response.status_code == status.HTTP_200_OK
         assert response["Content-Type"] == "application/json"
@@ -287,7 +287,7 @@ class TestRoleSpecificDashboardStructure:
             User.Role.SUPER_ADMIN,
             User.Role.REFEREE,
             User.Role.TICKETING_OFFICER,
-            User.Role.SPONSOR,
+            User.Role.SPONSOR,  # Add trailing comma
         ],
     )
     def test_all_roles_get_consistent_dashboard_structure(self, client, role, db):
@@ -349,7 +349,8 @@ class TestProfileAPIStructure:
         )
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert data.get("bio") == "Mobile test bio"
+        assert "user" in data
+        assert data["user"]["bio"] == "Mobile test bio"
 
 
 # ============================================================================
