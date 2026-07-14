@@ -139,6 +139,40 @@ class User(AbstractUser):
         return role in self.roles
 
 
+class ClubAdminScope(models.Model):
+    """
+    Defines a user's administrative scope and sub-role within a specific club.
+
+    This allows for granular permissions beyond the base CLUB_ADMIN role,
+    enabling roles like Chairman, Treasurer, Team Manager, etc.
+    """
+
+    class Role(models.TextChoices):
+        CLUB_ADMIN = "CLUB_ADMIN", "Club Administrator"
+        CHAIRMAN = "CHAIRMAN", "Chairman"
+        TREASURER = "TREASURER", "Treasurer"
+        TEAM_MANAGER = "TEAM_MANAGER", "Team Manager"
+        TICKETING_OFFICER = "TICKETING_OFFICER", "Ticketing Officer"
+        CUSTOM = "CUSTOM", "Custom"
+
+    user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        related_name="club_admin_scopes",
+    )
+    club = models.ForeignKey("accounts.Club", on_delete=models.CASCADE)
+    role = models.CharField(
+        max_length=50, choices=Role.choices, default=Role.CLUB_ADMIN
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("user", "club")
+        ordering = ["club__name", "user__email"]
+
+
 class Club(models.Model):
     class Sport(models.TextChoices):
         RUGBY = "RUGBY", "Rugby"
