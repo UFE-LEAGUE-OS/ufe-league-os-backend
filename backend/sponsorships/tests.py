@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from django.utils import timezone
 
+from .flutterwave import FlutterwaveError, build_checkout_payload
 from .models import (
     RevenueDistribution,
     RevenueShareRule,
@@ -1341,7 +1342,7 @@ class SponsorAgreementPaymentAPITests(TestCase):
 @override_settings(
     FLUTTERWAVE_SECRET_KEY="FLWSECK_TEST-test-key",
     FLUTTERWAVE_SECRET_HASH="test-webhook-secret",
-    FLUTTERWAVE_REDIRECT_URL="http://localhost:8000/api/sponsorships/flutterwave/verify/",
+    FLUTTERWAVE_REDIRECT_URL="http://localhost:5173/sponsor/payment/processing",
 )
 class FlutterwaveSponsorPaymentAPITests(TestCase):
     def setUp(self):
@@ -1443,6 +1444,49 @@ class FlutterwaveSponsorPaymentAPITests(TestCase):
         )
 
         return sponsor_owner, agreement, payment_schedule
+
+    def test_checkout_payload_uses_frontend_payment_processing_route(self):
+        sponsor_owner, agreement, payment_schedule = self.create_approved_agreement()
+
+        payment = SponsorPayment.objects.create(
+            agreement=agreement,
+            payment_schedule=payment_schedule,
+            amount_paid=Decimal("3000000.00"),
+            currency="UGX",
+            payment_method=SponsorPayment.PaymentMethod.FLUTTERWAVE,
+            provider=SponsorPayment.PaymentProvider.FLUTTERWAVE,
+            transaction_reference="LOS-SPONSOR-REDIRECT-001",
+            recorded_by=sponsor_owner,
+        )
+
+        payload = build_checkout_payload(payment)
+
+        self.assertEqual(
+            payload["redirect_url"],
+            "http://localhost:5173/sponsor/payment/processing",
+        )
+
+    @override_settings(FLUTTERWAVE_REDIRECT_URL="")
+    def test_checkout_payload_rejects_missing_frontend_redirect(self):
+        sponsor_owner, agreement, payment_schedule = self.create_approved_agreement()
+
+        payment = SponsorPayment.objects.create(
+            agreement=agreement,
+            payment_schedule=payment_schedule,
+            amount_paid=Decimal("3000000.00"),
+            currency="UGX",
+            payment_method=SponsorPayment.PaymentMethod.FLUTTERWAVE,
+            provider=SponsorPayment.PaymentProvider.FLUTTERWAVE,
+            transaction_reference="LOS-SPONSOR-NO-REDIRECT-001",
+            recorded_by=sponsor_owner,
+        )
+
+        with self.assertRaisesMessage(
+            FlutterwaveError,
+            "FLUTTERWAVE_REDIRECT_URL must point to the frontend "
+            "sponsor payment processing page.",
+        ):
+            build_checkout_payload(payment)
 
     @patch("sponsorships.views.initialize_flutterwave_payment")
     def test_sponsor_owner_can_initialize_flutterwave_payment(

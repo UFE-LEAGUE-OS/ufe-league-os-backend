@@ -463,7 +463,7 @@ FLUTTERWAVE_SECRET_HASH = config("FLUTTERWAVE_SECRET_HASH", default="")
 
 FLUTTERWAVE_REDIRECT_URL = config(
     "FLUTTERWAVE_REDIRECT_URL",
-    default="http://localhost:8000/api/sponsorships/flutterwave/verify/",
+    default="http://localhost:5173/sponsor/payment/processing",
 )
 
 # Sponsorship Payment
