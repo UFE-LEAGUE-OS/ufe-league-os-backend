@@ -284,7 +284,9 @@ def user_has_club_workspace_access(user):
     """Return True if the user has an active club admin scope."""
     if user is None or not getattr(user, "is_authenticated", False):
         return False
-    return getattr(user, "club_admin_scopes", None).filter(is_active=True).exists()
+    return (
+        getattr(user, "club_admin_scopes", None).filter(is_active=True).exists()
+    )
 
 def user_has_sponsor_access(user):
     """

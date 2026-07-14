@@ -289,7 +289,7 @@ class TestRoleSpecificDashboardStructure:
             User.Role.SUPER_ADMIN,
             User.Role.REFEREE,
             User.Role.TICKETING_OFFICER,
-            User.Role.SPONSOR,
+            User.Role.SPONSOR,  # Add trailing comma
         ],
     )
     def test_all_roles_get_consistent_dashboard_structure(self, client, role, db):
