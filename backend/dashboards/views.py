@@ -455,10 +455,24 @@ def club_admin_dashboard_view(request):
         "permissions": sorted(list(permissions)),
     }
 
-    # Override the static content with our dynamic version
-    DASHBOARD_CONTENT[User.Role.CLUB_ADMIN] = dashboard_content
+    user = request.user
+    frontend_dashboard_route = get_dashboard_route(user)
+    backend_dashboard_route = get_backend_dashboard_route(user)
 
-    return build_dashboard_response(request, User.Role.CLUB_ADMIN)
+    return Response(
+        {
+            "message": f"{dashboard_content['title']} loaded successfully.",
+            "role": user.role,
+            "role_display": user.get_role_display(),
+            "dashboard_role": User.Role.CLUB_ADMIN,
+            "frontend_dashboard_route": frontend_dashboard_route,
+            "backend_dashboard_route": backend_dashboard_route,
+            "available_dashboards": get_dashboard_routes(user),
+            "dashboard": dashboard_content,
+            "user": UserSerializer(user, context={"request": request}).data,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(["GET"])
