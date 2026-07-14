@@ -16,7 +16,6 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 
-
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -265,10 +264,9 @@ class TestDashboardAPIStructure:
 
         assert isinstance(data["frontend_dashboard_route"], str)
         assert isinstance(data["backend_dashboard_route"], str)
-        assert (
-            data["frontend_dashboard_route"].startswith("/dashboard/")
-            or data["frontend_dashboard_route"].startswith("/")
-        )
+        assert data["frontend_dashboard_route"].startswith("/dashboard/") or data[
+            "frontend_dashboard_route"
+        ].startswith("/")
 
 
 # ============================================================================
