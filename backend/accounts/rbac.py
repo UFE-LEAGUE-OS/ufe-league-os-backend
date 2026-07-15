@@ -416,3 +416,60 @@ def log_access_violation(request, status_code, detail=None):
         ip_address=get_client_ip(request),
         details=details,
     )
+
+
+# ---------------------------------------------------------------------------
+# Helper functions for teams app
+# ---------------------------------------------------------------------------
+
+
+def get_user_clubs(user):
+    """
+    Return the list of clubs that the user can manage as a CLUB_ADMIN.
+
+    Rules:
+    - SUPER_ADMIN can manage all clubs.
+    - CLUB_ADMIN can manage clubs where they are the assigned admin.
+    - UNION_ADMIN can manage clubs under their union workspace leagues.
+    """
+    from .models import Club
+
+    if user is None or not user.is_authenticated:
+        return Club.objects.none()
+
+    if user.role == User.Role.SUPER_ADMIN:
+        return Club.objects.all()
+
+    if user.role == User.Role.CLUB_ADMIN:
+        # Clubs where user is the designated admin
+        return Club.objects.filter(admin=user)
+
+    if user.role in (User.Role.UNION_ADMIN, User.Role.LEAGUE_ADMIN):
+        # Union admins can access clubs in leagues under their unions
+
+        workspace_clubs = Club.objects.filter(
+            league_memberships__league__union__workspace__memberships__user=user,
+            league_memberships__league__union__workspace__memberships__is_active=True,
+            league_memberships__league__union__workspace__memberships__workspace__status="ACTIVE",
+        )
+        return workspace_clubs.distinct()
+
+    return Club.objects.none()
+
+
+def get_user_union_workspaces(user):
+    """
+    Return the list of active UnionWorkspace records the user belongs to.
+    """
+    if user is None or not user.is_authenticated:
+        return []
+
+    from dashboards.models import UnionWorkspaceMembership
+
+    memberships = UnionWorkspaceMembership.objects.filter(
+        user=user,
+        is_active=True,
+        workspace__status="ACTIVE",
+    ).select_related("workspace")
+
+    return [m.workspace for m in memberships]

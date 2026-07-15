@@ -22,6 +22,7 @@ INSTALLED_APPS = [
     "accounts",
     "dashboards",
     "governance.apps.GovernanceConfig",
+    "teams",
     "sponsorships",
     "ticketing",
     "memberships",
