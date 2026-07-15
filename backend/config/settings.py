@@ -354,6 +354,7 @@ REST_FRAMEWORK = {
         "rest_framework.parsers.FormParser",
         "rest_framework.parsers.MultiPartParser",
     ],
+    "URL_FORMAT_OVERRIDE": None,
 }
 
 
