@@ -57,4 +57,9 @@ urlpatterns = [
         views.membership_reports_export_view,
         name="membership-reports-export",
     ),
+    path(
+        "subscriptions/renew/",
+        views.membership_renew_view,
+        name="membership-renew",
+    ),
 ]

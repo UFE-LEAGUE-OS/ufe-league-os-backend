@@ -267,3 +267,177 @@ class MembershipClubAdminAPITests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("text/csv", response["Content-Type"])
         self.assertIn("membership-report.csv", response["Content-Disposition"])
+
+    def test_membership_reports_export_pdf(self):
+        user = self.create_user(
+            "club-admin-reports-pdf@example.com", User.Role.CLUB_ADMIN
+        )
+        self.authenticate(user)
+
+        club = Club.objects.create(
+            name="Reports PDF FC",
+            slug="reports-pdf-fc",
+            sport="FOOTBALL",
+        )
+        plan = MembershipPlan.objects.create(
+            club=club,
+            name="Premium Plan",
+            tier=MembershipPlan.Tier.GOLD,
+            billing_cycle=MembershipPlan.BillingCycle.MONTHLY,
+            price_amount=120000,
+        )
+        subscriber = User.objects.create_user(
+            email="pdf-subscriber@example.com",
+            phone_number=None,
+            password="StrongPass123",
+            first_name="PDF",
+            last_name="Subscriber",
+            role=User.Role.FAN,
+        )
+        MembershipSubscription.objects.create(
+            user=subscriber,
+            plan=plan,
+            club=club,
+            status=MembershipSubscription.Status.EXPIRED,
+            starts_at=timezone.now() - timedelta(days=60),
+            ends_at=timezone.now() - timedelta(days=30),
+        )
+
+        response = self.client.get(
+            "/api/memberships/club-admin/reports/export/",
+            {"club": club.id, "format": "pdf"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("application/pdf", response["Content-Type"])
+        self.assertIn("membership-report.pdf", response["Content-Disposition"])
+        self.assertGreater(len(response.content), 0)
+
+    def test_membership_renew_creates_new_subscription(self):
+        user = self.create_user("renew-membership@example.com", User.Role.FAN)
+        self.authenticate(user)
+
+        club = Club.objects.create(
+            name="Renew FC",
+            slug="renew-fc",
+            sport="FOOTBALL",
+        )
+        plan = MembershipPlan.objects.create(
+            club=club,
+            name="Basic Plan",
+            tier=MembershipPlan.Tier.BASIC,
+            billing_cycle=MembershipPlan.BillingCycle.MONTHLY,
+            price_amount=30000,
+        )
+        subscription = MembershipSubscription.objects.create(
+            user=user,
+            plan=plan,
+            club=club,
+            status=MembershipSubscription.Status.EXPIRED,
+        )
+
+        response = self.client.post(
+            "/api/memberships/subscriptions/renew/",
+            {"subscription_id": subscription.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.data["subscription"]["status"],
+            MembershipSubscription.Status.PENDING_PAYMENT,
+        )
+        self.assertEqual(response.data["subscription"]["plan"], plan.id)
+        self.assertEqual(response.data["subscription"]["club"], club.id)
+
+    def test_membership_requests_filter_by_pending_approval(self):
+        user = self.create_user("club-admin-pending@example.com", User.Role.CLUB_ADMIN)
+        self.authenticate(user)
+
+        club = Club.objects.create(
+            name="Pending Approval FC",
+            slug="pending-approval-fc",
+            sport="FOOTBALL",
+        )
+        plan = MembershipPlan.objects.create(
+            club=club,
+            name="Gold Plan",
+            tier=MembershipPlan.Tier.GOLD,
+            billing_cycle=MembershipPlan.BillingCycle.MONTHLY,
+            price_amount=200000,
+        )
+        requester = User.objects.create_user(
+            email="pending-approver@example.com",
+            phone_number=None,
+            password="StrongPass123",
+            first_name="Pending",
+            last_name="Approver",
+            role=User.Role.FAN,
+        )
+
+        MembershipSubscription.objects.create(
+            user=requester,
+            plan=plan,
+            club=club,
+            status=MembershipSubscription.Status.PENDING_APPROVAL,
+        )
+
+        response = self.client.get(
+            "/api/memberships/club-admin/requests/",
+            {"club": club.id},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(
+            response.data["results"][0]["status"],
+            MembershipSubscription.Status.PENDING_APPROVAL,
+        )
+
+    def test_directory_includes_user_fields(self):
+        user = self.create_user(
+            "club-admin-dir-fields@example.com", User.Role.CLUB_ADMIN
+        )
+        self.authenticate(user)
+
+        club = Club.objects.create(
+            name="Dir Fields FC",
+            slug="dir-fields-fc",
+            sport="FOOTBALL",
+        )
+        plan = MembershipPlan.objects.create(
+            club=club,
+            name="Silver Plan",
+            tier=MembershipPlan.Tier.SILVER,
+            billing_cycle=MembershipPlan.BillingCycle.MONTHLY,
+            price_amount=60000,
+        )
+        member = User.objects.create_user(
+            email="dir-member@example.com",
+            phone_number="+256700000000",
+            password="StrongPass123",
+            first_name="Directory",
+            last_name="Member",
+            role=User.Role.FAN,
+        )
+        MembershipSubscription.objects.create(
+            user=member,
+            plan=plan,
+            club=club,
+            status=MembershipSubscription.Status.ACTIVE,
+        )
+
+        response = self.client.get(
+            "/api/memberships/club-admin/members/directory/",
+            {"club": club.id},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        result = response.data["results"][0]
+        self.assertEqual(result["user_email"], member.email)
+        self.assertEqual(result["user_first_name"], member.first_name)
+        self.assertEqual(result["user_last_name"], member.last_name)
+        self.assertEqual(
+            result["user_phone"].strip("+"), member.phone_number.strip("+")
+        )

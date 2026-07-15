@@ -709,7 +709,12 @@ def membership_requests_view(request):
             "user",
             "plan",
             "club",
-        ).filter(status=MembershipSubscription.Status.PENDING_PAYMENT)
+        ).filter(
+            status__in=[
+                MembershipSubscription.Status.PENDING_PAYMENT,
+                MembershipSubscription.Status.PENDING_APPROVAL,
+            ]
+        )
 
         if club_id:
             queryset = queryset.filter(club_id=club_id)
@@ -894,6 +899,71 @@ def membership_category_detail_view(request, plan_id):
 
 
 # ---------------------------------------------------------------------------
+# Membership renewal
+# ---------------------------------------------------------------------------
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def membership_renew_view(request):
+    """
+    Renew an existing membership subscription.
+    Creates a new subscription with PENDING_PAYMENT status.
+    """
+    subscription_id = request.data.get("subscription_id")
+
+    if not subscription_id:
+        return Response(
+            {"detail": "subscription_id is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    subscription = (
+        MembershipSubscription.objects.select_related("plan", "club", "user")
+        .filter(id=subscription_id)
+        .first()
+    )
+
+    if subscription is None:
+        return Response(
+            {"detail": "Membership subscription not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if subscription.user != request.user and request.user.role not in [
+        User.Role.CLUB_ADMIN,
+        User.Role.SUPER_ADMIN,
+    ]:
+        return Response(
+            {"detail": "You do not have permission to renew this subscription."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if subscription.status == MembershipSubscription.Status.ACTIVE:
+        return Response(
+            {"detail": "This membership is still active and cannot be renewed yet."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    new_subscription = MembershipSubscription.objects.create(
+        user=subscription.user,
+        plan=subscription.plan,
+        club=subscription.club,
+        status=MembershipSubscription.Status.PENDING_PAYMENT,
+    )
+
+    return Response(
+        {
+            "message": "Membership renewal initiated. Proceed to payment.",
+            "subscription": MembershipSubscriptionSerializer(
+                new_subscription, context={"request": request}
+            ).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Membership reports & exports
 # ---------------------------------------------------------------------------
 
@@ -988,27 +1058,85 @@ def membership_reports_export_view(request):
         response["Content-Disposition"] = "attachment; filename=membership-report.csv"
         return response
 
-    # PDF stub: return structured JSON summary for now
-    return Response(
-        {
-            "format": "pdf",
-            "message": "PDF export is not implemented yet.",
-            "preview": {
-                "count": len(rows),
-                "columns": [
-                    "user_email",
-                    "plan_name",
-                    "tier",
-                    "billing_cycle",
-                    "price",
-                    "currency",
-                    "status",
-                    "starts_at",
-                    "ends_at",
-                    "created_at",
-                ],
-                "rows": rows[:50],
-            },
-        },
-        status=status.HTTP_200_OK,
+    # PDF export using reportlab
+    from io import BytesIO
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    elements = []
+
+    elements.append(Paragraph("Membership Report", styles["Title"]))
+    elements.append(
+        Paragraph(
+            f"Generated on: {timezone.now().strftime('%Y-%m-%d %H:%M')}",
+            styles["Normal"],
+        )
     )
+    elements.append(Paragraph(f"Total Records: {len(rows)}", styles["Normal"]))
+    elements.append(Paragraph("<br/>", styles["Normal"]))
+
+    if rows:
+        table_data = [
+            [
+                "Email",
+                "Plan",
+                "Tier",
+                "Billing",
+                "Price",
+                "Currency",
+                "Status",
+                "Starts",
+                "Ends",
+                "Created",
+            ]
+        ]
+        for row in rows:
+            table_data.append(
+                [
+                    str(row.get("user_email", "")),
+                    str(row.get("plan_name", "")),
+                    str(row.get("tier", "")),
+                    str(row.get("billing_cycle", "")),
+                    str(row.get("price", "")),
+                    str(row.get("currency", "")),
+                    str(row.get("status", "")),
+                    str(row.get("starts_at", "")) if row.get("starts_at") else "",
+                    str(row.get("ends_at", "")) if row.get("ends_at") else "",
+                    str(row.get("created_at", "")) if row.get("created_at") else "",
+                ]
+            )
+
+        table = Table(table_data, repeatRows=1)
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f77b4")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 10),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+                    ("BACKGROUND", (0, 1), (-1, -1), colors.beige),
+                    ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                    ("FONTSIZE", (0, 1), (-1, -1), 8),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+        )
+        elements.append(table)
+    else:
+        elements.append(
+            Paragraph("No data available for the selected filters.", styles["Normal"])
+        )
+
+    doc.build(elements)
+    buffer.seek(0)
+
+    response = Response(buffer.getvalue(), content_type="application/pdf")
+    response["Content-Disposition"] = "attachment; filename=membership-report.pdf"
+    return response

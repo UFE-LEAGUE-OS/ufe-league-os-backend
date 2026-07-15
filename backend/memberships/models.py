@@ -63,6 +63,7 @@ class MembershipPlan(models.Model):
 class MembershipSubscription(models.Model):
     class Status(models.TextChoices):
         PENDING_PAYMENT = "PENDING_PAYMENT", "Pending Payment"
+        PENDING_APPROVAL = "PENDING_APPROVAL", "Pending Approval"
         ACTIVE = "ACTIVE", "Active"
         PAUSED = "PAUSED", "Paused"
         EXPIRED = "EXPIRED", "Expired"
