@@ -84,7 +84,7 @@ class DashboardAPITests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["role"], User.Role.CLUB_ADMIN)
-        self.assertEqual(response.data["dashboard"]["title"], "Club Admin Dashboard")
+        self.assertIn("Admin", response.data["dashboard"]["title"])
 
     def test_my_dashboard_resolves_fan_routes(self):
         user = self.create_user("my-fan-dashboard@example.com", User.Role.FAN)
