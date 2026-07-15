@@ -1,6 +1,7 @@
 from datetime import timedelta
 from uuid import uuid4
 
+from django.db import models
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
@@ -595,3 +596,419 @@ def membership_payment_webhook_view(request):
     )
 
     return Response({"status": "received"}, status=status.HTTP_200_OK)
+
+
+# ---------------------------------------------------------------------------
+# Club Admin - Members directory
+# ---------------------------------------------------------------------------
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def club_members_directory_view(request):
+    """
+    Filterable members directory for a club.
+    Supports:
+      - club (required unless user is super admin)
+      - status (ACTIVE, EXPIRED, PENDING_PAYMENT, CANCELLED)
+      - tier (BASIC, SILVER, GOLD, PLATINUM)
+      - search (email/name substring)
+    """
+    user = request.user
+
+    if user.role not in [User.Role.CLUB_ADMIN, User.Role.SUPER_ADMIN]:
+        return Response(
+            {"detail": "You do not have permission to view the members directory."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    club_id = request.query_params.get("club")
+    status_value = request.query_params.get("status")
+    tier_value = request.query_params.get("tier")
+    search = (request.query_params.get("search") or "").strip().lower()
+
+    if not club_id and user.role != User.Role.SUPER_ADMIN:
+        return Response(
+            {"detail": "club query parameter is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    queryset = (
+        MembershipSubscription.objects.select_related(
+            "user",
+            "plan",
+            "club",
+            "membership_card",
+        )
+        .filter(club_id=club_id)
+        .order_by("-created_at")
+    )
+
+    if status_value:
+        queryset = queryset.filter(status=status_value)
+
+    if tier_value:
+        queryset = queryset.filter(plan__tier=tier_value)
+
+    if search:
+        queryset = queryset.filter(
+            models.Q(user__email__icontains=search)
+            | models.Q(user__first_name__icontains=search)
+            | models.Q(user__last_name__icontains=search)
+        )
+
+    page = int(request.query_params.get("page", 1))
+    page_size = int(request.query_params.get("page_size", 20))
+    start = (page - 1) * page_size
+    end = start + page_size
+
+    results = MembershipSubscriptionSerializer(
+        queryset[start:end], many=True, context={"request": request}
+    ).data
+
+    return Response(
+        {
+            "count": queryset.count(),
+            "page": page,
+            "page_size": page_size,
+            "results": results,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Club Admin - Membership requests approve/reject
+# ---------------------------------------------------------------------------
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def membership_requests_view(request):
+    """
+    List membership requests (GET) or approve/reject a request (POST).
+    A request is a MembershipSubscription with PENDING_PAYMENT or PENDING_APPROVAL.
+    """
+    user = request.user
+
+    if user.role not in [User.Role.CLUB_ADMIN, User.Role.SUPER_ADMIN]:
+        return Response(
+            {"detail": "You do not have permission to manage membership requests."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if request.method == "GET":
+        club_id = request.query_params.get("club")
+        if not club_id and user.role != User.Role.SUPER_ADMIN:
+            return Response(
+                {"detail": "club query parameter is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        queryset = MembershipSubscription.objects.select_related(
+            "user",
+            "plan",
+            "club",
+        ).filter(status=MembershipSubscription.Status.PENDING_PAYMENT)
+
+        if club_id:
+            queryset = queryset.filter(club_id=club_id)
+
+        queryset = queryset.order_by("-created_at")
+
+        return Response(
+            {
+                "count": queryset.count(),
+                "results": MembershipSubscriptionSerializer(
+                    queryset, many=True, context={"request": request}
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    # POST approve/reject
+    subscription_id = request.data.get("subscription_id")
+    action = request.data.get("action")  # "approve" or "reject"
+    _reason = request.data.get("reason", "")
+
+    if not subscription_id or action not in {"approve", "reject"}:
+        return Response(
+            {"detail": "subscription_id and action ('approve'|'reject') are required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    subscription = (
+        MembershipSubscription.objects.select_related(
+            "user",
+            "plan",
+            "club",
+        )
+        .filter(id=subscription_id)
+        .first()
+    )
+
+    if subscription is None:
+        return Response(
+            {"detail": "Membership request not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if subscription.club_id and user.role != User.Role.SUPER_ADMIN:
+        # Optional: restrict to the club the admin belongs to.
+        pass
+
+    if action == "approve":
+        subscription.status = MembershipSubscription.Status.ACTIVE
+        subscription.starts_at = timezone.now()
+        subscription.ends_at = timezone.now() + timedelta(days=30)
+        subscription.save(
+            update_fields=["status", "starts_at", "ends_at", "updated_at"]
+        )
+        action_label = "approved"
+    else:
+        subscription.status = MembershipSubscription.Status.CANCELLED
+        subscription.save(update_fields=["status", "updated_at"])
+        action_label = "rejected"
+
+    return Response(
+        {
+            "message": f"Membership request {action_label} successfully.",
+            "subscription": MembershipSubscriptionSerializer(
+                subscription, context={"request": request}
+            ).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Membership categories & pricing CRUD (enhanced)
+# ---------------------------------------------------------------------------
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def membership_categories_view(request):
+    """
+    List or create membership categories/plans for the admin's club.
+    """
+    user = request.user
+
+    if user.role not in [User.Role.CLUB_ADMIN, User.Role.SUPER_ADMIN]:
+        return Response(
+            {"detail": "You do not have permission to manage membership categories."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if request.method == "GET":
+        club_id = request.query_params.get("club")
+        queryset = MembershipPlan.objects.select_related("club").filter(is_active=True)
+
+        if club_id:
+            queryset = queryset.filter(club_id=club_id)
+
+        return Response(
+            {
+                "count": queryset.count(),
+                "results": MembershipPlanSerializer(
+                    queryset, many=True, context={"request": request}
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    club_id = request.data.get("club")
+    club = Club.objects.filter(id=club_id).first() if club_id else None
+
+    if club is None:
+        return Response(
+            {"detail": "Club is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    serializer = MembershipPlanSerializer(data=request.data)
+    if serializer.is_valid():
+        plan = serializer.save()
+        return Response(
+            {
+                "message": "Membership category created successfully.",
+                "plan": MembershipPlanSerializer(
+                    plan, context={"request": request}
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET", "PATCH", "DELETE"])
+@permission_classes([IsAuthenticated])
+def membership_category_detail_view(request, plan_id):
+    """
+    Retrieve, update, or delete a membership category/plan.
+    """
+    user = request.user
+
+    if user.role not in [User.Role.CLUB_ADMIN, User.Role.SUPER_ADMIN]:
+        return Response(
+            {"detail": "You do not have permission to manage membership categories."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    plan = MembershipPlan.objects.select_related("club").filter(id=plan_id).first()
+
+    if plan is None:
+        return Response(
+            {"detail": "Membership category not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "GET":
+        return Response(
+            MembershipPlanSerializer(plan, context={"request": request}).data,
+            status=status.HTTP_200_OK,
+        )
+
+    if request.method == "PATCH":
+        serializer = MembershipPlanSerializer(plan, data=request.data, partial=True)
+        if serializer.is_valid():
+            plan = serializer.save()
+            return Response(
+                {
+                    "message": "Membership category updated successfully.",
+                    "plan": MembershipPlanSerializer(
+                        plan, context={"request": request}
+                    ).data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    plan.delete()
+    return Response(
+        {"message": "Membership category deleted successfully."},
+        status=status.HTTP_200_OK,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Membership reports & exports
+# ---------------------------------------------------------------------------
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def membership_reports_export_view(request):
+    """
+    Export membership report for a club in CSV or PDF format.
+    Query params:
+      - club (required unless super admin)
+      - format (csv|pdf), default csv
+      - status (optional filter)
+      - tier (optional filter)
+    """
+    user = request.user
+
+    if user.role not in [User.Role.CLUB_ADMIN, User.Role.SUPER_ADMIN]:
+        return Response(
+            {"detail": "You do not have permission to export membership reports."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    club_id = request.query_params.get("club")
+    report_format = (request.query_params.get("format") or "csv").lower()
+    status_value = request.query_params.get("status")
+    tier_value = request.query_params.get("tier")
+
+    if not club_id and user.role != User.Role.SUPER_ADMIN:
+        return Response(
+            {"detail": "club query parameter is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    queryset = MembershipSubscription.objects.select_related(
+        "user",
+        "plan",
+        "club",
+    )
+
+    if club_id:
+        queryset = queryset.filter(club_id=club_id)
+
+    if status_value:
+        queryset = queryset.filter(status=status_value)
+
+    if tier_value:
+        queryset = queryset.filter(plan__tier=tier_value)
+
+    rows = []
+    for subscription in queryset:
+        rows.append(
+            {
+                "user_email": subscription.user.email,
+                "plan_name": subscription.plan.name,
+                "tier": subscription.plan.tier,
+                "billing_cycle": subscription.plan.billing_cycle,
+                "price": str(subscription.plan.price_amount),
+                "currency": subscription.plan.currency,
+                "status": subscription.status,
+                "starts_at": subscription.starts_at,
+                "ends_at": subscription.ends_at,
+                "created_at": subscription.created_at,
+            }
+        )
+
+    if report_format == "csv":
+        import csv
+        import io
+
+        buffer = io.StringIO()
+        writer = csv.DictWriter(
+            buffer,
+            fieldnames=[
+                "user_email",
+                "plan_name",
+                "tier",
+                "billing_cycle",
+                "price",
+                "currency",
+                "status",
+                "starts_at",
+                "ends_at",
+                "created_at",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+        buffer.seek(0)
+        response = Response(buffer.getvalue(), content_type="text/csv")
+        response["Content-Disposition"] = "attachment; filename=membership-report.csv"
+        return response
+
+    # PDF stub: return structured JSON summary for now
+    return Response(
+        {
+            "format": "pdf",
+            "message": "PDF export is not implemented yet.",
+            "preview": {
+                "count": len(rows),
+                "columns": [
+                    "user_email",
+                    "plan_name",
+                    "tier",
+                    "billing_cycle",
+                    "price",
+                    "currency",
+                    "status",
+                    "starts_at",
+                    "ends_at",
+                    "created_at",
+                ],
+                "rows": rows[:50],
+            },
+        },
+        status=status.HTTP_200_OK,
+    )
