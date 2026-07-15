@@ -33,6 +33,9 @@ class MembershipPlanSerializer(serializers.ModelSerializer):
 
 class MembershipSubscriptionSerializer(serializers.ModelSerializer):
     user_email = serializers.CharField(source="user.email", read_only=True)
+    user_first_name = serializers.CharField(source="user.first_name", read_only=True)
+    user_last_name = serializers.CharField(source="user.last_name", read_only=True)
+    user_phone = serializers.CharField(source="user.phone_number", read_only=True)
     plan_name = serializers.CharField(source="plan.name", read_only=True)
     club_name = serializers.CharField(source="club.name", read_only=True)
     club_slug = serializers.CharField(source="club.slug", read_only=True)
@@ -45,6 +48,9 @@ class MembershipSubscriptionSerializer(serializers.ModelSerializer):
             "id",
             "user",
             "user_email",
+            "user_first_name",
+            "user_last_name",
+            "user_phone",
             "plan",
             "plan_name",
             "club",
