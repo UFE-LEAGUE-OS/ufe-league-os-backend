@@ -22,7 +22,7 @@ urlpatterns = [
         name="club-admin-menu-items",
     ),
     path(
-        "club-admin/workspace/",
+        "club-admin/workspace-context/",
         views.club_admin_workspace_context_view,
         name="club-admin-workspace-context",
     ),
