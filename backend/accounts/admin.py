@@ -146,16 +146,14 @@ class NotificationAdmin(admin.ModelAdmin):
 
     list_display = (
         "user",
-        "event_type",
         "category",
-        "priority",
         "title",
         "is_read",
         "created_at",
     )
-    list_filter = ("event_type", "category", "priority", "is_read", "created_at")
+    list_filter = ("category", "is_read", "created_at")
     search_fields = ("user__email", "title", "message")
-    readonly_fields = ("created_at", "read_at")
+    readonly_fields = ("created_at", "updated_at")
     ordering = ("-created_at",)
 
 
@@ -163,8 +161,8 @@ class NotificationAdmin(admin.ModelAdmin):
 class EmailOTPAdmin(admin.ModelAdmin):
     """Django admin configuration for email OTP records"""
 
-    list_display = ("user", "code", "purpose", "is_used", "attempts", "expires_at")
-    list_filter = ("purpose", "is_used", "created_at", "expires_at")
+    list_display = ("user", "code", "purpose", "expires_at")
+    list_filter = ("purpose", "created_at", "expires_at")
     search_fields = ("user__email", "user__phone_number", "code")
-    readonly_fields = ("created_at", "updated_at")
+    readonly_fields = ("created_at",)
     ordering = ("-created_at",)
