@@ -3,11 +3,9 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
-from .google_auth import verify_google_id_token, InvalidGoogleTokenError
 from .models import (
     Notification,
     Club,
-    Follow,
     NotificationPreference,
     InterestPreference,
     RoleApproval,
@@ -218,19 +216,25 @@ class BecomeSponsorSerializer(serializers.Serializer):
 
 class HierarchicalCreateUserSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    phone_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    phone_number = serializers.CharField(
+        max_length=20, required=False, allow_blank=True
+    )
     first_name = serializers.CharField(max_length=150)
     last_name = serializers.CharField(max_length=150)
     password = serializers.CharField(write_only=True)
     confirm_password = serializers.CharField(write_only=True)
     role = serializers.ChoiceField(choices=User.Role.choices)
-    sponsor_type = serializers.ChoiceField(choices=User.SponsorType.choices, required=False, allow_blank=True)
+    sponsor_type = serializers.ChoiceField(
+        choices=User.SponsorType.choices, required=False, allow_blank=True
+    )
     club_id = serializers.IntegerField(required=False)
 
     def validate_email(self, value):
         email = value.strip().lower()
         if User.objects.filter(email__iexact=email).exists():
-            raise serializers.ValidationError("A user with this email address already exists.")
+            raise serializers.ValidationError(
+                "A user with this email address already exists."
+            )
         return email
 
     def validate_phone_number(self, value):
@@ -238,12 +242,16 @@ class HierarchicalCreateUserSerializer(serializers.Serializer):
             return value
         phone_number = normalize_phone_number(value)
         if User.objects.filter(phone_number=phone_number).exists():
-            raise serializers.ValidationError("A user with this phone number already exists.")
+            raise serializers.ValidationError(
+                "A user with this phone number already exists."
+            )
         return phone_number
 
     def validate(self, attrs):
         if attrs["password"] != attrs["confirm_password"]:
-            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
         try:
             validate_password(attrs["password"])
         except DjangoValidationError as e:
@@ -326,9 +334,11 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
 
         phone_number = normalize_phone_number(value)
 
-        if User.objects.filter(phone_number=phone_number).exclude(
-            pk=self.instance.pk
-        ).exists():
+        if (
+            User.objects.filter(phone_number=phone_number)
+            .exclude(pk=self.instance.pk)
+            .exists()
+        ):
             raise serializers.ValidationError(
                 "A user with this phone number already exists."
             )
@@ -398,7 +408,9 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         if attrs["new_password"] != attrs["confirm_password"]:
-            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
         try:
             validate_password(attrs["new_password"])
         except DjangoValidationError as e:
@@ -433,7 +445,15 @@ class RoleApprovalReviewSerializer(serializers.Serializer):
 class CombinedPaymentHistoryItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = PaymentHistory
-        fields = ("id", "wallet", "amount", "currency", "status", "reference", "created_at")
+        fields = (
+            "id",
+            "wallet",
+            "amount",
+            "currency",
+            "status",
+            "reference",
+            "created_at",
+        )
         read_only_fields = ("id", "created_at")
 
 
@@ -466,7 +486,17 @@ class ClubProfileUpdateSerializer(serializers.ModelSerializer):
 class FeedItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = FeedItem
-        fields = ("id", "user", "content_type", "object_id", "title", "description", "image", "published_at", "created_at")
+        fields = (
+            "id",
+            "user",
+            "content_type",
+            "object_id",
+            "title",
+            "description",
+            "image",
+            "published_at",
+            "created_at",
+        )
         read_only_fields = ("id", "created_at")
 
 
@@ -474,16 +504,34 @@ class NotificationPreferenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = NotificationPreference
         fields = (
-            "id", "user", "email_notifications", "push_notifications",
-            "membership_updates", "ticket_updates", "sponsorship_updates", "governance_updates",
+            "id",
+            "user",
+            "email_notifications",
+            "push_notifications",
+            "membership_updates",
+            "ticket_updates",
+            "sponsorship_updates",
+            "governance_updates",
         )
-        read_only_fields = ("id", "user",)
+        read_only_fields = (
+            "id",
+            "user",
+        )
 
 
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
-        fields = ("id", "user", "category", "title", "message", "is_read", "created_at", "updated_at")
+        fields = (
+            "id",
+            "user",
+            "category",
+            "title",
+            "message",
+            "is_read",
+            "created_at",
+            "updated_at",
+        )
         read_only_fields = ("id", "user", "created_at", "updated_at")
 
 
@@ -498,7 +546,10 @@ class InterestPreferenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = InterestPreference
         fields = ("id", "user", "sports", "clubs", "teams", "notifications_enabled")
-        read_only_fields = ("id", "user",)
+        read_only_fields = (
+            "id",
+            "user",
+        )
 
 
 class FollowResponseSerializer(serializers.Serializer):

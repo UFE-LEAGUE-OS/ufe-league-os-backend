@@ -145,11 +145,17 @@ class RoleApproval(models.Model):
         APPROVED = "APPROVED", "Approved"
         REJECTED = "REJECTED", "Rejected"
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="role_approvals")
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="role_approvals"
+    )
     requested_role = models.CharField(max_length=50)
     reason = models.TextField(blank=True)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
-    approved_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="approvals")
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING
+    )
+    approved_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="approvals"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -250,7 +256,9 @@ class Venue(models.Model):
 
 
 class NotificationPreference(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="notification_preferences")
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="notification_preferences"
+    )
     email_notifications = models.BooleanField(default=True)
     push_notifications = models.BooleanField(default=True)
     membership_updates = models.BooleanField(default=True)
@@ -266,7 +274,9 @@ class NotificationPreference(models.Model):
 
 
 class InterestPreference(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="interest_preferences")
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="interest_preferences"
+    )
     sports = models.JSONField(default=list, blank=True)
     clubs = models.JSONField(default=list, blank=True)
     teams = models.JSONField(default=list, blank=True)
@@ -325,7 +335,9 @@ class Wallet(models.Model):
 
 
 class PaymentHistory(models.Model):
-    wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name="payments")
+    wallet = models.ForeignKey(
+        Wallet, on_delete=models.CASCADE, related_name="payments"
+    )
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     currency = models.CharField(max_length=10, default="UGX")
     status = models.CharField(max_length=30)
@@ -360,7 +372,9 @@ class Notification(models.Model):
         on_delete=models.CASCADE,
         related_name="notifications",
     )
-    category = models.CharField(max_length=30, choices=Category.choices, default=Category.SYSTEM)
+    category = models.CharField(
+        max_length=30, choices=Category.choices, default=Category.SYSTEM
+    )
     title = models.CharField(max_length=150)
     message = models.TextField()
     is_read = models.BooleanField(default=False)
