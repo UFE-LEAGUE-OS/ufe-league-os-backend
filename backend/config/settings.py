@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     "accounts",
     "dashboards",
     "governance",
+    "teams",
     "sponsorships",
     "ticketing",
     "memberships",

@@ -52,6 +52,7 @@ urlpatterns = [
     path("api/governance/", include("governance.urls")),
     path("api/sponsorships/", include("sponsorships.urls")),
     path("api/memberships/", include("memberships.urls")),
+    path("api/teams/", include("teams.urls")),
     path("api/ticketing/", include("ticketing.urls")),
     path("api/fantasy/", include("fantasy.urls")),
     path("api/engagements/", include("engagements.urls")),
