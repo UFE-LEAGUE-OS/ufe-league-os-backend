@@ -545,11 +545,25 @@ class WalletSummarySerializer(serializers.ModelSerializer):
 class InterestPreferenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = InterestPreference
-        fields = ("id", "user", "sports", "clubs", "teams", "notifications_enabled")
-        read_only_fields = (
+        fields = (
             "id",
             "user",
+            "interested_in_clubs",
+            "interested_in_leagues",
+            "interested_in_unions",
+            "interested_in_national_teams",
+            "interested_in_transfers",
+            "interested_in_highlights",
+            "interested_in_tickets",
+            "interested_in_merchandise",
+            "profile_visibility",
+            "show_followed_teams",
+            "show_attended_matches",
+            "activity_visibility",
+            "created_at",
+            "updated_at",
         )
+        read_only_fields = ("id", "user", "created_at", "updated_at")
 
 
 class FollowResponseSerializer(serializers.Serializer):

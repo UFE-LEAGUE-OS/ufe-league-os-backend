@@ -274,13 +274,32 @@ class NotificationPreference(models.Model):
 
 
 class InterestPreference(models.Model):
+    class Visibility(models.TextChoices):
+        PUBLIC = "PUBLIC", "Public"
+        FOLLOWERS_ONLY = "FOLLOWERS_ONLY", "Followers Only"
+        PRIVATE = "PRIVATE", "Private"
+
     user = models.OneToOneField(
         User, on_delete=models.CASCADE, related_name="interest_preferences"
     )
-    sports = models.JSONField(default=list, blank=True)
-    clubs = models.JSONField(default=list, blank=True)
-    teams = models.JSONField(default=list, blank=True)
-    notifications_enabled = models.BooleanField(default=True)
+    interested_in_clubs = models.BooleanField(default=True)
+    interested_in_leagues = models.BooleanField(default=True)
+    interested_in_unions = models.BooleanField(default=True)
+    interested_in_national_teams = models.BooleanField(default=False)
+    interested_in_transfers = models.BooleanField(default=False)
+    interested_in_highlights = models.BooleanField(default=True)
+    interested_in_tickets = models.BooleanField(default=True)
+    interested_in_merchandise = models.BooleanField(default=False)
+    profile_visibility = models.CharField(
+        max_length=20, choices=Visibility.choices, default=Visibility.PUBLIC
+    )
+    show_followed_teams = models.BooleanField(default=True)
+    show_attended_matches = models.BooleanField(default=True)
+    activity_visibility = models.CharField(
+        max_length=20, choices=Visibility.choices, default=Visibility.FOLLOWERS_ONLY
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["user__email"]
