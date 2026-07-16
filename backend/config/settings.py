@@ -344,6 +344,7 @@ REST_FRAMEWORK = {
     # Membership exports use ?format=csv and ?format=pdf.
     # Disable DRF's renderer query-parameter override so those
     # values reach the export view instead of producing a 404.
+    "URL_FORMAT_OVERRIDE": None,
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
