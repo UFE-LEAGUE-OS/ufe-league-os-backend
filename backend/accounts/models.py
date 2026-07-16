@@ -259,8 +259,8 @@ class NotificationPreference(models.Model):
     user = models.OneToOneField(
         User, on_delete=models.CASCADE, related_name="notification_preferences"
     )
-    email_notifications = models.BooleanField(default=True)
-    push_notifications = models.BooleanField(default=True)
+    email_enabled = models.BooleanField(default=True)
+    push_enabled = models.BooleanField(default=True)
     membership_updates = models.BooleanField(default=True)
     ticket_updates = models.BooleanField(default=True)
     sponsorship_updates = models.BooleanField(default=True)
