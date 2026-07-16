@@ -1141,13 +1141,6 @@ def membership_reports_export_view(request):
     doc.build(elements)
     buffer.seek(0)
 
-    from django.http import HttpResponse
-
     response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
-    response["Content-Disposition"] = "attachment; filename=membership-report.pdf"
-    response = HttpResponse(
-        buffer.getvalue(),
-        content_type="application/pdf",
-    )
     response["Content-Disposition"] = 'attachment; filename="membership-report.pdf"'
     return response
