@@ -405,6 +405,42 @@ class AuthAPITests(TestCase):
         self.assertIn("email verification code", email.body)
         self.assertIn(otp.code, email.body)
 
+        html_body = next(
+            alternative.content
+            for alternative in email.alternatives
+            if alternative.mimetype == "text/html"
+        )
+
+        self.assertIn("<!doctype html>", html_body.lower())
+        self.assertIn(
+            "Confirm your email to activate your account",
+            html_body,
+        )
+        self.assertIn(otp.code, html_body)
+        self.assertIn("cid:league-os-logo", html_body)
+        self.assertIn("10 minutes", html_body)
+        self.assertIn(payload["email"], html_body)
+
+        inline_logo = next(
+            (
+                attachment
+                for attachment in email.attachments
+                if getattr(
+                    attachment,
+                    "get_content_type",
+                    lambda: None,
+                )()
+                == "image/png"
+            ),
+            None,
+        )
+
+        self.assertIsNotNone(inline_logo)
+        self.assertEqual(
+            inline_logo["Content-ID"],
+            "<league-os-logo>",
+        )
+
     def test_verify_email_otp_successful(self):
         user = User.objects.create_user(
             email="verify@example.com",

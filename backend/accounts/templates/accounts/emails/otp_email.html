@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="supported-color-schemes" content="light">
+    <title>{{ subject }}</title>
+
+    <style>
+        @media only screen and (max-width: 620px) {
+            .email-container {
+                width: 100% !important;
+            }
+
+            .content-padding {
+                padding-left: 24px !important;
+                padding-right: 24px !important;
+            }
+
+            .email-card {
+                border-radius: 14px !important;
+            }
+
+            .otp-code {
+                font-size: 32px !important;
+                letter-spacing: 6px !important;
+            }
+        }
+    </style>
+</head>
+
+<body
+    style="
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        background: #f3f4f8;
+        color: #201e65;
+        font-family: Arial, Helvetica, sans-serif;
+    "
+>
+    <div
+        style="
+            display: none;
+            max-height: 0;
+            overflow: hidden;
+            opacity: 0;
+            color: transparent;
+            font-size: 1px;
+            line-height: 1px;
+        "
+    >
+        Your League OS {{ action_text }} code expires in
+        {{ expiry_minutes }} minutes.
+    </div>
+
+    <table
+        role="presentation"
+        width="100%"
+        cellspacing="0"
+        cellpadding="0"
+        border="0"
+        style="width: 100%; background: #f3f4f8;"
+    >
+        <tr>
+            <td align="center" style="padding: 32px 12px;">
+                <table
+                    role="presentation"
+                    class="email-container email-card"
+                    width="600"
+                    cellspacing="0"
+                    cellpadding="0"
+                    border="0"
+                    style="
+                        width: 600px;
+                        max-width: 600px;
+                        overflow: hidden;
+                        background: #ffffff;
+                        border: 1px solid #e5e6ee;
+                        border-radius: 20px;
+                        box-shadow: 0 12px 36px rgba(16, 18, 40, 0.08);
+                    "
+                >
+                    <tr>
+                        <td
+                            class="content-padding"
+                            align="center"
+                            style="
+                                padding: 30px 48px;
+                                background: #201e65;
+                                border-bottom: 4px solid #ff5a1f;
+                            "
+                        >
+                            {% if has_logo %}
+                                <img
+                                    src="cid:league-os-logo"
+                                    width="220"
+                                    alt="League OS"
+                                    style="
+                                        display: block;
+                                        width: 220px;
+                                        max-width: 100%;
+                                        height: auto;
+                                        border: 0;
+                                    "
+                                >
+                            {% else %}
+                                <div
+                                    style="
+                                        color: #ffffff;
+                                        font-size: 26px;
+                                        line-height: 32px;
+                                        font-weight: 800;
+                                        font-style: italic;
+                                    "
+                                >
+                                    LEAGUE
+                                    <span style="color: #ff5a1f;">OS</span>
+                                </div>
+                            {% endif %}
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td
+                            class="content-padding"
+                            style="padding: 42px 48px 16px;"
+                        >
+                            <h1
+                                style="
+                                    margin: 0 0 18px;
+                                    color: #080b21;
+                                    font-size: 30px;
+                                    line-height: 38px;
+                                    font-weight: 800;
+                                "
+                            >
+                                {{ heading }}
+                            </h1>
+
+                            <p
+                                style="
+                                    margin: 0 0 12px;
+                                    color: #464a5e;
+                                    font-size: 16px;
+                                    line-height: 26px;
+                                "
+                            >
+                                Hello {{ first_name }},
+                            </p>
+
+                            <p
+                                style="
+                                    margin: 0;
+                                    color: #464a5e;
+                                    font-size: 16px;
+                                    line-height: 26px;
+                                "
+                            >
+                                {{ intro }}
+                            </p>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td
+                            class="content-padding"
+                            style="padding: 18px 48px 24px;"
+                        >
+                            <table
+                                role="presentation"
+                                width="100%"
+                                cellspacing="0"
+                                cellpadding="0"
+                                border="0"
+                                style="
+                                    width: 100%;
+                                    background: #f7f3ff;
+                                    border: 1px solid #dfd4f4;
+                                    border-radius: 16px;
+                                "
+                            >
+                                <tr>
+                                    <td
+                                        align="center"
+                                        style="
+                                            padding: 24px 20px 8px;
+                                            color: #625d74;
+                                            font-size: 12px;
+                                            line-height: 18px;
+                                            font-weight: 700;
+                                            letter-spacing: 1.1px;
+                                            text-transform: uppercase;
+                                        "
+                                    >
+                                        {{ code_label }}
+                                    </td>
+                                </tr>
+
+                                <tr>
+                                    <td
+                                        align="center"
+                                        style="padding: 0 16px 25px;"
+                                    >
+                                        <span
+                                            class="otp-code"
+                                            style="
+                                                display: inline-block;
+                                                color: #080b21;
+                                                font-family:
+                                                    'Courier New',
+                                                    Courier,
+                                                    monospace;
+                                                font-size: 38px;
+                                                line-height: 48px;
+                                                font-weight: 800;
+                                                letter-spacing: 9px;
+                                            "
+                                        >
+                                            {{ code }}
+                                        </span>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td
+                            class="content-padding"
+                            style="padding: 0 48px 22px;"
+                        >
+                            <table
+                                role="presentation"
+                                width="100%"
+                                cellspacing="0"
+                                cellpadding="0"
+                                border="0"
+                                style="
+                                    width: 100%;
+                                    background: #fff7ed;
+                                    border-left: 4px solid #ff5a1f;
+                                    border-radius: 8px;
+                                "
+                            >
+                                <tr>
+                                    <td
+                                        style="
+                                            padding: 15px 17px;
+                                            color: #7a3d16;
+                                            font-size: 14px;
+                                            line-height: 22px;
+                                        "
+                                    >
+                                        This one-time code expires in
+                                        <strong>
+                                            {{ expiry_minutes }} minutes
+                                        </strong>.
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td
+                            class="content-padding"
+                            style="padding: 0 48px 42px;"
+                        >
+                            <h2
+                                style="
+                                    margin: 0 0 8px;
+                                    color: #080b21;
+                                    font-size: 16px;
+                                    line-height: 24px;
+                                    font-weight: 700;
+                                "
+                            >
+                                Keep your account secure
+                            </h2>
+
+                            <p
+                                style="
+                                    margin: 0 0 10px;
+                                    color: #676b7c;
+                                    font-size: 14px;
+                                    line-height: 22px;
+                                "
+                            >
+                                Do not share this code with anyone.
+                                League OS staff will never ask you to provide
+                                it by phone, chat, social media, or email.
+                            </p>
+
+                            <p
+                                style="
+                                    margin: 0;
+                                    color: #676b7c;
+                                    font-size: 14px;
+                                    line-height: 22px;
+                                "
+                            >
+                                If you did not request this code, safely
+                                ignore this message. No changes will be made
+                                to your account.
+                            </p>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td
+                            class="content-padding"
+                            align="center"
+                            style="
+                                padding: 25px 48px 28px;
+                                background: #f8f8fb;
+                                border-top: 1px solid #ebebf1;
+                            "
+                        >
+                            <p
+                                style="
+                                    margin: 0 0 5px;
+                                    color: #292c3c;
+                                    font-size: 13px;
+                                    line-height: 20px;
+                                    font-weight: 700;
+                                "
+                            >
+                                League OS
+                            </p>
+
+                            <p
+                                style="
+                                    margin: 0 0 10px;
+                                    color: #777b8c;
+                                    font-size: 12px;
+                                    line-height: 19px;
+                                "
+                            >
+                                Unified Fan Engagement and League Platform
+                            </p>
+
+                            <p
+                                style="
+                                    margin: 0;
+                                    color: #989baa;
+                                    font-size: 11px;
+                                    line-height: 18px;
+                                "
+                            >
+                                © {{ current_year }} League OS.
+                                This is an automated security message.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+
+                <table
+                    role="presentation"
+                    class="email-container"
+                    width="600"
+                    cellspacing="0"
+                    cellpadding="0"
+                    border="0"
+                    style="width: 600px; max-width: 600px;"
+                >
+                    <tr>
+                        <td
+                            align="center"
+                            style="
+                                padding: 16px 24px 0;
+                                color: #9295a4;
+                                font-size: 11px;
+                                line-height: 18px;
+                            "
+                        >
+                            This transactional email was sent to
+                            {{ recipient_email }}.
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
