@@ -146,9 +146,13 @@ class RoleApproval(models.Model):
         REJECTED = "REJECTED", "Rejected"
 
     user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="role_approvals"
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="role_approvals",
     )
-    requested_role = models.CharField(max_length=50)
+    requested_role = models.CharField(max_length=50, default="")
     reason = models.TextField(blank=True)
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PENDING
@@ -163,7 +167,8 @@ class RoleApproval(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"{self.user.email} - {self.requested_role} - {self.status}"
+        user_email = self.user.email if self.user else "unknown"
+        return f"{user_email} - {self.requested_role} - {self.status}"
 
 
 class ClubAdminScope(models.Model):
@@ -310,8 +315,8 @@ class InterestPreference(models.Model):
 
 class Follow(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="follows")
-    content_type = models.CharField(max_length=50)
-    object_id = models.PositiveIntegerField()
+    content_type = models.CharField(max_length=50, default="")
+    object_id = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -324,8 +329,8 @@ class Follow(models.Model):
 
 class FeedItem(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="feed_items")
-    content_type = models.CharField(max_length=50)
-    object_id = models.PositiveIntegerField()
+    content_type = models.CharField(max_length=50, default="")
+    object_id = models.PositiveIntegerField(default=0)
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     image = models.ImageField(upload_to="feed/", blank=True, null=True)
@@ -355,19 +360,24 @@ class Wallet(models.Model):
 
 class PaymentHistory(models.Model):
     wallet = models.ForeignKey(
-        Wallet, on_delete=models.CASCADE, related_name="payments"
+        Wallet,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="payments",
     )
-    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     currency = models.CharField(max_length=10, default="UGX")
-    status = models.CharField(max_length=30)
-    reference = models.CharField(max_length=100)
+    status = models.CharField(max_length=30, default="PENDING")
+    reference = models.CharField(max_length=100, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"{self.wallet.user.email} payment {self.reference}"
+        user_email = self.wallet.user.email if self.wallet else "unknown"
+        return f"{user_email} payment {self.reference}"
 
 
 class Notification(models.Model):
