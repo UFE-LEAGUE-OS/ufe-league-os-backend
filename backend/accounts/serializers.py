@@ -470,6 +470,30 @@ class FeedItemSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "created_at")
 
 
+class NotificationPreferenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationPreference
+        fields = (
+            "id", "user", "email_notifications", "push_notifications",
+            "membership_updates", "ticket_updates", "sponsorship_updates", "governance_updates",
+        )
+        read_only_fields = ("id", "user",)
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ("id", "user", "category", "title", "message", "is_read", "created_at", "updated_at")
+        read_only_fields = ("id", "user", "created_at", "updated_at")
+
+
+class WalletSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Wallet
+        fields = ("id", "user", "balance", "currency", "created_at", "updated_at")
+        read_only_fields = ("id", "user", "created_at", "updated_at")
+
+
 class InterestPreferenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = InterestPreference
