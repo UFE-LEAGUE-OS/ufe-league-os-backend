@@ -263,13 +263,22 @@ class Venue(models.Model):
 class NotificationPreference(models.Model):
     class EventType(models.TextChoices):
         SYSTEM = "SYSTEM", "System"
-        MEMBERSHIP = "MEMBERSHIP", "Membership"
+        MATCH_REMINDER = "MATCH_REMINDER", "Match Reminder"
+        SCORE_UPDATE = "SCORE_UPDATE", "Score Update"
+        FOLLOWED_TEAM_NEWS = "FOLLOWED_TEAM_NEWS", "Followed Team News"
+        STANDINGS_CHANGE = "STANDINGS_CHANGE", "Standings Change"
         TICKET_UPDATES = "TICKET_UPDATES", "Ticket Updates"
-        SPONSORSHIP = "SPONSORSHIP", "Sponsorship"
+        TICKET_OFFER = "TICKET_OFFER", "Ticket Offer"
+        MEMBERSHIP_UPDATES = "MEMBERSHIP_UPDATES", "Membership Updates"
+        SPONSORSHIP_UPDATES = "SPONSORSHIP_UPDATES", "Sponsorship Updates"
+        FANTASY_UPDATES = "FANTASY_UPDATES", "Fantasy Updates"
+        LEAGUE_NEWS = "LEAGUE_NEWS", "League News"
+        CLUB_NEWS = "CLUB_NEWS", "Club News"
+        GENERAL_NEWS = "GENERAL_NEWS", "General News"
+        MARKETING_UPDATES = "MARKETING_UPDATES", "Marketing Updates"
         GOVERNANCE = "GOVERNANCE", "Governance"
-        CLUB = "CLUB", "Club"
 
-    user = models.OneToOneField(
+    user = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="notification_preferences"
     )
     event_type = models.CharField(
@@ -278,13 +287,12 @@ class NotificationPreference(models.Model):
     email_enabled = models.BooleanField(default=True)
     push_enabled = models.BooleanField(default=True)
     sms_enabled = models.BooleanField(default=False)
-    membership_updates = models.BooleanField(default=True)
-    ticket_updates = models.BooleanField(default=True)
-    sponsorship_updates = models.BooleanField(default=True)
-    governance_updates = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["user__email"]
+        ordering = ["user__email", "event_type"]
+        unique_together = ("user", "event_type")
 
     def __str__(self):
         return f"{self.user.email} notification preferences"
@@ -369,6 +377,14 @@ class Wallet(models.Model):
     def __str__(self):
         return f"{self.user.email} wallet"
 
+    @property
+    def stored_balance_enabled(self):
+        return False
+
+    @property
+    def balance_note(self):
+        return "League OS wallet does not currently store user funds."
+
 
 class PaymentHistory(models.Model):
     class PaymentType(models.TextChoices):
@@ -427,7 +443,10 @@ class Notification(models.Model):
         MEMBERSHIP = "MEMBERSHIP", "Membership"
         TICKET = "TICKET", "Ticket"
         TICKETING = "TICKETING", "Ticketing"
+        PAYMENT = "PAYMENT", "Payment"
         SPONSORSHIP = "SPONSORSHIP", "Sponsorship"
+        FANTASY = "FANTASY", "Fantasy"
+        MATCH = "MATCH", "Match"
         GOVERNANCE = "GOVERNANCE", "Governance"
         CLUB = "CLUB", "Club"
 
@@ -441,17 +460,33 @@ class Notification(models.Model):
         on_delete=models.CASCADE,
         related_name="notifications",
     )
+    event_type = models.CharField(
+        max_length=40,
+        choices=NotificationPreference.EventType.choices,
+        default=NotificationPreference.EventType.SYSTEM,
+    )
     category = models.CharField(
         max_length=30, choices=Category.choices, default=Category.SYSTEM
     )
+    priority = models.CharField(
+        max_length=20, choices=Priority.choices, default=Priority.NORMAL
+    )
     title = models.CharField(max_length=150)
     message = models.TextField()
+    action_url = models.CharField(max_length=500, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
     is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "is_read", "created_at"]),
+            models.Index(fields=["user", "category", "created_at"]),
+            models.Index(fields=["event_type"]),
+        ]
 
     def __str__(self):
         return f"{self.user.email} - {self.title}"

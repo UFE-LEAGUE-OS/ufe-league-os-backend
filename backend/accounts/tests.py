@@ -10,7 +10,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .google_auth import InvalidGoogleTokenError
+from .google_auth import GoogleEmailNotVerifiedError, InvalidGoogleTokenError
 from .models import EmailOTP
 
 User = get_user_model()
@@ -280,6 +280,43 @@ class AuthAPITests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
+
+    def test_login_with_public_handle_is_case_insensitive(self):
+        user = User.objects.create_user(
+            email="handle-login@example.com",
+            public_handle="league-fan",
+            password="StrongPass123",
+            first_name="Handle",
+            last_name="Login",
+            is_email_verified=True,
+        )
+
+        response = self.client.post(
+            "/api/accounts/login/",
+            {"identifier": "LEAGUE-FAN", "password": "StrongPass123"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("access", response.data)
+        self.assertIn("refresh", response.data)
+        self.assertEqual(response.data["user"]["id"], user.id)
+
+    def test_unknown_public_handle_uses_generic_credentials_error(self):
+        handle_response = self.client.post(
+            "/api/accounts/login/",
+            {"identifier": "unknown-handle", "password": "StrongPass123"},
+            format="json",
+        )
+        email_response = self.client.post(
+            "/api/accounts/login/",
+            {"identifier": "unknown@example.com", "password": "StrongPass123"},
+            format="json",
+        )
+
+        self.assertEqual(handle_response.status_code, 400)
+        self.assertEqual(handle_response.data, email_response.data)
+        self.assertIn("Invalid login credentials.", str(handle_response.data))
 
     def test_unverified_user_cannot_login_and_receives_no_tokens(self):
         User.objects.create_user(
@@ -1215,6 +1252,44 @@ class GoogleAuthAPITests(TestCase):
         self.assertTrue(user.is_email_verified)
 
     @patch("accounts.serializers.verify_google_id_token")
+    def test_google_auth_accepts_frontend_token_alias(self, mock_verify):
+        user = User.objects.create_user(
+            email="googleuser@gmail.com",
+            password="SomePassword123",
+            first_name="Google",
+            last_name="User",
+        )
+        mock_verify.return_value = MOCK_GOOGLE_PAYLOAD
+
+        response = self.client.post(
+            "/api/accounts/google/",
+            {"token": "frontend-google-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_verify.assert_called_once_with("frontend-google-token")
+        self.assertIn("access", response.data)
+        self.assertIn("refresh", response.data)
+        self.assertEqual(response.data["user"]["id"], user.id)
+
+    @patch("accounts.serializers.verify_google_id_token")
+    def test_google_auth_prefers_id_token_when_both_are_supplied(self, mock_verify):
+        mock_verify.return_value = MOCK_GOOGLE_PAYLOAD
+
+        response = self.client.post(
+            "/api/accounts/google/",
+            {
+                "id_token": "preferred-id-token",
+                "token": "fallback-token",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        mock_verify.assert_called_once_with("preferred-id-token")
+
+    @patch("accounts.serializers.verify_google_id_token")
     def test_google_auth_existing_user_empty_name_filled_from_google(self, mock_verify):
         """Test that an existing user with empty name gets it filled from Google."""
         User.objects.create_user(
@@ -1299,6 +1374,41 @@ class GoogleAuthAPITests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("id_token", response.data)
 
+    @patch("accounts.serializers.verify_google_id_token")
+    def test_google_auth_rejects_unverified_google_email(self, mock_verify):
+        mock_verify.side_effect = GoogleEmailNotVerifiedError(
+            "Google account email is not verified."
+        )
+
+        response = self.client.post(
+            "/api/accounts/google/",
+            {"id_token": "unverified-google-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("id_token", response.data)
+        self.assertFalse(User.objects.filter(email="googleuser@gmail.com").exists())
+        self.assertNotIn("access", response.data)
+        self.assertNotIn("refresh", response.data)
+
+    @patch("accounts.serializers.verify_google_id_token")
+    def test_google_auth_rejects_invalid_frontend_token_alias(self, mock_verify):
+        mock_verify.side_effect = InvalidGoogleTokenError("Token is invalid.")
+
+        response = self.client.post(
+            "/api/accounts/google/",
+            {"token": "invalid-frontend-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("id_token", response.data)
+        mock_verify.assert_called_once_with("invalid-frontend-token")
+        self.assertFalse(User.objects.filter(email="googleuser@gmail.com").exists())
+        self.assertNotIn("access", response.data)
+        self.assertNotIn("refresh", response.data)
+
 
 class NotificationWalletPaymentCenterAPITests(TestCase):
     """Tests for notification preferences and MVP wallet/payment center APIs."""
@@ -1339,16 +1449,31 @@ class NotificationWalletPaymentCenterAPITests(TestCase):
             response.data["count"],
             len(NotificationPreference.EventType.choices),
         )
+        self.assertEqual(
+            len(response.data["preferences"]),
+            len(NotificationPreference.EventType.choices),
+        )
 
-        event_types = {
+        event_types = [
             preference["event_type"] for preference in response.data["preferences"]
-        }
+        ]
+        self.assertEqual(len(event_types), len(set(event_types)))
+        for preference in response.data["preferences"]:
+            with self.subTest(event_type=preference["event_type"]):
+                self.assertEqual(
+                    preference["event_label"],
+                    NotificationPreference.EventType(preference["event_type"]).label,
+                )
 
         self.assertIn(NotificationPreference.EventType.TICKET_UPDATES, event_types)
         self.assertIn(NotificationPreference.EventType.MEMBERSHIP_UPDATES, event_types)
         self.assertIn(NotificationPreference.EventType.SPONSORSHIP_UPDATES, event_types)
         self.assertIn(NotificationPreference.EventType.FANTASY_UPDATES, event_types)
         self.assertIn(NotificationPreference.EventType.MARKETING_UPDATES, event_types)
+        self.assertIn(NotificationPreference.EventType.CLUB_NEWS, event_types)
+        self.assertNotIn("MEMBERSHIP", event_types)
+        self.assertNotIn("SPONSORSHIP", event_types)
+        self.assertNotIn("CLUB", event_types)
 
     def test_notification_preferences_me_endpoint_updates_single_preference(self):
         from .models import NotificationPreference
@@ -1366,6 +1491,10 @@ class NotificationWalletPaymentCenterAPITests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data["updated"]), 1)
+        self.assertEqual(
+            response.data["updated"][0]["event_label"],
+            NotificationPreference.EventType.MARKETING_UPDATES.label,
+        )
 
         preference = NotificationPreference.objects.get(
             user=self.user,

@@ -20,7 +20,6 @@ from dashboards.models import (
 from .models import (
     Ticket,
     TicketOrder,
-    TicketOrderItem,
     TicketType,
     TicketValidationLog,
 )
@@ -880,13 +879,6 @@ class TicketingAdminAPITests(TicketingTestMixin, APITestCase):
         # create order item by paying order
         order.status = TicketOrder.Status.PAID
         order.save(update_fields=["status"])
-        TicketOrderItem.objects.create(
-            order=order,
-            ticket_type=self.ticket_type,
-            quantity=1,
-            unit_price=self.ticket_type.price,
-            total_price=self.ticket_type.price,
-        )
         response = self.client.delete(
             f"/api/ticketing/admin/ticket-types/{self.ticket_type.id}/delete/"
         )

@@ -9,14 +9,24 @@ from .models import (
     NotificationPreference,
     InterestPreference,
     RoleApproval,
-    Wallet,
-    PaymentHistory,
     FeedItem,
     Venue,
 )
-from .google_auth import verify_google_id_token  # noqa: F401
+from .google_auth import (
+    GoogleEmailNotVerifiedError,
+    InvalidGoogleTokenError,
+    verify_google_id_token,
+)
 
 User = get_user_model()
+
+MAX_AVATAR_SIZE_BYTES = 2 * 1024 * 1024
+ALLOWED_AVATAR_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+}
 
 
 def normalize_phone_number(phone_number):
@@ -207,8 +217,38 @@ class RegisterSerializer(serializers.Serializer):
 
 
 class GoogleAuthSerializer(serializers.Serializer):
-    token = serializers.CharField()
+    id_token = serializers.CharField(required=False, write_only=True)
+    token = serializers.CharField(required=False, write_only=True)
     invitation_token = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        raw_token = attrs.get("id_token") or attrs.get("token")
+        if not raw_token:
+            raise serializers.ValidationError(
+                {"id_token": "A Google ID token is required."}
+            )
+
+        try:
+            payload = verify_google_id_token(raw_token)
+        except (InvalidGoogleTokenError, GoogleEmailNotVerifiedError) as exc:
+            raise serializers.ValidationError({"id_token": str(exc)}) from exc
+
+        email = payload.get("email", "").strip().lower()
+        if not email:
+            raise serializers.ValidationError(
+                {"id_token": "Google account does not have an email address."}
+            )
+
+        attrs["email"] = email
+        attrs["first_name"] = payload.get("given_name", "").strip()
+        attrs["last_name"] = payload.get("family_name", "").strip()
+
+        if not attrs["first_name"] and not attrs["last_name"]:
+            name_parts = payload.get("name", "").strip().split(" ", 1)
+            attrs["first_name"] = name_parts[0] if name_parts else ""
+            attrs["last_name"] = name_parts[1] if len(name_parts) > 1 else ""
+
+        return attrs
 
 
 class BecomeSponsorSerializer(serializers.Serializer):
@@ -320,6 +360,8 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = (
+            "first_name",
+            "last_name",
             "phone_number",
             "location",
             "date_of_birth",
@@ -345,6 +387,17 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             )
 
         return phone_number
+
+    def validate_avatar(self, value):
+        if value is None:
+            return value
+        if value.size > MAX_AVATAR_SIZE_BYTES:
+            raise serializers.ValidationError("Avatar file size must not exceed 2MB.")
+        if getattr(value, "content_type", "") not in ALLOWED_AVATAR_CONTENT_TYPES:
+            raise serializers.ValidationError(
+                "Avatar must be a JPEG, PNG, WEBP, or GIF image."
+            )
+        return value
 
     def update(self, instance, validated_data):
         for attr, value in validated_data.items():
@@ -394,30 +447,34 @@ class ClubSerializer(serializers.ModelSerializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    identifier = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
-        email = attrs.get("email", "").strip().lower()
+        identifier = attrs.get("identifier", "").strip()
         password = attrs.get("password", "")
 
-        try:
-            user = User.objects.get(email__iexact=email)
-        except User.DoesNotExist:
-            raise serializers.ValidationError(
-                {"email": "No user found with this email address."}
-            )
-
-        if not user.check_password(password):
-            raise serializers.ValidationError({"password": "Invalid password."})
+        user = self.get_user_by_identifier(identifier)
+        if user is None or not user.check_password(password):
+            raise serializers.ValidationError("Invalid login credentials.")
 
         if not user.is_active:
-            raise serializers.ValidationError(
-                {"email": "This account has been deactivated."}
-            )
+            raise serializers.ValidationError("This account is inactive.")
 
         attrs["user"] = user
         return attrs
+
+    @staticmethod
+    def get_user_by_identifier(identifier):
+        if "@" in identifier:
+            return User.objects.filter(email__iexact=identifier).first()
+
+        phone_number = normalize_phone_number(identifier)
+        user = User.objects.filter(phone_number=phone_number).first()
+        if user:
+            return user
+
+        return User.objects.filter(public_handle__iexact=identifier).first()
 
 
 class PasswordResetRequestSerializer(serializers.Serializer):
@@ -425,19 +482,28 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
-    code = serializers.CharField()
-    new_password = serializers.CharField(write_only=True)
+    email = serializers.EmailField()
+    code = serializers.CharField(max_length=6)
+    password = serializers.CharField(write_only=True)
     confirm_password = serializers.CharField(write_only=True)
 
+    def validate_code(self, value):
+        code = value.strip()
+        if not code.isdigit():
+            raise serializers.ValidationError("OTP code must contain digits only.")
+        if len(code) != 6:
+            raise serializers.ValidationError("OTP code must be 6 digits long.")
+        return code
+
     def validate(self, attrs):
-        if attrs["new_password"] != attrs["confirm_password"]:
+        if attrs["password"] != attrs["confirm_password"]:
             raise serializers.ValidationError(
                 {"confirm_password": "Passwords do not match."}
             )
         try:
-            validate_password(attrs["new_password"])
+            validate_password(attrs["password"])
         except DjangoValidationError as e:
-            raise serializers.ValidationError({"new_password": list(e.messages)}) from e
+            raise serializers.ValidationError({"password": list(e.messages)}) from e
         return attrs
 
 
@@ -465,19 +531,20 @@ class RoleApprovalReviewSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=RoleApproval.Status.choices)
 
 
-class CombinedPaymentHistoryItemSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PaymentHistory
-        fields = (
-            "id",
-            "wallet",
-            "amount",
-            "currency",
-            "status",
-            "reference",
-            "created_at",
-        )
-        read_only_fields = ("id", "created_at")
+class CombinedPaymentHistoryItemSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    source = serializers.CharField()
+    source_id = serializers.IntegerField(required=False)
+    payment_type = serializers.CharField()
+    payment_type_label = serializers.CharField()
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    currency = serializers.CharField()
+    status = serializers.CharField()
+    status_label = serializers.CharField()
+    reference = serializers.CharField(allow_blank=True)
+    description = serializers.CharField(allow_blank=True)
+    metadata = serializers.DictField()
+    created_at = serializers.DateTimeField(required=False)
 
 
 class ClubProfileUpdateSerializer(serializers.ModelSerializer):
@@ -524,18 +591,23 @@ class FeedItemSerializer(serializers.ModelSerializer):
 
 
 class NotificationPreferenceSerializer(serializers.ModelSerializer):
+    event_label = serializers.CharField(
+        source="get_event_type_display",
+        read_only=True,
+    )
+
     class Meta:
         model = NotificationPreference
         fields = (
             "id",
             "user",
+            "event_type",
+            "event_label",
             "email_enabled",
             "push_enabled",
             "sms_enabled",
-            "membership_updates",
-            "ticket_updates",
-            "sponsorship_updates",
-            "governance_updates",
+            "created_at",
+            "updated_at",
         )
         read_only_fields = (
             "id",
@@ -544,26 +616,52 @@ class NotificationPreferenceSerializer(serializers.ModelSerializer):
 
 
 class NotificationSerializer(serializers.ModelSerializer):
+    event_label = serializers.CharField(source="get_event_type_display", read_only=True)
+    category_label = serializers.CharField(
+        source="get_category_display", read_only=True
+    )
+    priority_label = serializers.CharField(
+        source="get_priority_display", read_only=True
+    )
+
     class Meta:
         model = Notification
         fields = (
             "id",
-            "user",
+            "event_type",
+            "event_label",
             "category",
+            "category_label",
+            "priority",
+            "priority_label",
             "title",
             "message",
+            "action_url",
+            "metadata",
             "is_read",
+            "read_at",
             "created_at",
-            "updated_at",
         )
-        read_only_fields = ("id", "user", "created_at", "updated_at")
+        read_only_fields = fields
 
 
-class WalletSummarySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Wallet
-        fields = ("id", "user", "balance", "currency", "created_at", "updated_at")
-        read_only_fields = ("id", "user", "created_at", "updated_at")
+class WalletSummarySerializer(serializers.Serializer):
+    stored_balance_enabled = serializers.BooleanField()
+    balance = serializers.DecimalField(max_digits=14, decimal_places=2)
+    balance_note = serializers.CharField()
+    currency = serializers.CharField()
+    total_spent = serializers.DecimalField(max_digits=14, decimal_places=2)
+    successful_payments_count = serializers.IntegerField()
+    pending_payments_count = serializers.IntegerField()
+    failed_payments_count = serializers.IntegerField()
+    refunded_payments_count = serializers.IntegerField()
+    tickets_count = serializers.IntegerField()
+    memberships_count = serializers.IntegerField()
+    sponsorships_count = serializers.IntegerField()
+    recent_payments = CombinedPaymentHistoryItemSerializer(many=True)
+    tickets = serializers.ListField(child=serializers.DictField())
+    memberships = serializers.ListField(child=serializers.DictField())
+    sponsorships = serializers.ListField(child=serializers.DictField())
 
 
 class InterestPreferenceSerializer(serializers.ModelSerializer):
