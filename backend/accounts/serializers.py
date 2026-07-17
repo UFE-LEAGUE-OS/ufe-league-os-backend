@@ -14,6 +14,7 @@ from .models import (
     FeedItem,
     Venue,
 )
+from .google_auth import verify_google_id_token
 
 User = get_user_model()
 
@@ -394,6 +395,7 @@ class ClubSerializer(serializers.ModelSerializer):
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
+    password = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
 
@@ -402,7 +404,7 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
-    token = serializers.CharField()
+    code = serializers.CharField()
     new_password = serializers.CharField(write_only=True)
     confirm_password = serializers.CharField(write_only=True)
 
