@@ -272,7 +272,9 @@ class NotificationPreference(models.Model):
     user = models.OneToOneField(
         User, on_delete=models.CASCADE, related_name="notification_preferences"
     )
-    event_type = models.CharField(max_length=30, choices=EventType.choices, default=EventType.SYSTEM)
+    event_type = models.CharField(
+        max_length=30, choices=EventType.choices, default=EventType.SYSTEM
+    )
     email_enabled = models.BooleanField(default=True)
     push_enabled = models.BooleanField(default=True)
     membership_updates = models.BooleanField(default=True)
@@ -388,10 +390,14 @@ class PaymentHistory(models.Model):
         on_delete=models.CASCADE,
         related_name="payments",
     )
-    payment_type = models.CharField(max_length=30, choices=PaymentType.choices, default=PaymentType.LEGACY)
+    payment_type = models.CharField(
+        max_length=30, choices=PaymentType.choices, default=PaymentType.LEGACY
+    )
     amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     currency = models.CharField(max_length=10, default="UGX")
-    status = models.CharField(max_length=30, choices=PaymentStatus.choices, default=PaymentStatus.PENDING)
+    status = models.CharField(
+        max_length=30, choices=PaymentStatus.choices, default=PaymentStatus.PENDING
+    )
     reference = models.CharField(max_length=100, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
