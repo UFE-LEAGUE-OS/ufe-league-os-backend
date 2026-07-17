@@ -481,4 +481,5 @@ class EmailOTP(models.Model):
     def is_expired(self):
         """Check if the OTP has expired."""
         from django.utils import timezone
+
         return timezone.now() > self.expires_at
