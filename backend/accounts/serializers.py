@@ -397,6 +397,28 @@ class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
 
+    def validate(self, attrs):
+        email = attrs.get("email", "").strip().lower()
+        password = attrs.get("password", "")
+
+        try:
+            user = User.objects.get(email__iexact=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError(
+                {"email": "No user found with this email address."}
+            )
+
+        if not user.check_password(password):
+            raise serializers.ValidationError({"password": "Invalid password."})
+
+        if not user.is_active:
+            raise serializers.ValidationError(
+                {"email": "This account has been deactivated."}
+            )
+
+        attrs["user"] = user
+        return attrs
+
 
 class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()

@@ -391,6 +391,13 @@ class PaymentHistory(models.Model):
         on_delete=models.CASCADE,
         related_name="payments",
     )
+    user = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="payment_histories",
+    )
     payment_type = models.CharField(
         max_length=30, choices=PaymentType.choices, default=PaymentType.LEGACY
     )
@@ -400,6 +407,8 @@ class PaymentHistory(models.Model):
         max_length=30, choices=PaymentStatus.choices, default=PaymentStatus.PENDING
     )
     reference = models.CharField(max_length=100, default="")
+    description = models.CharField(max_length=255, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -416,6 +425,7 @@ class Notification(models.Model):
     class Category(models.TextChoices):
         SYSTEM = "SYSTEM", "System"
         MEMBERSHIP = "MEMBERSHIP", "Membership"
+        TICKET = "TICKET", "Ticket"
         TICKETING = "TICKETING", "Ticketing"
         SPONSORSHIP = "SPONSORSHIP", "Sponsorship"
         GOVERNANCE = "GOVERNANCE", "Governance"
