@@ -277,6 +277,7 @@ class NotificationPreference(models.Model):
     )
     email_enabled = models.BooleanField(default=True)
     push_enabled = models.BooleanField(default=True)
+    sms_enabled = models.BooleanField(default=False)
     membership_updates = models.BooleanField(default=True)
     ticket_updates = models.BooleanField(default=True)
     sponsorship_updates = models.BooleanField(default=True)

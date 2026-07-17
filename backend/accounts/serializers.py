@@ -509,6 +509,7 @@ class NotificationPreferenceSerializer(serializers.ModelSerializer):
             "user",
             "email_enabled",
             "push_enabled",
+            "sms_enabled",
             "membership_updates",
             "ticket_updates",
             "sponsorship_updates",
