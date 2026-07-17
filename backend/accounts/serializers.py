@@ -14,7 +14,7 @@ from .models import (
     FeedItem,
     Venue,
 )
-from .google_auth import verify_google_id_token
+from .google_auth import verify_google_id_token  # noqa: F401
 
 User = get_user_model()
 
@@ -395,7 +395,6 @@ class ClubSerializer(serializers.ModelSerializer):
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    password = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
 
