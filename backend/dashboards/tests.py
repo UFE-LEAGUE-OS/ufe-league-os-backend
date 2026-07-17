@@ -99,7 +99,7 @@ class DashboardAPITests(TestCase):
         )
         self.assertEqual(response.data["dashboard"]["title"], "Fan Dashboard")
 
-    def test_referee_my_dashboard_uses_restricted_frontend_route(self):
+    def test_unscoped_referee_my_dashboard_has_no_destination(self):
         user = self.create_user(
             "referee-dashboard-route@example.com",
             User.Role.REFEREE,
@@ -109,25 +109,27 @@ class DashboardAPITests(TestCase):
         response = self.client.get("/api/dashboards/me/")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data["frontend_dashboard_route"])
+        self.assertIsNone(response.data["backend_dashboard_route"])
         self.assertEqual(
-            response.data["frontend_dashboard_route"],
-            "/dashboard/referee",
-        )
-        self.assertEqual(
-            response.data["backend_dashboard_route"],
-            "/api/dashboards/referee/",
+            response.data["user"]["dashboard_access"],
+            {
+                "version": 1,
+                "default_entitlement_id": None,
+                "entitlements": [],
+            },
         )
 
     def test_all_roles_can_resolve_my_dashboard(self):
         role_data = [
             (User.Role.FAN, "/api/dashboards/fan/"),
-            (User.Role.CLUB_ADMIN, "/api/dashboards/club-admin/"),
-            (User.Role.LEAGUE_ADMIN, "/api/dashboards/league-admin/"),
-            (User.Role.UNION_ADMIN, "/api/dashboards/union-admin/"),
+            (User.Role.CLUB_ADMIN, None),
+            (User.Role.LEAGUE_ADMIN, None),
+            (User.Role.UNION_ADMIN, None),
             (User.Role.SUPER_ADMIN, "/api/dashboards/super-admin/"),
-            (User.Role.REFEREE, "/api/dashboards/referee/"),
-            (User.Role.TICKETING_OFFICER, "/api/dashboards/ticketing-officer/"),
-            (User.Role.SPONSOR, "/api/dashboards/sponsor/"),
+            (User.Role.REFEREE, None),
+            (User.Role.TICKETING_OFFICER, None),
+            (User.Role.SPONSOR, None),
         ]
 
         for index, role_info in enumerate(role_data):

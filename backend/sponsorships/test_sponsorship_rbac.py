@@ -82,7 +82,25 @@ class SponsorshipRBACRegressionTests(TestCase):
         }
 
         self.assertIn(User.Role.FAN, available_roles)
-        self.assertIn(User.Role.SPONSOR, available_roles)
+        self.assertNotIn(User.Role.SPONSOR, available_roles)
+        self.assertEqual(
+            dashboard_response.data["user"]["dashboard_access"],
+            {
+                "version": 1,
+                "default_entitlement_id": "fan",
+                "entitlements": [
+                    {
+                        "id": "fan",
+                        "dashboard": "FAN",
+                        "route": "/dashboard/fan",
+                        "scope_type": "ACCOUNT",
+                        "scope_id": user.id,
+                        "workspace_role": None,
+                        "permissions": [],
+                    }
+                ],
+            },
+        )
 
     def test_existing_user_cannot_create_duplicate_individual_sponsor_account(self):
         user = self.create_fan()

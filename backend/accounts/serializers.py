@@ -3,6 +3,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
+from .dashboard_entitlements import resolve_dashboard_access
 from .google_auth import verify_google_id_token, InvalidGoogleTokenError
 from .models import (
     Notification,
@@ -144,6 +145,120 @@ class UserSerializer(serializers.ModelSerializer):
             "id": obj.club.id,
             "name": obj.club.name,
         }
+
+
+def get_current_user_dashboard_access(user, context=None):
+    """Resolve dashboard access once for a current-user response context."""
+
+    context = context if context is not None else {}
+    cached_user_id = context.get("_dashboard_access_user_id")
+    if cached_user_id == user.pk and "_dashboard_access" in context:
+        return context["_dashboard_access"]
+
+    dashboard_access = resolve_dashboard_access(user)
+    context["_dashboard_access_user_id"] = user.pk
+    context["_dashboard_access"] = dashboard_access
+    return dashboard_access
+
+
+class CurrentUserSerializer(UserSerializer):
+    """Safe authenticated-current-user representation with dashboard access."""
+
+    dashboard_access = serializers.SerializerMethodField()
+
+    class Meta(UserSerializer.Meta):
+        fields = (*UserSerializer.Meta.fields, "dashboard_access")
+        read_only_fields = (*UserSerializer.Meta.read_only_fields, "dashboard_access")
+
+    def get_dashboard_access(self, obj):
+        return get_current_user_dashboard_access(obj, self.context)
+
+
+LEGACY_BACKEND_ROUTES = {
+    User.Role.FAN: "/api/dashboards/fan/",
+    User.Role.SPONSOR: "/api/dashboards/sponsor/",
+    User.Role.SUPER_ADMIN: "/api/dashboards/super-admin/",
+    User.Role.LEAGUE_ADMIN: "/api/dashboards/league-admin/",
+    User.Role.CLUB_ADMIN: "/api/dashboards/club-admin/",
+    User.Role.REFEREE: "/api/dashboards/union-admin/",
+    User.Role.UNION_ADMIN: "/api/dashboards/union-admin/",
+    User.Role.TICKETING_OFFICER: "/api/dashboards/ticketing-officer/",
+}
+
+
+def entitlement_legacy_role(entitlement):
+    """Translate an entitlement dashboard into a valid legacy role selector."""
+
+    dashboard = entitlement["dashboard"]
+    if dashboard == "UNION_WORKSPACE":
+        if entitlement["workspace_role"] == "MATCH_OFFICIAL":
+            return User.Role.REFEREE
+        if entitlement["workspace_role"] == "TICKETING_OFFICER":
+            return User.Role.TICKETING_OFFICER
+        return User.Role.UNION_ADMIN
+    return {
+        "FAN": User.Role.FAN,
+        "SPONSOR": User.Role.SPONSOR,
+        "SUPER_ADMIN": User.Role.SUPER_ADMIN,
+        "LEAGUE_ADMIN": User.Role.LEAGUE_ADMIN,
+        "CLUB_ADMIN": User.Role.CLUB_ADMIN,
+        "TICKETING_OFFICER": User.Role.TICKETING_OFFICER,
+    }.get(dashboard)
+
+
+def entitlement_role_display(entitlement, role):
+    """Return the real entitlement role label, independent of its selector."""
+
+    if entitlement["dashboard"] == "UNION_WORKSPACE":
+        from dashboards.models import UnionWorkspaceMembership
+
+        return dict(UnionWorkspaceMembership.Role.choices).get(
+            entitlement["workspace_role"],
+            entitlement["workspace_role"],
+        )
+    return dict(User.Role.choices).get(role, role)
+
+
+def present_dashboard_entitlement(entitlement):
+    """Build one legacy-compatible dashboard selector from an entitlement."""
+
+    role = entitlement_legacy_role(entitlement)
+    backend_route = (
+        "/api/dashboards/union-admin/"
+        if entitlement["dashboard"] == "UNION_WORKSPACE"
+        else LEGACY_BACKEND_ROUTES.get(role)
+    )
+    return {
+        "role": role,
+        "role_display": entitlement_role_display(entitlement, role),
+        "route": entitlement["route"],
+        "backend_route": backend_route,
+        "entitlement_id": entitlement["id"],
+    }
+
+
+def present_dashboard_access(dashboard_access):
+    """Present all entitlements and the default legacy compatibility entry."""
+
+    entries = [
+        present_dashboard_entitlement(item) for item in dashboard_access["entitlements"]
+    ]
+    default_id = dashboard_access["default_entitlement_id"]
+    default_entry = next(
+        (item for item in entries if item["entitlement_id"] == default_id),
+        None,
+    )
+    return default_entry, entries
+
+
+def select_dashboard_route_for_role(entries, role):
+    """Select a shared dashboard shell without selecting a workspace."""
+
+    matching_entries = [item for item in entries if item["role"] == role]
+    routes = {(item["route"], item["backend_route"]) for item in matching_entries}
+    if len(routes) != 1:
+        return None, None
+    return routes.pop()
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -1004,11 +1119,21 @@ class SwitchWorkspaceSerializer(serializers.Serializer):
         if not user:
             raise serializers.ValidationError("User context is required.")
 
-        if value not in user.roles:
+        dashboard_access = get_current_user_dashboard_access(user, self.context)
+        matching_entitlements = self._matching_entitlements(
+            value, dashboard_access["entitlements"]
+        )
+        if not matching_entitlements:
             raise serializers.ValidationError(
                 f"You do not have access to the '{value}' workspace."
             )
+
+        self.context["_matching_entitlements"] = matching_entitlements
         return value
+
+    @staticmethod
+    def _matching_entitlements(role, entitlements):
+        return [item for item in entitlements if entitlement_legacy_role(item) == role]
 
 
 # ---------------------------------------------------------------------------

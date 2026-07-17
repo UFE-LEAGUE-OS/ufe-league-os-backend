@@ -9,6 +9,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.dashboard_entitlements import resolve_dashboard_access
 from accounts.serializers import UserSerializer
 
 from .models import (
@@ -102,7 +103,6 @@ def sponsor_register_view(request):
     if serializer.is_valid():
         sponsor_account = serializer.save()
         user = sponsor_account.owner
-
         return Response(
             {
                 "message": (
@@ -154,6 +154,7 @@ def sponsor_accounts_view(request):
 
     if serializer.is_valid():
         sponsor_account = serializer.save()
+        dashboard_access = resolve_dashboard_access(request.user)
 
         return Response(
             {
@@ -162,6 +163,7 @@ def sponsor_accounts_view(request):
                     sponsor_account,
                     context={"request": request},
                 ).data,
+                "dashboard_access": dashboard_access,
             },
             status=status.HTTP_201_CREATED,
         )

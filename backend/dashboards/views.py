@@ -7,6 +7,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from accounts.models import Club, User
+from accounts.dashboard_entitlements import resolve_dashboard_access
 from accounts.rbac import get_user_permissions, get_club_admin_sub_role
 from accounts.permissions import (
     IsAuthenticatedAudit,
@@ -22,9 +23,12 @@ from accounts.permissions import (
 from accounts.routing import (
     get_backend_dashboard_route,
     get_dashboard_route,
-    get_dashboard_routes,
 )
-from accounts.serializers import UserSerializer
+from accounts.serializers import (
+    CurrentUserSerializer,
+    present_dashboard_access,
+    select_dashboard_route_for_role,
+)
 
 from .models import (
     Competition,
@@ -181,22 +185,23 @@ DASHBOARD_CONTENT = {
         ],
     },
     User.Role.REFEREE: {
-        "title": "Referee Dashboard",
-        "description": "View match assignments, submit reports, and manage match official duties.",
+        "title": "Match Official Dashboard",
+        "description": "Manage match appointments, assigned responsibilities, reports, and availability.",
         "summary_cards": [
-            {"label": "Assignments", "value": 0},
+            {"label": "Match Appointments", "value": 0},
             {"label": "Upcoming Matches", "value": 0},
             {"label": "Reports Due", "value": 0},
-            {"label": "Completed Matches", "value": 0},
+            {"label": "Payments", "value": 0},
         ],
         "modules": [
-            "Assignments",
+            "Assigned Responsibilities",
             "Match Reports",
             "Availability",
-            "Disciplinary Notes",
+            "Documents and Certification",
+            "Allowances and Payments",
         ],
         "quick_actions": [
-            "View assignment",
+            "View match appointment",
             "Submit match report",
             "Update availability",
         ],
@@ -286,12 +291,17 @@ def build_dashboard_response(request, role, message=None):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    frontend_dashboard_route = get_dashboard_route(user)
-    backend_dashboard_route = get_backend_dashboard_route(user)
-
-    if role == User.Role.SPONSOR:
-        frontend_dashboard_route = "/dashboard/sponsor"
-        backend_dashboard_route = "/api/dashboards/sponsor/"
+    user_data = CurrentUserSerializer(
+        user,
+        context={"request": request},
+    ).data
+    dashboard_access = user_data["dashboard_access"]
+    _default_dashboard, available_dashboards = present_dashboard_access(
+        dashboard_access
+    )
+    frontend_dashboard_route, backend_dashboard_route = select_dashboard_route_for_role(
+        available_dashboards, role
+    )
 
     success_message = message or f"{content['title']} loaded successfully."
 
@@ -303,9 +313,9 @@ def build_dashboard_response(request, role, message=None):
             "dashboard_role": role,
             "frontend_dashboard_route": frontend_dashboard_route,
             "backend_dashboard_route": backend_dashboard_route,
-            "available_dashboards": get_dashboard_routes(user),
+            "available_dashboards": available_dashboards,
             "dashboard": content,
-            "user": UserSerializer(user, context={"request": request}).data,
+            "user": user_data,
         },
         status=status.HTTP_200_OK,
     )
@@ -314,12 +324,57 @@ def build_dashboard_response(request, role, message=None):
 @api_view(["GET"])
 @permission_classes([IsAuthenticatedAudit])
 def my_dashboard_view(request):
-    """Return the dashboard route and summary for the authenticated user's role"""
+    """Return dashboard content selected by the user's default entitlement."""
 
-    return build_dashboard_response(
-        request,
-        request.user.role,
-        message="Dashboard resolved successfully.",
+    user = request.user
+    user_data = CurrentUserSerializer(user, context={"request": request}).data
+    dashboard_access = user_data["dashboard_access"]
+    default_dashboard, available_dashboards = present_dashboard_access(dashboard_access)
+    default_id = dashboard_access["default_entitlement_id"]
+    default_entitlement = next(
+        (item for item in dashboard_access["entitlements"] if item["id"] == default_id),
+        None,
+    )
+
+    dashboard_role = None
+    if default_entitlement:
+        dashboard_role = {
+            "FAN": User.Role.FAN,
+            "SPONSOR": User.Role.SPONSOR,
+            "SUPER_ADMIN": User.Role.SUPER_ADMIN,
+            "LEAGUE_ADMIN": User.Role.LEAGUE_ADMIN,
+            "CLUB_ADMIN": User.Role.CLUB_ADMIN,
+            "TICKETING_OFFICER": User.Role.TICKETING_OFFICER,
+        }.get(default_entitlement["dashboard"])
+        if default_entitlement["dashboard"] == "UNION_WORKSPACE":
+            if default_entitlement["workspace_role"] == "MATCH_OFFICIAL":
+                dashboard_role = User.Role.REFEREE
+            elif default_entitlement["workspace_role"] == "TICKETING_OFFICER":
+                dashboard_role = User.Role.TICKETING_OFFICER
+            else:
+                dashboard_role = User.Role.UNION_ADMIN
+
+    return Response(
+        {
+            "message": (
+                "Dashboard resolved successfully."
+                if dashboard_role
+                else "Dashboard access is unavailable."
+            ),
+            "role": user.role,
+            "role_display": user.get_role_display(),
+            "dashboard_role": dashboard_role,
+            "frontend_dashboard_route": (
+                default_dashboard["route"] if default_dashboard else None
+            ),
+            "backend_dashboard_route": (
+                default_dashboard["backend_route"] if default_dashboard else None
+            ),
+            "available_dashboards": available_dashboards,
+            "dashboard": DASHBOARD_CONTENT.get(dashboard_role),
+            "user": user_data,
+        },
+        status=status.HTTP_200_OK,
     )
 
 
@@ -456,8 +511,15 @@ def club_admin_dashboard_view(request):
     }
 
     user = request.user
-    frontend_dashboard_route = get_dashboard_route(user)
-    backend_dashboard_route = get_backend_dashboard_route(user)
+    user_data = CurrentUserSerializer(user, context={"request": request}).data
+    dashboard_access = user_data["dashboard_access"]
+    _default_dashboard, available_dashboards = present_dashboard_access(
+        dashboard_access
+    )
+    frontend_dashboard_route, backend_dashboard_route = select_dashboard_route_for_role(
+        available_dashboards,
+        User.Role.CLUB_ADMIN,
+    )
 
     return Response(
         {
@@ -467,9 +529,9 @@ def club_admin_dashboard_view(request):
             "dashboard_role": User.Role.CLUB_ADMIN,
             "frontend_dashboard_route": frontend_dashboard_route,
             "backend_dashboard_route": backend_dashboard_route,
-            "available_dashboards": get_dashboard_routes(user),
+            "available_dashboards": available_dashboards,
             "dashboard": dashboard_content,
-            "user": UserSerializer(user, context={"request": request}).data,
+            "user": user_data,
         },
         status=status.HTTP_200_OK,
     )
@@ -1082,7 +1144,29 @@ def union_admin_switch_workspace_view(request):
         context={"request": request},
     )
 
-    return Response(serializer.data)
+    dashboard_access = resolve_dashboard_access(request.user)
+    entitlement_id = f"union-workspace-{membership.workspace_id}"
+    selected_entitlement_id = (
+        entitlement_id
+        if any(
+            item["id"] == entitlement_id for item in dashboard_access["entitlements"]
+        )
+        else None
+    )
+
+    if selected_entitlement_id is None:
+        return Response(
+            {"detail": "You do not have active dashboard access to this workspace."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    return Response(
+        {
+            **serializer.data,
+            "selected_entitlement_id": selected_entitlement_id,
+            "dashboard_access": dashboard_access,
+        }
+    )
 
 
 @api_view(["GET"])

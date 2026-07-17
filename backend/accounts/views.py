@@ -28,7 +28,9 @@ from .serializers import (
     RoleApprovalListSerializer,
     RoleApprovalReviewSerializer,
     SwitchWorkspaceSerializer,
+    CurrentUserSerializer,
     UserSerializer,
+    present_dashboard_access,
     VerifyOTPSerializer,
     ResendOTPSerializer,
     ProfileUpdateSerializer,
@@ -36,9 +38,6 @@ from .serializers import (
     PasswordResetConfirmSerializer,
 )
 from .rbac import (
-    get_backend_dashboard_route,
-    get_dashboard_route,
-    get_dashboard_routes,
     is_sensitive_role,
     create_role_approval,
     approve_role_approval,
@@ -105,6 +104,18 @@ def build_token_response(user):
     }
 
 
+def _current_user_data(user, request, dashboard_access=None):
+    context = {"request": request}
+    if dashboard_access is not None:
+        context.update(
+            {
+                "_dashboard_access_user_id": user.pk,
+                "_dashboard_access": dashboard_access,
+            }
+        )
+    return CurrentUserSerializer(user, context=context).data
+
+
 @api_view(["POST"])
 def register_view(request):
     """Register a new user and send an email verification OTP."""
@@ -168,16 +179,25 @@ def login_view(request):
             )
 
         tokens = build_token_response(user)
+        user_data = _current_user_data(user, request)
+        dashboard_access = user_data["dashboard_access"]
+        default_dashboard, _available_dashboards = present_dashboard_access(
+            dashboard_access
+        )
 
         return Response(
             {
                 "message": "Login successful.",
                 **tokens,
                 "token_type": "Bearer",
-                "user": UserSerializer(user, context={"request": request}).data,
+                "user": user_data,
                 "role": user.role,
-                "frontend_dashboard_route": get_dashboard_route(user),
-                "backend_dashboard_route": get_backend_dashboard_route(user),
+                "frontend_dashboard_route": (
+                    default_dashboard["route"] if default_dashboard else None
+                ),
+                "backend_dashboard_route": (
+                    default_dashboard["backend_route"] if default_dashboard else None
+                ),
                 "requires_email_verification": not user.is_email_verified,
                 "next_step": AuthNextStep.DASHBOARD,
             },
@@ -237,6 +257,11 @@ def google_auth_view(request):
 
         # Generate tokens
         tokens = build_token_response(user)
+        user_data = _current_user_data(user, request)
+        dashboard_access = user_data["dashboard_access"]
+        default_dashboard, _available_dashboards = present_dashboard_access(
+            dashboard_access
+        )
 
         return Response(
             {
@@ -244,10 +269,14 @@ def google_auth_view(request):
                 "is_new_user": False,
                 **tokens,
                 "token_type": "Bearer",
-                "user": UserSerializer(user, context={"request": request}).data,
+                "user": user_data,
                 "role": user.role,
-                "frontend_dashboard_route": get_dashboard_route(user),
-                "backend_dashboard_route": get_backend_dashboard_route(user),
+                "frontend_dashboard_route": (
+                    default_dashboard["route"] if default_dashboard else None
+                ),
+                "backend_dashboard_route": (
+                    default_dashboard["backend_route"] if default_dashboard else None
+                ),
                 "next_step": AuthNextStep.DASHBOARD,
             },
             status=status.HTTP_200_OK,
@@ -264,6 +293,11 @@ def google_auth_view(request):
     )
 
     tokens = build_token_response(user)
+    user_data = _current_user_data(user, request)
+    dashboard_access = user_data["dashboard_access"]
+    default_dashboard, _available_dashboards = present_dashboard_access(
+        dashboard_access
+    )
 
     return Response(
         {
@@ -271,10 +305,14 @@ def google_auth_view(request):
             "is_new_user": True,
             **tokens,
             "token_type": "Bearer",
-            "user": UserSerializer(user, context={"request": request}).data,
+            "user": user_data,
             "role": user.role,
-            "frontend_dashboard_route": get_dashboard_route(user),
-            "backend_dashboard_route": get_backend_dashboard_route(user),
+            "frontend_dashboard_route": (
+                default_dashboard["route"] if default_dashboard else None
+            ),
+            "backend_dashboard_route": (
+                default_dashboard["backend_route"] if default_dashboard else None
+            ),
             "next_step": AuthNextStep.DASHBOARD,
         },
         status=status.HTTP_201_CREATED,
@@ -287,7 +325,7 @@ def me_view(request):
     """Return the currently authenticated user."""
 
     return Response(
-        UserSerializer(request.user, context={"request": request}).data,
+        _current_user_data(request.user, request),
         status=status.HTTP_200_OK,
     )
 
@@ -400,7 +438,7 @@ def profile_view(request):
 
     if request.method == "GET":
         return Response(
-            UserSerializer(request.user, context={"request": request}).data,
+            _current_user_data(request.user, request),
             status=status.HTTP_200_OK,
         )
 
@@ -417,7 +455,7 @@ def profile_view(request):
         return Response(
             {
                 "message": "Profile updated successfully.",
-                "user": UserSerializer(user, context={"request": request}).data,
+                "user": _current_user_data(user, request),
             },
             status=status.HTTP_200_OK,
         )
@@ -440,7 +478,7 @@ def remove_avatar_view(request):
     return Response(
         {
             "message": "Avatar removed successfully.",
-            "user": UserSerializer(user, context={"request": request}).data,
+            "user": _current_user_data(user, request),
         },
         status=status.HTTP_200_OK,
     )
@@ -482,15 +520,17 @@ def become_sponsor_view(request):
         if update_fields:
             user.save(update_fields=update_fields)
 
+        user_data = _current_user_data(user, request)
+        dashboard_access = user_data["dashboard_access"]
         return Response(
             {
                 "message": "Sponsor account created successfully.",
-                "user": UserSerializer(user, context={"request": request}).data,
+                "user": user_data,
                 "sponsor_account": SponsorAccountSerializer(
                     sponsor_account,
                     context={"request": request},
                 ).data,
-                "dashboard_routes": get_dashboard_routes(user),
+                "dashboard_routes": present_dashboard_access(dashboard_access)[1],
             },
             status=status.HTTP_201_CREATED,
         )
@@ -673,7 +713,6 @@ def role_approval_review_view(request, pk):
         return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     action_label = "approved" if action == "approve" else "rejected"
-
     return Response(
         {
             "detail": f"Role approval request {action_label} successfully.",
@@ -702,35 +741,64 @@ def switch_workspace_view(request):
 
     Returns the dashboard route for the requested role.
     """
-    from .rbac import FRONTEND_DASHBOARD_ROUTES, BACKEND_DASHBOARD_ROUTES
-
+    serializer_context = {"user": request.user}
     serializer = SwitchWorkspaceSerializer(
         data=request.data,
-        context={"user": request.user},
+        context=serializer_context,
     )
 
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     target_role = serializer.validated_data["role"]
+    dashboard_access = serializer_context["_dashboard_access"]
+    matching_entitlements = serializer_context["_matching_entitlements"]
+    selected_entitlement = (
+        matching_entitlements[0] if len(matching_entitlements) == 1 else None
+    )
+    user_data = _current_user_data(
+        request.user,
+        request,
+        dashboard_access=dashboard_access,
+    )
+    _default_dashboard, available_dashboards = present_dashboard_access(
+        dashboard_access
+    )
+    selected_dashboard = (
+        present_dashboard_access(
+            {
+                "version": dashboard_access["version"],
+                "default_entitlement_id": selected_entitlement["id"],
+                "entitlements": [selected_entitlement],
+            }
+        )[0]
+        if selected_entitlement
+        else None
+    )
+    message = (
+        f"Switched to {target_role} workspace."
+        if selected_entitlement
+        else "Multiple workspaces are available. Select a specific workspace."
+    )
 
-    # The User model only has a single role field, but `user.roles` can include
-    # additional roles like SPONSOR via `has_role`. The switch workspace API
-    # returns the appropriate dashboard info for the requested role without
-    # changing the user's primary role in the DB.
     return Response(
         {
-            "message": f"Switched to {target_role} workspace.",
+            "message": message,
             "role": target_role,
-            "role_display": dict(User.Role.choices).get(target_role, target_role),
-            "frontend_dashboard_route": FRONTEND_DASHBOARD_ROUTES.get(
-                target_role, "/dashboard/fan"
+            "role_display": (
+                selected_dashboard["role_display"] if selected_dashboard else None
             ),
-            "backend_dashboard_route": BACKEND_DASHBOARD_ROUTES.get(
-                target_role, "/api/dashboards/me/"
+            "frontend_dashboard_route": (
+                selected_dashboard["route"] if selected_dashboard else None
             ),
-            "available_dashboards": get_dashboard_routes(request.user),
-            "user": UserSerializer(request.user, context={"request": request}).data,
+            "backend_dashboard_route": (
+                selected_dashboard["backend_route"] if selected_dashboard else None
+            ),
+            "available_dashboards": available_dashboards,
+            "selected_entitlement_id": (
+                selected_entitlement["id"] if selected_entitlement else None
+            ),
+            "user": user_data,
         },
         status=status.HTTP_200_OK,
     )
