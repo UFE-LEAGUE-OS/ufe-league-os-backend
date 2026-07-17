@@ -175,6 +175,15 @@ Super-admin-only module for platform-wide governance configuration.
 | `GET` | `/api/ticketing/flutterwave/verify/` | No | Verify Flutterwave ticket payment using `tx_ref` or `reference`. |
 | `POST` | `/api/ticketing/flutterwave/webhook/` | No | Flutterwave ticket webhook. |
 | `POST` | `/api/ticketing/validate/` | Ticketing/admin roles | Validate/check in a ticket. |
+| `GET` | `/api/ticketing/admin/ticket-types/` | Admin/staff | List ticket types for managed matches. |
+| `POST` | `/api/ticketing/admin/ticket-types/create/` | Admin/staff | Create ticket type for managed match. |
+| `GET` | `/api/ticketing/admin/ticket-types/<pk>/` | Admin/staff | Retrieve ticket type. |
+| `PATCH` | `/api/ticketing/admin/ticket-types/<pk>/update/` | Admin/staff | Update ticket type. |
+| `DELETE` | `/api/ticketing/admin/ticket-types/<pk>/delete/` | Admin/staff | Delete ticket type if no orders exist. |
+| `PATCH` | `/api/ticketing/admin/ticket-types/<pk>/inventory/` | Admin/staff | Update available inventory for a ticket type. |
+| `POST` | `/api/ticketing/admin/ticket-types/<pk>/publish/` | Admin/staff | Publish/unpublish/sell-out/reopen a ticket type. |
+| `POST` | `/api/ticketing/admin/matches/<match_id>/publish-sale/` | Admin/staff | Publish sale for all ticket types of a match. |
+| `GET` | `/api/ticketing/admin/sales-monitoring/` | Admin/staff | Ticket sales monitoring and performance metrics. |
 
 ### Ticket Checkout Request
 
