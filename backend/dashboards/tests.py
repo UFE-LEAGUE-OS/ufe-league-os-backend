@@ -6,7 +6,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from accounts.models import Club
+from accounts.models import AuditLog, Club, ClubAdminScope
 
 from .models import Competition, League, Match, Standing, Union
 
@@ -72,11 +72,31 @@ class DashboardAPITests(TestCase):
         response = self.client.get("/api/dashboards/club-admin/")
 
         self.assertEqual(response.status_code, 403)
+        audit = AuditLog.objects.get(
+            action="access_denied",
+            path="/api/dashboards/club-admin/",
+            actor=user,
+        )
+        self.assertEqual(audit.category, AuditLog.Category.ACCESS_VIOLATION)
+        self.assertEqual(audit.status_code, 403)
+        self.assertEqual(
+            audit.details,
+            {"permission": "dashboard.club_admin"},
+        )
 
     def test_club_admin_can_access_club_admin_dashboard(self):
         user = self.create_user(
             "club-admin-dashboard@example.com",
             User.Role.CLUB_ADMIN,
+        )
+        club = Club.objects.create(
+            name="Entitled Club",
+            slug="entitled-club",
+        )
+        ClubAdminScope.objects.create(
+            user=user,
+            club=club,
+            role=ClubAdminScope.Role.CLUB_ADMIN,
         )
         self.authenticate(user)
 
@@ -85,6 +105,17 @@ class DashboardAPITests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["role"], User.Role.CLUB_ADMIN)
         self.assertIn("Admin", response.data["dashboard"]["title"])
+
+    def test_unscoped_club_admin_cannot_access_club_admin_dashboard(self):
+        user = self.create_user(
+            "unscoped-club-admin@example.com",
+            User.Role.CLUB_ADMIN,
+        )
+        self.authenticate(user)
+
+        response = self.client.get("/api/dashboards/club-admin/")
+
+        self.assertEqual(response.status_code, 403)
 
     def test_my_dashboard_resolves_fan_routes(self):
         user = self.create_user("my-fan-dashboard@example.com", User.Role.FAN)
@@ -289,6 +320,13 @@ class PublicDashboardEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertGreaterEqual(len(response.data), 1)
+
+    def test_public_match_detail_serializes_club_logo_fields(self):
+        response = self.client.get(f"/api/dashboards/public/matches/{self.fixture.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("home_club_logo_url", response.data)
+        self.assertIn("away_club_logo_url", response.data)
 
     def test_public_results_returns_completed_matches_without_authentication(self):
         response = self.client.get("/api/dashboards/public/results/")

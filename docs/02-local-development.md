@@ -102,6 +102,54 @@ docker compose exec backend python manage.py test sponsorships
 docker compose exec backend python manage.py test ticketing
 ```
 
+The Django suite is the maintained application test suite. Run it with:
+
+```bash
+docker compose exec backend python manage.py test -v 1
+```
+
+The legacy pytest suite uses a test-only image so pytest plugins are not added
+to the production runtime. Build that image with:
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.test.yml \
+  build backend
+```
+
+Run the complete pytest suite:
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.test.yml \
+  run --rm backend \
+  python -m pytest -q
+```
+
+Run one pytest module:
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.test.yml \
+  run --rm backend \
+  python -m pytest backend/tests/test_account_roles.py -q
+```
+
+Run one pytest test:
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.test.yml \
+  run --rm backend \
+  python -m pytest \
+  backend/tests/test_account_roles.py::TestClassName::test_name \
+  -q
+```
+
 ### Formatting and linting
 
 ```bash

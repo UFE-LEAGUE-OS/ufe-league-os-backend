@@ -853,6 +853,22 @@ class DashboardAccessApiTests(TestCase):
                     entry["backend_route"],
                     "/api/dashboards/union-admin/",
                 )
+                shared_route_response = self.client.get(entry["backend_route"])
+                self.assertEqual(shared_route_response.status_code, 200)
+                self.assertEqual(
+                    shared_route_response.data["dashboard_role"],
+                    legacy_role,
+                )
+                if workspace_role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL:
+                    self.assertEqual(
+                        shared_route_response.data["dashboard"]["title"],
+                        "Match Official Dashboard",
+                    )
+                if workspace_role == UnionWorkspaceMembership.Role.TICKETING_OFFICER:
+                    self.assertEqual(
+                        shared_route_response.data["dashboard"]["title"],
+                        "Ticketing Officer Dashboard",
+                    )
                 switch_response = self.client.post(
                     "/api/accounts/switch-workspace/",
                     {"role": entry["role"]},
@@ -925,6 +941,7 @@ class DashboardAccessApiTests(TestCase):
                 "/dashboard/sponsor",
                 "/api/dashboards/sponsor/",
                 3,
+                User.Role.SPONSOR,
             ),
             (
                 union_admin,
@@ -932,6 +949,7 @@ class DashboardAccessApiTests(TestCase):
                 "/dashboard/union-admin",
                 "/api/dashboards/union-admin/",
                 2,
+                User.Role.UNION_ADMIN,
             ),
             (
                 league_admin,
@@ -939,20 +957,30 @@ class DashboardAccessApiTests(TestCase):
                 "/dashboard/league-admin",
                 "/api/dashboards/league-admin/",
                 2,
+                User.Role.LEAGUE_ADMIN,
             ),
             (
                 match_official,
-                "/api/dashboards/referee/",
+                "/api/dashboards/union-admin/",
                 "/dashboard/union-admin",
                 "/api/dashboards/union-admin/",
                 2,
+                User.Role.REFEREE,
             ),
         )
-        for user, endpoint, frontend_route, backend_route, available_count in cases:
+        for (
+            user,
+            endpoint,
+            frontend_route,
+            backend_route,
+            available_count,
+            dashboard_role,
+        ) in cases:
             with self.subTest(endpoint=endpoint):
                 self.client.force_authenticate(user)
                 response = self.client.get(endpoint)
                 self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data["dashboard_role"], dashboard_role)
                 self.assertEqual(
                     response.data["frontend_dashboard_route"],
                     frontend_route,
@@ -984,21 +1012,40 @@ class DashboardAccessApiTests(TestCase):
         self.create_union_membership(conflicted)
 
         cases = (
-            (one_scope, 1, "/dashboard/club-admin", "/api/dashboards/club-admin/"),
+            (
+                one_scope,
+                200,
+                1,
+                "/dashboard/club-admin",
+                "/api/dashboards/club-admin/",
+            ),
             (
                 multiple_scopes,
+                200,
                 2,
                 "/dashboard/club-admin",
                 "/api/dashboards/club-admin/",
             ),
-            (unscoped, 0, None, None),
-            (conflicted, 0, None, None),
+            (unscoped, 403, None, None, None),
+            (conflicted, 403, None, None, None),
         )
-        for user, available_count, frontend_route, backend_route in cases:
+        for (
+            user,
+            expected_status,
+            available_count,
+            frontend_route,
+            backend_route,
+        ) in cases:
             with self.subTest(user=user.email):
                 self.client.force_authenticate(user)
                 response = self.client.get("/api/dashboards/club-admin/")
-                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.status_code, expected_status)
+                if expected_status == 403:
+                    self.assertEqual(
+                        response.data["detail"],
+                        "You do not have active access to this dashboard.",
+                    )
+                    continue
                 self.assertEqual(
                     response.data["frontend_dashboard_route"],
                     frontend_route,
@@ -1011,6 +1058,54 @@ class DashboardAccessApiTests(TestCase):
                     len(response.data["available_dashboards"]),
                     available_count,
                 )
+
+    def test_role_specific_endpoints_are_entitlement_authoritative(self):
+        unscoped_cases = (
+            (User.Role.CLUB_ADMIN, "/api/dashboards/club-admin/"),
+            (User.Role.LEAGUE_ADMIN, "/api/dashboards/league-admin/"),
+            (User.Role.UNION_ADMIN, "/api/dashboards/union-admin/"),
+            (User.Role.REFEREE, "/api/dashboards/referee/"),
+            (User.Role.TICKETING_OFFICER, "/api/dashboards/ticketing-officer/"),
+            (User.Role.SPONSOR, "/api/dashboards/sponsor/"),
+        )
+        for role, endpoint in unscoped_cases:
+            with self.subTest(role=role):
+                user = self.create_user(f"unscoped-{role.lower()}", role=role)
+                self.client.force_authenticate(user)
+                response = self.client.get(endpoint)
+                self.assertEqual(response.status_code, 403)
+
+        league_admin = self.create_user("legacy-scoped-league")
+        self.create_league_scope(league_admin)
+        self.client.force_authenticate(league_admin)
+        league_response = self.client.get("/api/dashboards/league-admin/")
+        self.assertEqual(league_response.status_code, 200)
+        self.assertEqual(
+            league_response.data["dashboard_role"],
+            User.Role.LEAGUE_ADMIN,
+        )
+
+        club_ticketing = self.create_user("legacy-scoped-ticketing")
+        self.create_club_scope(
+            club_ticketing,
+            ClubAdminScope.Role.TICKETING_OFFICER,
+        )
+        self.client.force_authenticate(club_ticketing)
+        ticketing_response = self.client.get("/api/dashboards/ticketing-officer/")
+        self.assertEqual(ticketing_response.status_code, 200)
+        self.assertEqual(
+            ticketing_response.data["dashboard_role"],
+            User.Role.TICKETING_OFFICER,
+        )
+
+        django_superuser = self.create_user("django-superuser")
+        django_superuser.is_superuser = True
+        django_superuser.save(update_fields=["is_superuser"])
+        self.client.force_authenticate(django_superuser)
+        super_response = self.client.get("/api/dashboards/super-admin/")
+        self.assertEqual(super_response.status_code, 200)
+        fan_response = self.client.get("/api/dashboards/fan/")
+        self.assertEqual(fan_response.status_code, 403)
 
     def test_sponsor_role_specific_dashboards_select_requested_entitlement(self):
         user = self.create_user(

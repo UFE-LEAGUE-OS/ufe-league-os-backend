@@ -8,24 +8,15 @@ from rest_framework.response import Response
 
 from accounts.models import Club, User
 from accounts.dashboard_entitlements import resolve_dashboard_access
-from accounts.rbac import get_user_permissions, get_club_admin_sub_role
-from accounts.permissions import (
-    IsAuthenticatedAudit,
-    IsClubAdmin,
-    IsFan,
-    IsLeagueAdmin,
-    IsReferee,
-    IsSponsor,
-    IsSuperAdmin,
-    IsTicketingOfficer,
-    IsUnionAdmin,
+from accounts.rbac import (
+    get_club_admin_sub_role,
+    get_user_permissions,
+    log_access_violation,
 )
-from accounts.routing import (
-    get_backend_dashboard_route,
-    get_dashboard_route,
-)
+from accounts.permissions import IsAuthenticatedAudit
 from accounts.serializers import (
     CurrentUserSerializer,
+    entitlement_legacy_role,
     present_dashboard_access,
     select_dashboard_route_for_role,
 )
@@ -251,35 +242,35 @@ DASHBOARD_CONTENT = {
 }
 
 
-def user_has_sponsor_access(user):
-    if user.role == User.Role.SPONSOR:
-        return True
-
-    return user.sponsor_memberships.filter(is_active=True).exists()
-
-
-def build_available_dashboards(user):
-    dashboards = [
-        {
-            "label": user.get_role_display(),
-            "frontend_route": get_dashboard_route(user),
-            "backend_route": get_backend_dashboard_route(user),
-        }
-    ]
-
-    sponsor_dashboard = {
-        "label": "Sponsor Dashboard",
-        "frontend_route": "/dashboard/sponsor",
-        "backend_route": "/api/dashboards/sponsor/",
-    }
-
-    if user_has_sponsor_access(user) and sponsor_dashboard not in dashboards:
-        dashboards.append(sponsor_dashboard)
-
-    return dashboards
+def _dashboard_presentation(request):
+    user_data = CurrentUserSerializer(
+        request.user,
+        context={"request": request},
+    ).data
+    dashboard_access = user_data["dashboard_access"]
+    _default_dashboard, available_dashboards = present_dashboard_access(
+        dashboard_access
+    )
+    return user_data, dashboard_access, available_dashboards
 
 
-def build_dashboard_response(request, role, message=None):
+def _matching_dashboard_entries(available_dashboards, role):
+    return [item for item in available_dashboards if item["role"] == role]
+
+
+def _dashboard_access_denied(request, role):
+    log_access_violation(
+        request,
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"permission": f"dashboard.{str(role).lower()}"},
+    )
+    return Response(
+        {"detail": "You do not have active access to this dashboard."},
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def build_dashboard_response(request, role, message=None, presentation=None):
     """Build a consistent dashboard response for the authenticated user's role."""
 
     user = request.user
@@ -291,14 +282,12 @@ def build_dashboard_response(request, role, message=None):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    user_data = CurrentUserSerializer(
-        user,
-        context={"request": request},
-    ).data
-    dashboard_access = user_data["dashboard_access"]
-    _default_dashboard, available_dashboards = present_dashboard_access(
-        dashboard_access
-    )
+    if presentation is None:
+        presentation = _dashboard_presentation(request)
+    user_data, _dashboard_access, available_dashboards = presentation
+    if not _matching_dashboard_entries(available_dashboards, role):
+        return _dashboard_access_denied(request, role)
+
     frontend_dashboard_route, backend_dashboard_route = select_dashboard_route_for_role(
         available_dashboards, role
     )
@@ -379,25 +368,55 @@ def my_dashboard_view(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsFan])
+@permission_classes([IsAuthenticatedAudit])
 def fan_dashboard_view(request):
     return build_dashboard_response(request, User.Role.FAN)
 
 
 @api_view(["GET"])
-@permission_classes([IsClubAdmin])
+@permission_classes([IsAuthenticatedAudit])
 def club_admin_dashboard_view(request):
     user = request.user
-    # Find the user's active club scope
+    presentation = _dashboard_presentation(request)
+    user_data, dashboard_access, available_dashboards = presentation
+    matching_entries = _matching_dashboard_entries(
+        available_dashboards,
+        User.Role.CLUB_ADMIN,
+    )
+    if not matching_entries:
+        return _dashboard_access_denied(request, User.Role.CLUB_ADMIN)
+
+    if len(matching_entries) != 1:
+        return build_dashboard_response(
+            request,
+            User.Role.CLUB_ADMIN,
+            presentation=presentation,
+        )
+
+    entitlement = next(
+        (
+            item
+            for item in dashboard_access["entitlements"]
+            if item["id"] == matching_entries[0]["entitlement_id"]
+        ),
+        None,
+    )
     scope = (
-        ClubAdminScope.objects.filter(user=user, is_active=True)
+        ClubAdminScope.objects.filter(
+            user=user,
+            is_active=True,
+            club_id=entitlement["scope_id"] if entitlement else None,
+        )
         .select_related("club")
         .first()
     )
 
     if not scope:
-        # Fallback for users with the direct role but no scope object
-        return build_dashboard_response(request, User.Role.CLUB_ADMIN)
+        return build_dashboard_response(
+            request,
+            User.Role.CLUB_ADMIN,
+            presentation=presentation,
+        )
 
     # Get all permissions (base role + club scope)
     permissions = get_user_permissions(user)
@@ -510,12 +529,6 @@ def club_admin_dashboard_view(request):
         "permissions": sorted(list(permissions)),
     }
 
-    user = request.user
-    user_data = CurrentUserSerializer(user, context={"request": request}).data
-    dashboard_access = user_data["dashboard_access"]
-    _default_dashboard, available_dashboards = present_dashboard_access(
-        dashboard_access
-    )
     frontend_dashboard_route, backend_dashboard_route = select_dashboard_route_for_role(
         available_dashboards,
         User.Role.CLUB_ADMIN,
@@ -538,37 +551,50 @@ def club_admin_dashboard_view(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsLeagueAdmin])
+@permission_classes([IsAuthenticatedAudit])
 def league_admin_dashboard_view(request):
     return build_dashboard_response(request, User.Role.LEAGUE_ADMIN)
 
 
 @api_view(["GET"])
-@permission_classes([IsUnionAdmin])
+@permission_classes([IsAuthenticatedAudit])
 def union_admin_dashboard_view(request):
-    return build_dashboard_response(request, User.Role.UNION_ADMIN)
+    presentation = _dashboard_presentation(request)
+    _user_data, dashboard_access, _available_dashboards = presentation
+    union_roles = {
+        entitlement_legacy_role(item)
+        for item in dashboard_access["entitlements"]
+        if item["dashboard"] == "UNION_WORKSPACE"
+    }
+    if len(union_roles) != 1:
+        return _dashboard_access_denied(request, User.Role.UNION_ADMIN)
+    return build_dashboard_response(
+        request,
+        union_roles.pop(),
+        presentation=presentation,
+    )
 
 
 @api_view(["GET"])
-@permission_classes([IsSuperAdmin])
+@permission_classes([IsAuthenticatedAudit])
 def super_admin_dashboard_view(request):
     return build_dashboard_response(request, User.Role.SUPER_ADMIN)
 
 
 @api_view(["GET"])
-@permission_classes([IsReferee])
+@permission_classes([IsAuthenticatedAudit])
 def referee_dashboard_view(request):
     return build_dashboard_response(request, User.Role.REFEREE)
 
 
 @api_view(["GET"])
-@permission_classes([IsTicketingOfficer])
+@permission_classes([IsAuthenticatedAudit])
 def ticketing_officer_dashboard_view(request):
     return build_dashboard_response(request, User.Role.TICKETING_OFFICER)
 
 
 @api_view(["GET"])
-@permission_classes([IsSponsor])
+@permission_classes([IsAuthenticatedAudit])
 def sponsor_dashboard_view(request):
     return build_dashboard_response(request, User.Role.SPONSOR)
 

@@ -11,10 +11,67 @@ Tests verify that each role can:
 
 import pytest
 from django.contrib.auth import get_user_model
-from rest_framework.test import APIClient
 from rest_framework import status
+from rest_framework.test import APIClient
+
+from accounts.models import Club, ClubAdminScope
+from dashboards.models import (
+    League,
+    LeagueAdminScope,
+    Union,
+    UnionWorkspace,
+    UnionWorkspaceMembership,
+)
 
 User = get_user_model()
+
+
+def create_club_admin_scope(user):
+    club = Club.objects.create(
+        name=f"{user.email} Club",
+        slug=f"user-{user.pk}-club",
+    )
+    ClubAdminScope.objects.create(
+        user=user,
+        club=club,
+        role=ClubAdminScope.Role.CLUB_ADMIN,
+        is_active=True,
+    )
+
+
+def create_league_admin_scope(user):
+    union = Union.objects.create(
+        name=f"{user.email} Union",
+        slug=f"user-{user.pk}-union",
+    )
+    league = League.objects.create(
+        union=union,
+        name=f"{user.email} League",
+        slug=f"user-{user.pk}-league",
+        is_active=True,
+    )
+    LeagueAdminScope.objects.create(
+        user=user,
+        league=league,
+        role=LeagueAdminScope.Role.LEAGUE_ADMIN,
+        is_active=True,
+    )
+
+
+def create_union_workspace_membership(user, role):
+    workspace = UnionWorkspace.objects.create(
+        name=f"{user.email} Workspace",
+        slug=f"user-{user.pk}-workspace",
+        acronym=f"U{user.pk}",
+        sport="Football",
+        status=UnionWorkspace.Status.ACTIVE,
+    )
+    UnionWorkspaceMembership.objects.create(
+        user=user,
+        workspace=workspace,
+        role=role,
+        is_active=True,
+    )
 
 
 # ============================================================================
@@ -204,6 +261,7 @@ class TestSwitchWorkspace:
         assert response.data["frontend_dashboard_route"] == "/dashboard/fan"
 
     def test_club_admin_can_switch_to_club_admin(self, client, club_admin_user):
+        create_club_admin_scope(club_admin_user)
         client.force_authenticate(user=club_admin_user)
         response = client.post(
             "/api/accounts/switch-workspace/",
@@ -214,6 +272,7 @@ class TestSwitchWorkspace:
         assert response.data["role"] == "CLUB_ADMIN"
 
     def test_league_admin_can_switch_to_league_admin(self, client, league_admin_user):
+        create_league_admin_scope(league_admin_user)
         client.force_authenticate(user=league_admin_user)
         response = client.post(
             "/api/accounts/switch-workspace/",
@@ -224,6 +283,10 @@ class TestSwitchWorkspace:
         assert response.data["role"] == "LEAGUE_ADMIN"
 
     def test_union_admin_can_switch_to_union_admin(self, client, union_admin_user):
+        create_union_workspace_membership(
+            union_admin_user,
+            UnionWorkspaceMembership.Role.UNION_ADMIN,
+        )
         client.force_authenticate(user=union_admin_user)
         response = client.post(
             "/api/accounts/switch-workspace/",
@@ -244,6 +307,10 @@ class TestSwitchWorkspace:
         assert response.data["role"] == "SUPER_ADMIN"
 
     def test_referee_can_switch_to_referee(self, client, referee_user):
+        create_union_workspace_membership(
+            referee_user,
+            UnionWorkspaceMembership.Role.MATCH_OFFICIAL,
+        )
         client.force_authenticate(user=referee_user)
         response = client.post(
             "/api/accounts/switch-workspace/",
@@ -256,6 +323,10 @@ class TestSwitchWorkspace:
     def test_ticketing_officer_can_switch_to_ticketing(
         self, client, ticketing_officer_user
     ):
+        create_union_workspace_membership(
+            ticketing_officer_user,
+            UnionWorkspaceMembership.Role.TICKETING_OFFICER,
+        )
         client.force_authenticate(user=ticketing_officer_user)
         response = client.post(
             "/api/accounts/switch-workspace/",
@@ -1017,6 +1088,10 @@ class TestUnionWorkspaceMemberships:
         assert response.data["role"] == User.Role.REFEREE
 
     def test_union_admin_can_switch_workspace(self, client, union_admin_user):
+        create_union_workspace_membership(
+            union_admin_user,
+            UnionWorkspaceMembership.Role.UNION_ADMIN,
+        )
         client.force_authenticate(user=union_admin_user)
         response = client.post(
             "/api/accounts/switch-workspace/",
@@ -1027,6 +1102,10 @@ class TestUnionWorkspaceMemberships:
         assert response.data["role"] == "UNION_ADMIN"
 
     def test_referee_can_switch_workspace(self, client, referee_user):
+        create_union_workspace_membership(
+            referee_user,
+            UnionWorkspaceMembership.Role.MATCH_OFFICIAL,
+        )
         client.force_authenticate(user=referee_user)
         response = client.post(
             "/api/accounts/switch-workspace/",
@@ -1138,8 +1217,7 @@ class TestNotificationPreferencesPersistence:
         response = client.get("/api/accounts/notification-preferences/me/")
         assert response.status_code == status.HTTP_200_OK
         # Should return all default preferences
-        assert len(response.data) >= 5  # At least 5 event types
-        # Should return all default preferences inside the 'preferences' key
+        assert response.data["count"] >= 5
         assert len(response.data["preferences"]) >= 5
 
     def test_update_notification_preference_persists(self, client, fan_user):
@@ -1333,7 +1411,7 @@ class TestFollowingAndFeedIntegration:
 
         # Verify followed
         follows = client.get("/api/accounts/follow/")
-        assert len(follows.data) == 1
+        assert follows.data["club_count"] == 1
 
         # Unfollow
         unfollow_response = client.delete(
@@ -1345,10 +1423,11 @@ class TestFollowingAndFeedIntegration:
 
         # Verify unfollowed
         follows = client.get("/api/accounts/follow/")
-        assert len(follows.data) == 0
+        assert follows.data["club_count"] == 0
 
     def test_follow_multiple_content_types(self, client, db):
-        from accounts.models import Club, League, Union
+        from accounts.models import Club
+        from dashboards.models import League, Union
 
         User = get_user_model()
         user = User.objects.create_user(
@@ -1360,8 +1439,16 @@ class TestFollowingAndFeedIntegration:
         )
 
         club = Club.objects.create(name="Multi Club", slug="multi-club")
-        league = League.objects.create(name="Multi League", slug="multi-league")
-        union = Union.objects.create(name="Multi Union", slug="multi-union")
+        union = Union.objects.create(
+            name="Multi Union",
+            slug="multi-union",
+            country="Uganda",
+        )
+        league = League.objects.create(
+            union=union,
+            name="Multi League",
+            slug="multi-league",
+        )
 
         client.force_authenticate(user=user)
 
@@ -1384,10 +1471,18 @@ class TestFollowingAndFeedIntegration:
 
         # Verify all follows
         follows = client.get("/api/accounts/follow/")
-        assert len(follows.data) == 3
+        assert (
+            follows.data["club_count"]
+            + follows.data["league_count"]
+            + follows.data["union_count"]
+        ) == 3
 
         # Verify content types are present
-        followed_types = {item["content_type"] for item in follows.data}
+        followed_types = {
+            item["content_type"]
+            for group in ("clubs", "leagues", "unions")
+            for item in follows.data[group]
+        }
         assert "CLUB" in followed_types
         assert "LEAGUE" in followed_types
         assert "UNION" in followed_types
@@ -1453,15 +1548,15 @@ class TestFollowingAndFeedIntegration:
             user=user,
             item_type=FeedItem.ItemType.NEWS,
             title="Feed Club signs new player",
-            related_object_type="CLUB",
-            related_object_id=club.id,
+            source_content_type="CLUB",
+            source_object_id=club.id,
             relevance_score=0.8,
         )
 
         # Get feed
         feed_response = client.get("/api/accounts/feed/")
         assert feed_response.status_code == status.HTTP_200_OK
-        assert len(feed_response.data) >= 1
+        assert feed_response.data["count"] >= 1
 
         # Verify feed contains the news item
         news_items = [
@@ -1596,7 +1691,7 @@ class TestWalletAndPaymentAccess:
         client.force_authenticate(user=league_admin_user)
         response = client.get("/api/accounts/wallet/")
         assert response.status_code == status.HTTP_200_OK
-        assert response.data["balance"] == 0.00
+        assert response.data["balance"] == "0.00"
         assert "does not currently store" in response.data["balance_note"].lower()
 
     def test_payment_history_filters_work(self, client, union_admin_user):

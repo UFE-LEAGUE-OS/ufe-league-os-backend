@@ -171,8 +171,10 @@ class MatchDetailSerializer(serializers.ModelSerializer):
     competition_slug = serializers.SlugField(source="competition.slug", read_only=True)
     home_club_name = serializers.CharField(source="home_club.name", read_only=True)
     home_club_slug = serializers.SlugField(source="home_club.slug", read_only=True)
+    home_club_logo_url = serializers.SerializerMethodField()
     away_club_name = serializers.CharField(source="away_club.name", read_only=True)
     away_club_slug = serializers.SlugField(source="away_club.slug", read_only=True)
+    away_club_logo_url = serializers.SerializerMethodField()
     is_fixture = serializers.BooleanField(read_only=True)
     has_result = serializers.BooleanField(read_only=True)
 
@@ -209,6 +211,12 @@ class MatchDetailSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def get_home_club_logo_url(self, obj):
+        return build_file_url(self.context.get("request"), obj.home_club.logo)
+
+    def get_away_club_logo_url(self, obj):
+        return build_file_url(self.context.get("request"), obj.away_club.logo)
 
 
 class StandingSerializer(serializers.ModelSerializer):

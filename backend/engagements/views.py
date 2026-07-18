@@ -118,10 +118,10 @@ def poll_detail_view(request, poll_id):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-def poll_vote_view(request):
-    serializer = PollVoteCreateSerializer(
-        data=request.data, context={"request": request}
-    )
+def poll_vote_view(request, poll_id):
+    data = request.data.copy()
+    data["poll"] = poll_id
+    serializer = PollVoteCreateSerializer(data=data, context={"request": request})
     if serializer.is_valid():
         vote = serializer.save()
         return Response(
