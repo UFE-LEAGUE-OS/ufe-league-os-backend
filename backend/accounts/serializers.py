@@ -10,6 +10,7 @@ from .models import (
     InterestPreference,
     RoleApproval,
     FeedItem,
+    Follow,
     Venue,
 )
 from .google_auth import (
@@ -297,6 +298,15 @@ class HierarchicalCreateUserSerializer(serializers.Serializer):
             validate_password(attrs["password"])
         except DjangoValidationError as e:
             raise serializers.ValidationError({"password": list(e.messages)}) from e
+
+        admin_user = self.context.get("admin_user")
+        if admin_user:
+            from .rbac import can_admin_create_role
+
+            if not can_admin_create_role(admin_user, attrs["role"]):
+                raise serializers.ValidationError(
+                    {"role": "You cannot create a user with this role."}
+                )
         return attrs
 
 
@@ -357,6 +367,11 @@ class AdminCreateUserSerializer(serializers.Serializer):
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating the authenticated user's profile."""
 
+    favorite_sport = serializers.CharField(
+        source="favourite_sport",
+        required=False,
+    )
+
     class Meta:
         model = User
         fields = (
@@ -367,6 +382,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "date_of_birth",
             "gender",
             "favourite_sport",
+            "favorite_sport",
             "bio",
             "avatar",
         )
@@ -517,18 +533,60 @@ class ResendOTPSerializer(serializers.Serializer):
 
 
 class SwitchWorkspaceSerializer(serializers.Serializer):
-    workspace_id = serializers.IntegerField(required=False, allow_null=True)
+    role = serializers.ChoiceField(choices=User.Role.choices)
+
+    def validate_role(self, value):
+        user = self.context.get("user")
+        if not user:
+            raise serializers.ValidationError("User context is required.")
+        if value not in user.roles:
+            raise serializers.ValidationError(
+                f"You do not have access to the '{value}' workspace."
+            )
+        return value
 
 
 class RoleApprovalListSerializer(serializers.ModelSerializer):
+    target_user_email = serializers.EmailField(
+        source="target_user.email", read_only=True
+    )
+    requested_by_email = serializers.EmailField(
+        source="requested_by.email", read_only=True
+    )
+    reviewed_by_email = serializers.EmailField(
+        source="reviewed_by.email", read_only=True, default=None
+    )
+
     class Meta:
         model = RoleApproval
-        fields = ("id", "user", "requested_role", "status", "approved_by", "created_at")
-        read_only_fields = ("id", "created_at")
+        fields = (
+            "id",
+            "target_user",
+            "target_user_email",
+            "requested_role",
+            "requested_by",
+            "requested_by_email",
+            "reviewed_by",
+            "reviewed_by_email",
+            "status",
+            "reason",
+            "rejection_reason",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
 
 
 class RoleApprovalReviewSerializer(serializers.Serializer):
-    status = serializers.ChoiceField(choices=RoleApproval.Status.choices)
+    action = serializers.ChoiceField(choices=["approve", "reject"])
+    rejection_reason = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if attrs["action"] == "reject" and not attrs.get("rejection_reason"):
+            raise serializers.ValidationError(
+                {"rejection_reason": "Rejection reason is required."}
+            )
+        return attrs
 
 
 class CombinedPaymentHistoryItemSerializer(serializers.Serializer):
@@ -579,15 +637,19 @@ class FeedItemSerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "user",
-            "content_type",
-            "object_id",
+            "item_type",
             "title",
             "description",
-            "image",
-            "published_at",
+            "source_content_type",
+            "source_object_id",
+            "source_name",
+            "relevance_score",
+            "is_read",
+            "link",
+            "metadata",
             "created_at",
         )
-        read_only_fields = ("id", "created_at")
+        read_only_fields = fields
 
 
 class NotificationPreferenceSerializer(serializers.ModelSerializer):
@@ -688,13 +750,35 @@ class InterestPreferenceSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "user", "created_at", "updated_at")
 
 
-class FollowResponseSerializer(serializers.Serializer):
-    is_following = serializers.BooleanField()
+class FollowResponseSerializer(serializers.ModelSerializer):
+    object_name = serializers.SerializerMethodField()
+    is_following = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Follow
+        fields = (
+            "id",
+            "content_type",
+            "object_id",
+            "object_name",
+            "is_following",
+            "created_at",
+        )
+        read_only_fields = fields
+
+    def get_object_name(self, obj):
+        followed_object = obj.followed_object
+        if followed_object is not None:
+            return str(followed_object)
+        return f"{obj.content_type}#{obj.object_id}"
+
+    def get_is_following(self, _obj):
+        return True
 
 
 class FollowActionSerializer(serializers.Serializer):
-    content_type = serializers.CharField(max_length=50)
-    object_id = serializers.IntegerField()
+    content_type = serializers.ChoiceField(choices=Follow.ContentType.choices)
+    object_id = serializers.IntegerField(min_value=1)
 
 
 class VenueSerializer(serializers.ModelSerializer):

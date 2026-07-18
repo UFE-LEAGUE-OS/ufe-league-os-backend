@@ -10,17 +10,26 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
+        migrations.AlterField(
             model_name="notificationpreference",
             name="event_type",
             field=models.CharField(
                 choices=[
                     ("SYSTEM", "System"),
-                    ("MEMBERSHIP", "Membership"),
+                    ("MATCH_REMINDER", "Match Reminder"),
+                    ("SCORE_UPDATE", "Score Update"),
+                    ("FOLLOWED_TEAM_NEWS", "Followed Team News"),
+                    ("STANDINGS_CHANGE", "Standings Change"),
                     ("TICKET_UPDATES", "Ticket Updates"),
-                    ("SPONSORSHIP", "Sponsorship"),
+                    ("TICKET_OFFER", "Ticket Offer"),
+                    ("MEMBERSHIP_UPDATES", "Membership Updates"),
+                    ("SPONSORSHIP_UPDATES", "Sponsorship Updates"),
+                    ("FANTASY_UPDATES", "Fantasy Updates"),
+                    ("LEAGUE_NEWS", "League News"),
+                    ("CLUB_NEWS", "Club News"),
+                    ("GENERAL_NEWS", "General News"),
+                    ("MARKETING_UPDATES", "Marketing Updates"),
                     ("GOVERNANCE", "Governance"),
-                    ("CLUB", "Club"),
                 ],
                 default="SYSTEM",
                 max_length=30,

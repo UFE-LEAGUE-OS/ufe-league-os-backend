@@ -1,6 +1,3 @@
-import django.db.models.deletion
-import django.utils.timezone
-from django.conf import settings
 from django.db import migrations, models
 
 CANONICAL_EVENT_TYPE_CHOICES = [
@@ -22,6 +19,45 @@ CANONICAL_EVENT_TYPE_CHOICES = [
 ]
 
 
+def repair_legacy_notification_preference_schema(apps, schema_editor):
+    preference_model = apps.get_model("accounts", "NotificationPreference")
+    connection = schema_editor.connection
+    table_name = preference_model._meta.db_table
+
+    with connection.cursor() as cursor:
+        columns = {
+            column.name
+            for column in connection.introspection.get_table_description(
+                cursor, table_name
+            )
+        }
+
+    for field_name in ("created_at", "updated_at"):
+        field = preference_model._meta.get_field(field_name)
+        if field.column not in columns:
+            schema_editor.add_field(preference_model, field)
+
+    user_field = preference_model._meta.get_field("user")
+    with connection.cursor() as cursor:
+        constraints = connection.introspection.get_constraints(cursor, table_name)
+    legacy_unique_names = [
+        name
+        for name, constraint in constraints.items()
+        if constraint["unique"]
+        and not constraint["primary_key"]
+        and not constraint["foreign_key"]
+        and list(constraint["columns"]) == [user_field.column]
+    ]
+    for constraint_name in legacy_unique_names:
+        schema_editor.remove_constraint(
+            preference_model,
+            models.UniqueConstraint(
+                fields=("user",),
+                name=constraint_name,
+            ),
+        )
+
+
 class Migration(migrations.Migration):
     dependencies = [
         (
@@ -31,14 +67,10 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterField(
-            model_name="notificationpreference",
-            name="user",
-            field=models.ForeignKey(
-                on_delete=django.db.models.deletion.CASCADE,
-                related_name="notification_preferences",
-                to=settings.AUTH_USER_MODEL,
-            ),
+        migrations.RunPython(
+            repair_legacy_notification_preference_schema,
+            # Migration state already expects timestamps and a per-event FK.
+            migrations.RunPython.noop,
         ),
         migrations.AlterField(
             model_name="notificationpreference",
@@ -48,24 +80,6 @@ class Migration(migrations.Migration):
                 default="SYSTEM",
                 max_length=30,
             ),
-        ),
-        migrations.AddField(
-            model_name="notificationpreference",
-            name="created_at",
-            field=models.DateTimeField(
-                auto_now_add=True,
-                default=django.utils.timezone.now,
-            ),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name="notificationpreference",
-            name="updated_at",
-            field=models.DateTimeField(
-                auto_now=True,
-                default=django.utils.timezone.now,
-            ),
-            preserve_default=False,
         ),
         migrations.AddField(
             model_name="notification",

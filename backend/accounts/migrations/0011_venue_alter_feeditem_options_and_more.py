@@ -115,10 +115,6 @@ class Migration(migrations.Migration):
             model_name="roleapproval",
             name="accounts_ro_target__0f9ea5_idx",
         ),
-        migrations.AlterUniqueTogether(
-            name="notificationpreference",
-            unique_together=set(),
-        ),
         migrations.RemoveField(
             model_name="emailotp",
             name="attempts",
@@ -249,26 +245,6 @@ class Migration(migrations.Migration):
             field=models.DateTimeField(auto_now=True),
         ),
         migrations.AddField(
-            model_name="notificationpreference",
-            name="governance_updates",
-            field=models.BooleanField(default=True),
-        ),
-        migrations.AddField(
-            model_name="notificationpreference",
-            name="membership_updates",
-            field=models.BooleanField(default=True),
-        ),
-        migrations.AddField(
-            model_name="notificationpreference",
-            name="sponsorship_updates",
-            field=models.BooleanField(default=True),
-        ),
-        migrations.AddField(
-            model_name="notificationpreference",
-            name="ticket_updates",
-            field=models.BooleanField(default=True),
-        ),
-        migrations.AddField(
             model_name="paymenthistory",
             name="wallet",
             field=models.ForeignKey(
@@ -354,15 +330,6 @@ class Migration(migrations.Migration):
             field=models.CharField(max_length=150),
         ),
         migrations.AlterField(
-            model_name="notificationpreference",
-            name="user",
-            field=models.OneToOneField(
-                on_delete=django.db.models.deletion.CASCADE,
-                related_name="notification_preferences",
-                to=settings.AUTH_USER_MODEL,
-            ),
-        ),
-        migrations.AlterField(
             model_name="paymenthistory",
             name="amount",
             field=models.DecimalField(
@@ -407,22 +374,6 @@ class Migration(migrations.Migration):
                 related_name="venues",
                 to="accounts.club",
             ),
-        ),
-        migrations.RemoveField(
-            model_name="notificationpreference",
-            name="created_at",
-        ),
-        migrations.RemoveField(
-            model_name="notificationpreference",
-            name="event_type",
-        ),
-        migrations.RemoveField(
-            model_name="notificationpreference",
-            name="sms_enabled",
-        ),
-        migrations.RemoveField(
-            model_name="notificationpreference",
-            name="updated_at",
         ),
         migrations.AlterUniqueTogether(
             name="venue",

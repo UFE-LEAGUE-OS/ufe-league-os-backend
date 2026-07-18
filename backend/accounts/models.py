@@ -145,30 +145,58 @@ class RoleApproval(models.Model):
         APPROVED = "APPROVED", "Approved"
         REJECTED = "REJECTED", "Rejected"
 
-    user = models.ForeignKey(
+    target_user = models.ForeignKey(
         User,
         null=True,
         blank=True,
         on_delete=models.CASCADE,
-        related_name="role_approvals",
+        related_name="role_approval_requests",
     )
-    requested_role = models.CharField(max_length=50, default="")
-    reason = models.TextField(blank=True)
+    requested_role = models.CharField(
+        max_length=30,
+        choices=User.Role.choices,
+        default=User.Role.FAN,
+    )
+    requested_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="role_approval_requests_made",
+    )
+    reviewed_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="role_approval_reviews",
+    )
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PENDING
     )
-    approved_by = models.ForeignKey(
-        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="approvals"
+    reason = models.TextField(
+        blank=True,
+        help_text="Reason for the role change request",
+    )
+    rejection_reason = models.TextField(
+        blank=True,
+        help_text="Reason provided by the reviewer for rejection",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-created_at"]
+        verbose_name = "Role Approval Request"
+        verbose_name_plural = "Role Approval Requests"
+        indexes = [
+            models.Index(fields=["status", "-created_at"]),
+            models.Index(fields=["target_user", "status"]),
+        ]
 
     def __str__(self):
-        user_email = self.user.email if self.user else "unknown"
-        return f"{user_email} - {self.requested_role} - {self.status}"
+        user_email = self.target_user.email if self.target_user else "unknown"
+        return f"RoleApproval({user_email} -> {self.requested_role} [{self.status}])"
 
 
 class ClubAdminScope(models.Model):
@@ -334,31 +362,80 @@ class InterestPreference(models.Model):
 
 
 class Follow(models.Model):
+    class ContentType(models.TextChoices):
+        CLUB = "CLUB", "Club"
+        LEAGUE = "LEAGUE", "League"
+        UNION = "UNION", "Union"
+        COMPETITION = "COMPETITION", "Competition"
+
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="follows")
-    content_type = models.CharField(max_length=50, default="")
+    content_type = models.CharField(max_length=20, choices=ContentType.choices)
     object_id = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         unique_together = ("user", "content_type", "object_id")
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["content_type", "object_id"]),
+            models.Index(fields=["user", "content_type"]),
+        ]
 
     def __str__(self):
         return f"{self.user.email} follows {self.content_type}:{self.object_id}"
 
+    @property
+    def followed_object(self):
+        if self.content_type == self.ContentType.CLUB:
+            return Club.objects.filter(pk=self.object_id).first()
+
+        from dashboards.models import Competition, League, Union
+
+        model_by_type = {
+            self.ContentType.LEAGUE: League,
+            self.ContentType.UNION: Union,
+            self.ContentType.COMPETITION: Competition,
+        }
+        model = model_by_type.get(self.content_type)
+        return model.objects.filter(pk=self.object_id).first() if model else None
+
 
 class FeedItem(models.Model):
+    class ItemType(models.TextChoices):
+        MATCH_RESULT = "MATCH_RESULT", "Match Result"
+        UPCOMING_FIXTURE = "UPCOMING_FIXTURE", "Upcoming Fixture"
+        STANDINGS_CHANGE = "STANDINGS_CHANGE", "Standings Change"
+        NEWS = "NEWS", "News"
+        TICKET_AVAILABLE = "TICKET_AVAILABLE", "Ticket Available"
+
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="feed_items")
     content_type = models.CharField(max_length=50, default="")
     object_id = models.PositiveIntegerField(default=0)
-    title = models.CharField(max_length=200)
+    item_type = models.CharField(
+        max_length=30,
+        choices=ItemType.choices,
+        default=ItemType.NEWS,
+    )
+    title = models.CharField(max_length=300)
     description = models.TextField(blank=True)
     image = models.ImageField(upload_to="feed/", blank=True, null=True)
     published_at = models.DateTimeField(null=True, blank=True)
+    source_content_type = models.CharField(max_length=20, blank=True)
+    source_object_id = models.PositiveIntegerField(null=True, blank=True)
+    source_name = models.CharField(max_length=200, blank=True)
+    relevance_score = models.FloatField(default=0.0)
+    is_read = models.BooleanField(default=False)
+    link = models.CharField(max_length=500, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["-published_at", "-created_at"]
+        ordering = ["-relevance_score", "-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["user", "is_read"]),
+            models.Index(fields=["user", "item_type"]),
+        ]
 
     def __str__(self):
         return f"{self.user.email} feed item: {self.title}"
@@ -431,7 +508,11 @@ class PaymentHistory(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        user_email = self.wallet.user.email if self.wallet else "unknown"
+        user_email = (
+            self.wallet.user.email
+            if self.wallet
+            else self.user.email if self.user else "unknown"
+        )
         return f"{user_email} payment {self.reference}"
 
 

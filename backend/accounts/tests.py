@@ -11,7 +11,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from .google_auth import GoogleEmailNotVerifiedError, InvalidGoogleTokenError
-from .models import EmailOTP
+from .models import EmailOTP, Follow
 
 User = get_user_model()
 
@@ -1794,3 +1794,111 @@ class NotificationInboxAPITests(TestCase):
         self.assertEqual(
             Notification.objects.filter(user=self.user, is_read=False).count(), 0
         )
+
+
+class RestoredAccountContractRegressionTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email="restored-contracts@example.com",
+            password="StrongPass123",
+            first_name="Restored",
+            last_name="Contracts",
+            role=User.Role.FAN,
+            is_email_verified=True,
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_follow_endpoint_serializes_created_relationship(self):
+        from .models import Club
+
+        club = Club.objects.create(name="Restored Follow Club", slug="restored-follow")
+        response = self.client.post(
+            "/api/accounts/follow/",
+            {"content_type": "CLUB", "object_id": club.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["content_type"], "CLUB")
+        self.assertEqual(response.data["object_id"], club.id)
+        self.assertEqual(response.data["object_name"], str(club))
+        self.assertTrue(response.data["is_following"])
+        self.assertIsNotNone(response.data["created_at"])
+
+    def test_follow_endpoint_rejects_invalid_content_type(self):
+        response = self.client.post(
+            "/api/accounts/follow/",
+            {"content_type": "ARBITRARY", "object_id": 1},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Follow.objects.count(), 0)
+
+    def test_follow_endpoint_rejects_non_positive_object_ids(self):
+        for object_id in (0, -1):
+            with self.subTest(object_id=object_id):
+                response = self.client.post(
+                    "/api/accounts/follow/",
+                    {"content_type": "CLUB", "object_id": object_id},
+                    format="json",
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(Follow.objects.count(), 0)
+
+    def test_feed_service_persists_fields_used_by_feed_api(self):
+        from .models import FeedItem
+        from .services import create_feed_item
+
+        item = create_feed_item(
+            self.user,
+            FeedItem.ItemType.NEWS,
+            "Restored feed contract",
+            source_content_type="CLUB",
+            source_object_id=7,
+            relevance_score=0.8,
+        )
+
+        self.assertEqual(item.item_type, FeedItem.ItemType.NEWS)
+        self.assertEqual(item.source_content_type, "CLUB")
+        self.assertEqual(item.source_object_id, 7)
+        self.assertFalse(item.is_read)
+
+    def test_profile_update_accepts_favorite_sport_alias(self):
+        response = self.client.patch(
+            "/api/accounts/profile/",
+            {"favorite_sport": "FOOTBALL"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.favourite_sport, "FOOTBALL")
+
+    def test_admin_role_hierarchy_rejects_same_level_creation(self):
+        club_admin = User.objects.create_user(
+            email="restored-club-admin@example.com",
+            password="StrongPass123",
+            first_name="Club",
+            last_name="Admin",
+            role=User.Role.CLUB_ADMIN,
+            is_email_verified=True,
+        )
+        self.client.force_authenticate(user=club_admin)
+        response = self.client.post(
+            "/api/accounts/club-admin/create-user/",
+            {
+                "email": "forbidden-club-admin@example.com",
+                "password": "StrongPass123",
+                "confirm_password": "StrongPass123",
+                "first_name": "Forbidden",
+                "last_name": "Admin",
+                "role": User.Role.CLUB_ADMIN,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("role", response.data)

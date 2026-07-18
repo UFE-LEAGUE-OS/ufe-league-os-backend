@@ -288,6 +288,13 @@ class PublicDashboardEndpointTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertGreaterEqual(len(response.data), 1)
 
+    def test_public_match_detail_serializes_club_logo_fields(self):
+        response = self.client.get(f"/api/dashboards/public/matches/{self.fixture.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("home_club_logo_url", response.data)
+        self.assertIn("away_club_logo_url", response.data)
+
     def test_public_results_returns_completed_matches_without_authentication(self):
         response = self.client.get("/api/dashboards/public/results/")
 

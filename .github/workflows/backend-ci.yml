@@ -67,7 +67,7 @@ jobs:
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-test.txt
 
       - name: Run Django system check
         working-directory: backend
@@ -89,9 +89,12 @@ jobs:
         working-directory: backend
         run: python manage.py migrate --noinput
 
-      - name: Run backend tests
+      - name: Run Django test suite
         working-directory: backend
-        run: python manage.py test
+        run: python manage.py test -v 1
+
+      - name: Run pytest suite
+        run: python -m pytest -q
 
       - name: Build backend Docker image
         run: docker build -t ufe-league-os-backend:test .

@@ -749,6 +749,7 @@ class TestMatchUpdateConsumer:
         )
         connected, _ = await communicator.connect()
         assert not connected  # Should reject connection
+        await communicator.wait(timeout=1)
 
     async def test_consumer_responds_to_ping(self, db):
         """Consumer responds to ping with pong."""

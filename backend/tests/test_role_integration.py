@@ -1138,8 +1138,7 @@ class TestNotificationPreferencesPersistence:
         response = client.get("/api/accounts/notification-preferences/me/")
         assert response.status_code == status.HTTP_200_OK
         # Should return all default preferences
-        assert len(response.data) >= 5  # At least 5 event types
-        # Should return all default preferences inside the 'preferences' key
+        assert response.data["count"] >= 5
         assert len(response.data["preferences"]) >= 5
 
     def test_update_notification_preference_persists(self, client, fan_user):
@@ -1333,7 +1332,7 @@ class TestFollowingAndFeedIntegration:
 
         # Verify followed
         follows = client.get("/api/accounts/follow/")
-        assert len(follows.data) == 1
+        assert follows.data["club_count"] == 1
 
         # Unfollow
         unfollow_response = client.delete(
@@ -1345,10 +1344,11 @@ class TestFollowingAndFeedIntegration:
 
         # Verify unfollowed
         follows = client.get("/api/accounts/follow/")
-        assert len(follows.data) == 0
+        assert follows.data["club_count"] == 0
 
     def test_follow_multiple_content_types(self, client, db):
-        from accounts.models import Club, League, Union
+        from accounts.models import Club
+        from dashboards.models import League, Union
 
         User = get_user_model()
         user = User.objects.create_user(
@@ -1360,8 +1360,16 @@ class TestFollowingAndFeedIntegration:
         )
 
         club = Club.objects.create(name="Multi Club", slug="multi-club")
-        league = League.objects.create(name="Multi League", slug="multi-league")
-        union = Union.objects.create(name="Multi Union", slug="multi-union")
+        union = Union.objects.create(
+            name="Multi Union",
+            slug="multi-union",
+            country="Uganda",
+        )
+        league = League.objects.create(
+            union=union,
+            name="Multi League",
+            slug="multi-league",
+        )
 
         client.force_authenticate(user=user)
 
@@ -1384,10 +1392,18 @@ class TestFollowingAndFeedIntegration:
 
         # Verify all follows
         follows = client.get("/api/accounts/follow/")
-        assert len(follows.data) == 3
+        assert (
+            follows.data["club_count"]
+            + follows.data["league_count"]
+            + follows.data["union_count"]
+        ) == 3
 
         # Verify content types are present
-        followed_types = {item["content_type"] for item in follows.data}
+        followed_types = {
+            item["content_type"]
+            for group in ("clubs", "leagues", "unions")
+            for item in follows.data[group]
+        }
         assert "CLUB" in followed_types
         assert "LEAGUE" in followed_types
         assert "UNION" in followed_types
@@ -1453,15 +1469,15 @@ class TestFollowingAndFeedIntegration:
             user=user,
             item_type=FeedItem.ItemType.NEWS,
             title="Feed Club signs new player",
-            related_object_type="CLUB",
-            related_object_id=club.id,
+            source_content_type="CLUB",
+            source_object_id=club.id,
             relevance_score=0.8,
         )
 
         # Get feed
         feed_response = client.get("/api/accounts/feed/")
         assert feed_response.status_code == status.HTTP_200_OK
-        assert len(feed_response.data) >= 1
+        assert feed_response.data["count"] >= 1
 
         # Verify feed contains the news item
         news_items = [
@@ -1596,7 +1612,7 @@ class TestWalletAndPaymentAccess:
         client.force_authenticate(user=league_admin_user)
         response = client.get("/api/accounts/wallet/")
         assert response.status_code == status.HTTP_200_OK
-        assert response.data["balance"] == 0.00
+        assert response.data["balance"] == "0.00"
         assert "does not currently store" in response.data["balance_note"].lower()
 
     def test_payment_history_filters_work(self, client, union_admin_user):
