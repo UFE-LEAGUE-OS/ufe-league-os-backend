@@ -272,7 +272,7 @@ class NotificationPreference(models.Model):
         PAYMENT = "PAYMENT", "Payment"
         MARKETING_UPDATES = "MARKETING_UPDATES", "Marketing Updates"
 
-    user = models.OneToOneField(
+    user = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="notification_preferences"
     )
     event_type = models.CharField(
@@ -288,6 +288,9 @@ class NotificationPreference(models.Model):
 
     class Meta:
         ordering = ["user__email"]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "event_type"], name="unique_user_event_type")
+        ]
 
     def __str__(self):
         return f"{self.user.email} notification preferences"
