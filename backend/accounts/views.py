@@ -18,6 +18,13 @@ from accounts.permissions import (
 from accounts.models import RoleApproval
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .google_auth import (
+    GoogleAuthException,
+    GoogleEmailNotVerifiedError,
+    InvalidGoogleTokenError,
+    extract_google_user_info,
+    verify_google_id_token,
+)
 from .models import Club, User
 from .serializers import (
     AdminCreateUserSerializer,
@@ -208,9 +215,28 @@ def google_auth_view(request):
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    email = serializer.validated_data["email"]
-    first_name = serializer.validated_data["first_name"]
-    last_name = serializer.validated_data["last_name"]
+    try:
+        payload = verify_google_id_token(serializer.validated_data["id_token"])
+    except InvalidGoogleTokenError as exc:
+        return Response(
+            {"id_token": str(exc)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except GoogleEmailNotVerifiedError as exc:
+        return Response(
+            {"id_token": str(exc)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except GoogleAuthException as exc:
+        return Response(
+            {"id_token": str(exc)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user_info = extract_google_user_info(payload)
+    email = user_info["email"]
+    first_name = user_info["first_name"]
+    last_name = user_info["last_name"]
 
     # Check if user already exists
     user = User.objects.filter(email__iexact=email).first()

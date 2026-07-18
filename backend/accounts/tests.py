@@ -1153,7 +1153,7 @@ class GoogleAuthAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
 
-    @patch("accounts.serializers.verify_google_id_token")
+    @patch("accounts.views.verify_google_id_token")
     def test_google_auth_new_user(self, mock_verify):
         """Test that a new user is registered via Google OAuth."""
         mock_verify.return_value = MOCK_GOOGLE_PAYLOAD
@@ -1180,7 +1180,7 @@ class GoogleAuthAPITests(TestCase):
         self.assertEqual(user.role, User.Role.FAN)
         self.assertIsNone(user.phone_number)
 
-    @patch("accounts.serializers.verify_google_id_token")
+    @patch("accounts.views.verify_google_id_token")
     def test_google_auth_existing_user(self, mock_verify):
         """Test that an existing user can log in via Google OAuth."""
         # Create an existing user with the same email
@@ -1214,7 +1214,7 @@ class GoogleAuthAPITests(TestCase):
         # Email should be verified now
         self.assertTrue(user.is_email_verified)
 
-    @patch("accounts.serializers.verify_google_id_token")
+    @patch("accounts.views.verify_google_id_token")
     def test_google_auth_existing_user_empty_name_filled_from_google(self, mock_verify):
         """Test that an existing user with empty name gets it filled from Google."""
         User.objects.create_user(
@@ -1237,7 +1237,7 @@ class GoogleAuthAPITests(TestCase):
         self.assertEqual(user.first_name, "Google")
         self.assertEqual(user.last_name, "User")
 
-    @patch("accounts.serializers.verify_google_id_token")
+    @patch("accounts.views.verify_google_id_token")
     def test_google_auth_existing_user_email_verified(self, mock_verify):
         """Test that existing user's email becomes verified via Google."""
         User.objects.create_user(
@@ -1269,7 +1269,7 @@ class GoogleAuthAPITests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("id_token", response.data)
 
-    @patch("accounts.serializers.verify_google_id_token")
+    @patch("accounts.views.verify_google_id_token")
     def test_google_auth_no_name_in_payload(self, mock_verify):
         """Test registration when Google payload has no given_name/family_name."""
         mock_verify.return_value = MOCK_GOOGLE_PAYLOAD_NO_NAME
@@ -1285,7 +1285,7 @@ class GoogleAuthAPITests(TestCase):
         self.assertEqual(response.data["user"]["first_name"], "")
         self.assertEqual(response.data["user"]["last_name"], "")
 
-    @patch("accounts.serializers.verify_google_id_token")
+    @patch("accounts.views.verify_google_id_token")
     def test_google_auth_server_error(self, mock_verify):
         """Test that invalid token raises appropriate error."""
         mock_verify.side_effect = InvalidGoogleTokenError("Token has expired.")

@@ -1,4 +1,4 @@
-from django.contrib.auth import get_user_model
+from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
@@ -207,8 +207,11 @@ class RegisterSerializer(serializers.Serializer):
 
 
 class GoogleAuthSerializer(serializers.Serializer):
-    token = serializers.CharField()
-    invitation_token = serializers.CharField(required=False, allow_blank=True)
+    id_token = serializers.CharField()
+    invitation_token = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
 
 
 class BecomeSponsorSerializer(serializers.Serializer):
@@ -394,27 +397,39 @@ class ClubSerializer(serializers.ModelSerializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    identifier = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
-        email = attrs.get("email", "").strip().lower()
-        password = attrs.get("password", "")
+        identifier = attrs["identifier"].strip()
+        password = attrs["password"]
 
-        try:
-            user = User.objects.get(email__iexact=email)
-        except User.DoesNotExist:
-            raise serializers.ValidationError(
-                {"email": "No user found with this email address."}
-            )
+        if "@" in identifier:
+            try:
+                account = User.objects.get(email__iexact=identifier)
+            except User.DoesNotExist:
+                raise serializers.ValidationError(
+                    {"identifier": "Invalid credentials."}
+                )
+        else:
+            phone = normalize_phone_number(identifier)
+            try:
+                account = User.objects.get(phone_number=phone)
+            except User.DoesNotExist:
+                raise serializers.ValidationError(
+                    {"identifier": "Invalid credentials."}
+                )
 
-        if not user.check_password(password):
-            raise serializers.ValidationError({"password": "Invalid password."})
+        user = authenticate(
+            username=getattr(account, User.USERNAME_FIELD),
+            password=password,
+        )
+
+        if user is None:
+            raise serializers.ValidationError({"identifier": "Invalid credentials."})
 
         if not user.is_active:
-            raise serializers.ValidationError(
-                {"email": "This account has been deactivated."}
-            )
+            raise serializers.ValidationError({"identifier": "Account is disabled."})
 
         attrs["user"] = user
         return attrs
