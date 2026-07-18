@@ -289,7 +289,9 @@ class NotificationPreference(models.Model):
     class Meta:
         ordering = ["user__email"]
         constraints = [
-            models.UniqueConstraint(fields=["user", "event_type"], name="unique_user_event_type")
+            models.UniqueConstraint(
+                fields=["user", "event_type"], name="unique_user_event_type"
+            )
         ]
 
     def __str__(self):
