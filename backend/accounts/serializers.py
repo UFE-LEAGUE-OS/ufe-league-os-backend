@@ -10,7 +10,6 @@ from .models import (
     InterestPreference,
     RoleApproval,
     Wallet,
-    PaymentHistory,
     FeedItem,
     Venue,
 )
@@ -320,9 +319,13 @@ class AdminCreateUserSerializer(serializers.Serializer):
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating the authenticated user's profile."""
 
+    MAX_AVATAR_SIZE = 1 * 1024 * 1024
+
     class Meta:
         model = User
         fields = (
+            "first_name",
+            "last_name",
             "phone_number",
             "location",
             "date_of_birth",
@@ -348,6 +351,11 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             )
 
         return phone_number
+
+    def validate_avatar(self, image):
+        if image and image.size > self.MAX_AVATAR_SIZE:
+            raise serializers.ValidationError("Avatar exceeds maximum size.")
+        return image
 
     def update(self, instance, validated_data):
         for attr, value in validated_data.items():
@@ -440,6 +448,7 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
+    email = serializers.EmailField()
     code = serializers.CharField()
     new_password = serializers.CharField(write_only=True)
     confirm_password = serializers.CharField(write_only=True)
@@ -480,19 +489,22 @@ class RoleApprovalReviewSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=RoleApproval.Status.choices)
 
 
-class CombinedPaymentHistoryItemSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PaymentHistory
-        fields = (
-            "id",
-            "wallet",
-            "amount",
-            "currency",
-            "status",
-            "reference",
-            "created_at",
-        )
-        read_only_fields = ("id", "created_at")
+class PaymentHistorySerializer(serializers.Serializer):
+    """Serializer for combined payment history items (legacy + ticket + membership + sponsorship)."""
+
+    id = serializers.CharField()
+    source = serializers.CharField()
+    source_id = serializers.IntegerField(required=False)
+    payment_type = serializers.CharField()
+    payment_type_label = serializers.CharField(required=False)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2)
+    currency = serializers.CharField()
+    status = serializers.CharField()
+    status_label = serializers.CharField(required=False)
+    reference = serializers.CharField(required=False)
+    description = serializers.CharField(required=False)
+    metadata = serializers.JSONField(required=False)
+    created_at = serializers.DateTimeField()
 
 
 class ClubProfileUpdateSerializer(serializers.ModelSerializer):

@@ -17,7 +17,7 @@ from accounts.permissions import IsAuthenticatedAudit
 
 from .models import NotificationPreference
 from .serializers import (
-    CombinedPaymentHistoryItemSerializer,
+    PaymentHistorySerializer,
     FeedItemSerializer,
     FollowActionSerializer,
     FollowResponseSerializer,
@@ -119,6 +119,7 @@ def _update_notification_preferences(user, request_data):
     """
     Shared helper for old and new notification preference endpoints.
     """
+    from django.db import IntegrityError, transaction
 
     data = request_data
 
@@ -140,10 +141,15 @@ def _update_notification_preferences(user, request_data):
             errors.append({"error": "event_type is required for each preference."})
             continue
 
-        pref, _ = NotificationPreference.objects.get_or_create(
-            user=user,
-            event_type=event_type,
-        )
+        try:
+            with transaction.atomic():
+                pref, _ = NotificationPreference.objects.get_or_create(
+                    user=user,
+                    event_type=event_type,
+                )
+        except IntegrityError:
+            pref = NotificationPreference.objects.get(user=user, event_type=event_type)
+
         serializer = NotificationPreferenceSerializer(
             pref,
             data=pref_data,
@@ -263,11 +269,14 @@ def wallet_view(request):
     The MVP wallet does not store user money. It summarizes payment history,
     purchased tickets, memberships, and sponsorship payments.
     """
+    from .services import get_or_create_wallet
+
     limit = _safe_positive_int(
         request.query_params.get("limit"), default=10, maximum=50
     )
-    wallet_data = get_wallet_payment_center(request.user, limit=limit)
-    serializer = WalletSummarySerializer(wallet_data)
+    get_wallet_payment_center(request.user, limit=limit)
+    wallet = get_or_create_wallet(request.user)
+    serializer = WalletSummarySerializer(wallet)
     return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -308,7 +317,7 @@ def payment_history_view(request):
         offset=offset,
     )
 
-    serializer = CombinedPaymentHistoryItemSerializer(items, many=True)
+    serializer = PaymentHistorySerializer(items, many=True)
     return Response(
         {
             "count": total,

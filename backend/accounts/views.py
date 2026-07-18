@@ -403,7 +403,7 @@ def password_reset_confirm_view(request):
             reset_password_with_otp(
                 email=serializer.validated_data["email"],
                 code=serializer.validated_data["code"],
-                new_password=serializer.validated_data["password"],
+                new_password=serializer.validated_data["new_password"],
             )
         except (ValueError, User.DoesNotExist) as e:
             return Response({"code": [str(e)]}, status=status.HTTP_400_BAD_REQUEST)

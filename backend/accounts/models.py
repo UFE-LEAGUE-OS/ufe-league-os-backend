@@ -268,6 +268,9 @@ class NotificationPreference(models.Model):
         SPONSORSHIP = "SPONSORSHIP", "Sponsorship"
         GOVERNANCE = "GOVERNANCE", "Governance"
         CLUB = "CLUB", "Club"
+        ACCOUNT_SECURITY = "ACCOUNT_SECURITY", "Account Security"
+        PAYMENT = "PAYMENT", "Payment"
+        MARKETING_UPDATES = "MARKETING_UPDATES", "Marketing Updates"
 
     user = models.OneToOneField(
         User, on_delete=models.CASCADE, related_name="notification_preferences"
@@ -360,6 +363,8 @@ class Wallet(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="wallet")
     balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     currency = models.CharField(max_length=10, default="UGX")
+    stored_balance_enabled = models.BooleanField(default=False)
+    balance_note = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -432,9 +437,9 @@ class Notification(models.Model):
         CLUB = "CLUB", "Club"
 
     class Priority(models.TextChoices):
-        LOW = "LOW", "Low"
-        NORMAL = "NORMAL", "Normal"
-        HIGH = "HIGH", "High"
+        LOW = "low", "Low"
+        NORMAL = "normal", "Normal"
+        HIGH = "high", "High"
 
     user = models.ForeignKey(
         User,
@@ -444,9 +449,29 @@ class Notification(models.Model):
     category = models.CharField(
         max_length=30, choices=Category.choices, default=Category.SYSTEM
     )
-    title = models.CharField(max_length=150)
+    title = models.CharField(max_length=255)
     message = models.TextField()
+    event_type = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+    )
+    priority = models.CharField(
+        max_length=20,
+        choices=Priority.choices,
+        default=Priority.NORMAL,
+    )
+    action_url = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+    )
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+    )
     is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

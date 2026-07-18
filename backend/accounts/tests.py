@@ -631,7 +631,7 @@ class AuthAPITests(TestCase):
             {
                 "email": user.email,
                 "code": otp.code,
-                "password": "NewStrongPass123",
+                "new_password": "NewStrongPass123",
                 "confirm_password": "NewStrongPass123",
             },
             format="json",
@@ -668,7 +668,7 @@ class AuthAPITests(TestCase):
             {
                 "email": user.email,
                 "code": otp.code,
-                "password": "NewStrongPass123",
+                "new_password": "NewStrongPass123",
                 "confirm_password": "NewStrongPass123",
             },
             format="json",
@@ -722,7 +722,7 @@ class AuthAPITests(TestCase):
             {
                 "email": user.email,
                 "code": "000000",
-                "password": "NewStrongPass123",
+                "new_password": "NewStrongPass123",
                 "confirm_password": "NewStrongPass123",
             },
             format="json",
@@ -757,7 +757,7 @@ class AuthAPITests(TestCase):
             {
                 "email": user.email,
                 "code": otp.code,
-                "password": "NewStrongPass123",
+                "new_password": "NewStrongPass123",
                 "confirm_password": "NewStrongPass123",
             },
             format="json",
@@ -792,7 +792,7 @@ class AuthAPITests(TestCase):
             {
                 "email": user.email,
                 "code": otp.code,
-                "password": "NewStrongPass123",
+                "new_password": "NewStrongPass123",
                 "confirm_password": "NewStrongPass123",
             },
             format="json",
@@ -805,7 +805,7 @@ class AuthAPITests(TestCase):
             {
                 "email": user.email,
                 "code": otp.code,
-                "password": "AnotherStrongPass123",
+                "new_password": "AnotherStrongPass123",
                 "confirm_password": "AnotherStrongPass123",
             },
             format="json",
@@ -981,7 +981,7 @@ class AuthAPITests(TestCase):
             {
                 "email": user.email,
                 "code": "000000",
-                "password": "NewStrongPass123",
+                "new_password": "NewStrongPass123",
                 "confirm_password": "NewStrongPass123",
             },
             format="json",
@@ -1345,9 +1345,9 @@ class NotificationWalletPaymentCenterAPITests(TestCase):
         }
 
         self.assertIn(NotificationPreference.EventType.TICKET_UPDATES, event_types)
-        self.assertIn(NotificationPreference.EventType.MEMBERSHIP_UPDATES, event_types)
+        self.assertIn(NotificationPreference.EventType.MEMBERSHIP, event_types)
         self.assertIn(NotificationPreference.EventType.SPONSORSHIP_UPDATES, event_types)
-        self.assertIn(NotificationPreference.EventType.FANTASY_UPDATES, event_types)
+        self.assertIn(NotificationPreference.EventType.GOVERNANCE, event_types)
         self.assertIn(NotificationPreference.EventType.MARKETING_UPDATES, event_types)
 
     def test_notification_preferences_me_endpoint_updates_single_preference(self):
@@ -1652,7 +1652,7 @@ class NotificationInboxAPITests(TestCase):
         )
         create_in_app_notification(
             user=self.user,
-            event_type=NotificationPreference.EventType.MEMBERSHIP_UPDATES,
+            event_type=NotificationPreference.EventType.MEMBERSHIP,
             category=Notification.Category.MEMBERSHIP,
             title="Membership confirmed",
         )
