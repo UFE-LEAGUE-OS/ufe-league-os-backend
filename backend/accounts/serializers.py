@@ -605,6 +605,9 @@ class CombinedPaymentHistoryItemSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField(required=False)
 
 
+PaymentHistorySerializer = CombinedPaymentHistoryItemSerializer
+
+
 class ClubProfileUpdateSerializer(serializers.ModelSerializer):
     """Update serializer for club profile/branding."""
 

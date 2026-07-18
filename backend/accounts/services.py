@@ -7,6 +7,7 @@ from email.mime.image import MIMEImage
 from django.conf import settings
 from django.contrib.staticfiles import finders
 from django.core.mail import EmailMultiAlternatives
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.template.loader import render_to_string
 from django.utils import timezone
@@ -431,10 +432,17 @@ def get_or_create_notification_preferences(user):
     """Get or create all default notification preferences for a user."""
     defaults = []
     for event_type, _label in NotificationPreference.EventType.choices:
-        pref, _created = NotificationPreference.objects.get_or_create(
-            user=user, event_type=event_type
-        )
-        defaults.append(pref)
+        try:
+            with transaction.atomic():
+                pref, _created = NotificationPreference.objects.get_or_create(
+                    user=user, event_type=event_type
+                )
+        except IntegrityError:
+            pref = NotificationPreference.objects.filter(
+                user=user, event_type=event_type
+            ).first()
+        if pref is not None:
+            defaults.append(pref)
     return defaults
 
 
@@ -950,10 +958,14 @@ def user_allows_notification(user, event_type, channel="push"):
 
     For the frontend inbox, we treat push_enabled as the in-app notification toggle.
     """
-    pref, _created = NotificationPreference.objects.get_or_create(
-        user=user,
-        event_type=event_type,
-    )
+    try:
+        with transaction.atomic():
+            pref, _created = NotificationPreference.objects.get_or_create(
+                user=user,
+                event_type=event_type,
+            )
+    except IntegrityError:
+        pref = NotificationPreference.objects.get(user=user, event_type=event_type)
 
     if channel == "email":
         return pref.email_enabled

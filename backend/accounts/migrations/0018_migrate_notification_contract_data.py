@@ -6,6 +6,12 @@ LEGACY_EVENT_TYPE_NORMALIZATION = {
     "CLUB": "CLUB_NEWS",
 }
 
+LEGACY_PRIORITY_NORMALIZATION = {
+    "low": "LOW",
+    "normal": "NORMAL",
+    "high": "HIGH",
+}
+
 CANONICAL_EVENT_TYPES = (
     "SYSTEM",
     "MATCH_REMINDER",
@@ -158,6 +164,11 @@ def migrate_notification_contract_data(apps, schema_editor):
         schema_editor,
         db_alias,
     )
+
+    for legacy, canonical in LEGACY_PRIORITY_NORMALIZATION.items():
+        notification_model.objects.using(db_alias).filter(priority=legacy).update(
+            priority=canonical
+        )
 
     user_ids = list(preferences.values_list("user_id", flat=True).distinct())
     for user_id in user_ids:

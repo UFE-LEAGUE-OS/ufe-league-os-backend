@@ -32,18 +32,47 @@ def finalize_legacy_notification_preference_schema(apps, schema_editor):
     event_type_column = preference_model._meta.get_field("event_type").column
     with connection.cursor() as cursor:
         constraints = connection.introspection.get_constraints(cursor, table_name)
-    has_user_event_unique = any(
-        constraint["unique"]
+    user_event_uniques = [
+        (name, constraint)
+        for name, constraint in constraints.items()
+        if constraint["unique"]
+        and not constraint["primary_key"]
+        and not constraint["foreign_key"]
         and set(constraint["columns"]) == {user_column, event_type_column}
         and len(constraint["columns"]) == 2
-        for constraint in constraints.values()
-    )
-    if not has_user_event_unique:
+    ]
+    if not user_event_uniques:
         schema_editor.alter_unique_together(
             preference_model,
             set(),
             {("user", "event_type")},
         )
+        return
+
+    preferred_name = (
+        "unique_user_event_type"
+        if any(name == "unique_user_event_type" for name, _ in user_event_uniques)
+        else sorted(name for name, _ in user_event_uniques)[0]
+    )
+    for constraint_name, constraint in user_event_uniques:
+        if constraint_name == preferred_name:
+            continue
+        if constraint["index"]:
+            schema_editor.remove_index(
+                preference_model,
+                models.Index(
+                    fields=("user", "event_type"),
+                    name=constraint_name,
+                ),
+            )
+        else:
+            schema_editor.remove_constraint(
+                preference_model,
+                models.UniqueConstraint(
+                    fields=("user", "event_type"),
+                    name=constraint_name,
+                ),
+            )
 
 
 class Migration(migrations.Migration):
