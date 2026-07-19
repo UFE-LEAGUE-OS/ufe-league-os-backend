@@ -130,6 +130,41 @@ urlpatterns = [
         name="union-admin-promote-relegate",
     ),
     path(
+        "union-admin/national-teams/",
+        union_management_views.union_admin_national_teams_view,
+        name="union-admin-national-teams",
+    ),
+    path(
+        "union-admin/national-teams/<int:team_id>/",
+        union_management_views.union_admin_national_team_detail_view,
+        name="union-admin-national-team-detail",
+    ),
+    path(
+        "union-admin/national-teams/<int:team_id>/members/",
+        union_management_views.union_admin_national_team_members_view,
+        name="union-admin-national-team-members",
+    ),
+    path(
+        "union-admin/national-teams/<int:team_id>/members/<int:member_id>/",
+        union_management_views.union_admin_national_team_member_detail_view,
+        name="union-admin-national-team-member-detail",
+    ),
+    path(
+        "union-admin/registration-applications/",
+        union_management_views.union_admin_registration_applications_view,
+        name="union-admin-registration-applications",
+    ),
+    path(
+        "union-admin/registration-applications/<int:application_id>/",
+        union_management_views.union_admin_registration_application_detail_view,
+        name="union-admin-registration-application-detail",
+    ),
+    path(
+        "union-admin/official-readiness/",
+        union_management_views.union_admin_official_readiness_view,
+        name="union-admin-official-readiness",
+    ),
+    path(
         "union-admin/referees/",
         union_management_views.union_admin_match_officials_view,
         name="union-admin-match-officials",

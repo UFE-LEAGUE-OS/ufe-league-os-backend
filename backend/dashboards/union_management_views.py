@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from django.contrib.auth import get_user_model
-from django.db import models, transaction
+from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime, parse_time
 from django.utils.text import slugify
@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from accounts.models import Club
 from accounts.permissions import IsAuthenticatedAudit
 from accounts.rbac import log_governance_action
+from teams.models import PlayerRegistration, Team
 from .management_serializers import (
     ClubManagementSerializer,
     CompetitionManagementSerializer,
@@ -19,8 +20,11 @@ from .management_serializers import (
     LeagueClubMembershipSerializer,
     LeagueManagementSerializer,
     MatchListSerializer,
-    UnionMatchOfficialManagementSerializer,
+    NationalTeamMemberSerializer,
+    NationalTeamSerializer,
     SeasonManagementSerializer,
+    UnionMatchOfficialManagementSerializer,
+    UnionRegistrationApplicationSerializer,
 )
 from .models import (
     Competition,
@@ -28,8 +32,11 @@ from .models import (
     League,
     LeagueClubMembership,
     Match,
+    NationalTeam,
+    NationalTeamMember,
     Season,
     UnionMatchOfficial,
+    UnionRegistrationApplication,
     UnionWorkspaceMembership,
 )
 from .views import (
@@ -116,6 +123,10 @@ def _workspace_management_clubs(workspace):
     return (
         clubs.distinct()
         .select_related("admin")
+        .annotate(
+            teams_count=models.Count("teams", distinct=True),
+            players_count=models.Count("player_registrations", distinct=True),
+        )
         .prefetch_related(
             "league_memberships__league",
             "league_memberships__season",
@@ -203,6 +214,98 @@ def _unique_slug(model, base, queryset):
         counter += 1
 
     return slug
+
+
+def _parse_boolean(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _workspace_national_teams(workspace):
+    active_member_filter = ~models.Q(members__status=NationalTeamMember.Status.RELEASED)
+    return (
+        NationalTeam.objects.filter(workspace=workspace)
+        .select_related("workspace", "created_by")
+        .annotate(
+            players_count=models.Count(
+                "members",
+                filter=(
+                    models.Q(members__member_type=NationalTeamMember.MemberType.PLAYER)
+                    & active_member_filter
+                ),
+                distinct=True,
+            ),
+            staff_count=models.Count(
+                "members",
+                filter=(
+                    models.Q(members__member_type=NationalTeamMember.MemberType.STAFF)
+                    & active_member_filter
+                ),
+                distinct=True,
+            ),
+        )
+        .order_by("name")
+    )
+
+
+def _get_workspace_national_team(workspace, value):
+    if not value:
+        return None
+    queryset = _workspace_national_teams(workspace)
+    if str(value).isdigit():
+        return queryset.filter(id=value).first()
+    return queryset.filter(slug=value).first()
+
+
+def _get_workspace_team(workspace, value):
+    if not value:
+        return None
+    queryset = Team.objects.filter(
+        club__in=_workspace_management_clubs(workspace)
+    ).select_related("club")
+    if str(value).isdigit():
+        return queryset.filter(id=value).first()
+    return queryset.filter(name__iexact=value).first()
+
+
+def _get_workspace_player_registration(workspace, value):
+    if not value:
+        return None
+    queryset = PlayerRegistration.objects.filter(
+        club__in=_workspace_management_clubs(workspace)
+    ).select_related("club", "team")
+    if str(value).isdigit():
+        return queryset.filter(id=value).first()
+    return queryset.filter(registration_number__iexact=value).first()
+
+
+def _resolve_optional_user(value):
+    if value in (None, ""):
+        return None, None
+    User = get_user_model()
+    if str(value).isdigit():
+        user = User.objects.filter(id=value).first()
+    else:
+        user = User.objects.filter(email__iexact=str(value).strip()).first()
+    if user is None:
+        return None, _workspace_error("The selected user account was not found.")
+    return user, None
+
+
+def _validate_choice(value, choices, field_name, default=None):
+    normalized = str(value or default or "").strip().upper()
+    valid = {choice[0] for choice in choices}
+    if normalized not in valid:
+        return None, _workspace_error(f"Invalid {field_name} value.")
+    return normalized, None
 
 
 @api_view(["GET", "POST"])
@@ -1962,4 +2065,761 @@ def union_admin_generate_fixtures_view(request):
             ).data,
         },
         status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_national_teams_view(request):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+
+    workspace = membership.workspace
+    permission_error = _require_permission(
+        request.user, workspace, "union.teams.manage"
+    )
+    if permission_error:
+        return permission_error
+
+    if request.method == "GET":
+        teams = _workspace_national_teams(workspace)
+        query = str(request.query_params.get("q") or "").strip()
+        status_value = str(request.query_params.get("status") or "").strip().upper()
+        active_value = request.query_params.get("is_active")
+
+        if query:
+            teams = teams.filter(
+                models.Q(name__icontains=query)
+                | models.Q(category__icontains=query)
+                | models.Q(head_coach__icontains=query)
+            )
+        if status_value:
+            if status_value not in {
+                choice[0] for choice in NationalTeam.Status.choices
+            }:
+                return _workspace_error("Invalid national team status value.")
+            teams = teams.filter(status=status_value)
+        if active_value is not None:
+            teams = teams.filter(is_active=_parse_boolean(active_value))
+
+        return Response(
+            {
+                "count": teams.count(),
+                "results": NationalTeamSerializer(teams, many=True).data,
+            }
+        )
+
+    name = str(request.data.get("name") or "").strip()
+    category = str(request.data.get("category") or "").strip()
+    if not name:
+        return _workspace_error("National team name is required.")
+    if not category:
+        return _workspace_error("National team category is required.")
+
+    status_value, choice_error = _validate_choice(
+        request.data.get("status"),
+        NationalTeam.Status.choices,
+        "national team status",
+        NationalTeam.Status.ACTIVE,
+    )
+    if choice_error:
+        return choice_error
+
+    team = NationalTeam.objects.create(
+        workspace=workspace,
+        name=name,
+        slug=_unique_slug(
+            NationalTeam,
+            name,
+            NationalTeam.objects.filter(workspace=workspace),
+        ),
+        category=category,
+        gender=str(request.data.get("gender") or "").strip(),
+        age_group=str(request.data.get("age_group") or "").strip(),
+        head_coach=str(request.data.get("head_coach") or "").strip(),
+        status=status_value,
+        notes=str(request.data.get("notes") or "").strip(),
+        is_active=_parse_boolean(request.data.get("is_active"), True),
+        created_by=request.user,
+    )
+
+    log_governance_action(
+        actor=request.user,
+        action="national_team_created",
+        details={"workspace": workspace.slug, "national_team": team.id},
+    )
+    team = _workspace_national_teams(workspace).get(id=team.id)
+    return Response(NationalTeamSerializer(team).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["GET", "PATCH", "DELETE"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_national_team_detail_view(request, team_id):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+    workspace = membership.workspace
+    permission_error = _require_permission(
+        request.user, workspace, "union.teams.manage"
+    )
+    if permission_error:
+        return permission_error
+
+    team = _get_workspace_national_team(workspace, team_id)
+    if team is None:
+        return _workspace_error("National team not found.", status.HTTP_404_NOT_FOUND)
+
+    if request.method == "GET":
+        return Response(NationalTeamSerializer(team).data)
+
+    if request.method == "DELETE":
+        team_id_value = team.id
+        team.delete()
+        log_governance_action(
+            actor=request.user,
+            action="national_team_deleted",
+            details={"workspace": workspace.slug, "national_team": team_id_value},
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    if "name" in request.data:
+        name = str(request.data.get("name") or "").strip()
+        if not name:
+            return _workspace_error("National team name cannot be blank.")
+        team.name = name
+    if "category" in request.data:
+        category = str(request.data.get("category") or "").strip()
+        if not category:
+            return _workspace_error("National team category cannot be blank.")
+        team.category = category
+    for field in ("gender", "age_group", "head_coach", "notes"):
+        if field in request.data:
+            setattr(team, field, str(request.data.get(field) or "").strip())
+    if "status" in request.data:
+        status_value, choice_error = _validate_choice(
+            request.data.get("status"),
+            NationalTeam.Status.choices,
+            "national team status",
+        )
+        if choice_error:
+            return choice_error
+        team.status = status_value
+    if "is_active" in request.data:
+        team.is_active = _parse_boolean(request.data.get("is_active"), team.is_active)
+
+    team.save()
+    log_governance_action(
+        actor=request.user,
+        action="national_team_updated",
+        details={"workspace": workspace.slug, "national_team": team.id},
+    )
+    team = _workspace_national_teams(workspace).get(id=team.id)
+    return Response(NationalTeamSerializer(team).data)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_national_team_members_view(request, team_id):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+    workspace = membership.workspace
+    permission_error = _require_permission(
+        request.user, workspace, "union.teams.manage"
+    )
+    if permission_error:
+        return permission_error
+
+    team = _get_workspace_national_team(workspace, team_id)
+    if team is None:
+        return _workspace_error("National team not found.", status.HTTP_404_NOT_FOUND)
+
+    if request.method == "GET":
+        members = team.members.select_related("team", "user", "club")
+        member_type = str(request.query_params.get("member_type") or "").strip().upper()
+        status_value = str(request.query_params.get("status") or "").strip().upper()
+        query = str(request.query_params.get("q") or "").strip()
+        if member_type:
+            if member_type not in {
+                choice[0] for choice in NationalTeamMember.MemberType.choices
+            }:
+                return _workspace_error("Invalid member type value.")
+            members = members.filter(member_type=member_type)
+        if status_value:
+            if status_value not in {
+                choice[0] for choice in NationalTeamMember.Status.choices
+            }:
+                return _workspace_error("Invalid member status value.")
+            members = members.filter(status=status_value)
+        if query:
+            members = members.filter(
+                models.Q(full_name__icontains=query)
+                | models.Q(role__icontains=query)
+                | models.Q(club__name__icontains=query)
+            )
+        return Response(
+            {
+                "count": members.count(),
+                "results": NationalTeamMemberSerializer(members, many=True).data,
+            }
+        )
+
+    full_name = str(request.data.get("full_name") or "").strip()
+    if not full_name:
+        return _workspace_error("Member full name is required.")
+    member_type, choice_error = _validate_choice(
+        request.data.get("member_type"),
+        NationalTeamMember.MemberType.choices,
+        "member type",
+        NationalTeamMember.MemberType.PLAYER,
+    )
+    if choice_error:
+        return choice_error
+    status_value, choice_error = _validate_choice(
+        request.data.get("status"),
+        NationalTeamMember.Status.choices,
+        "member status",
+        NationalTeamMember.Status.ACTIVE,
+    )
+    if choice_error:
+        return choice_error
+
+    club = None
+    if request.data.get("club") not in (None, ""):
+        club = _get_workspace_club(workspace, request.data.get("club"))
+        if club is None:
+            return _workspace_error("The selected club is not in this workspace.")
+    user, user_error = _resolve_optional_user(request.data.get("user"))
+    if user_error:
+        return user_error
+
+    if user and team.members.filter(user=user, member_type=member_type).exists():
+        return _workspace_error(
+            "This user is already attached to the team in that role."
+        )
+
+    try:
+        member = NationalTeamMember.objects.create(
+            team=team,
+            user=user,
+            club=club,
+            full_name=full_name,
+            member_type=member_type,
+            role=str(request.data.get("role") or "").strip(),
+            status=status_value,
+            notes=str(request.data.get("notes") or "").strip(),
+        )
+    except IntegrityError:
+        return _workspace_error("This member already exists for the selected team.")
+
+    log_governance_action(
+        actor=request.user,
+        action="national_team_member_created",
+        details={
+            "workspace": workspace.slug,
+            "national_team": team.id,
+            "member": member.id,
+        },
+    )
+    return Response(
+        NationalTeamMemberSerializer(member).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_national_team_member_detail_view(request, team_id, member_id):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+    workspace = membership.workspace
+    permission_error = _require_permission(
+        request.user, workspace, "union.teams.manage"
+    )
+    if permission_error:
+        return permission_error
+
+    team = _get_workspace_national_team(workspace, team_id)
+    if team is None:
+        return _workspace_error("National team not found.", status.HTTP_404_NOT_FOUND)
+    member = (
+        team.members.select_related("team", "user", "club").filter(id=member_id).first()
+    )
+    if member is None:
+        return _workspace_error(
+            "National team member not found.", status.HTTP_404_NOT_FOUND
+        )
+
+    if request.method == "DELETE":
+        member.delete()
+        log_governance_action(
+            actor=request.user,
+            action="national_team_member_deleted",
+            details={
+                "workspace": workspace.slug,
+                "national_team": team.id,
+                "member": member_id,
+            },
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    if "full_name" in request.data:
+        full_name = str(request.data.get("full_name") or "").strip()
+        if not full_name:
+            return _workspace_error("Member full name cannot be blank.")
+        member.full_name = full_name
+    if "member_type" in request.data:
+        member_type, choice_error = _validate_choice(
+            request.data.get("member_type"),
+            NationalTeamMember.MemberType.choices,
+            "member type",
+        )
+        if choice_error:
+            return choice_error
+        member.member_type = member_type
+    if "status" in request.data:
+        status_value, choice_error = _validate_choice(
+            request.data.get("status"),
+            NationalTeamMember.Status.choices,
+            "member status",
+        )
+        if choice_error:
+            return choice_error
+        member.status = status_value
+    for field in ("role", "notes"):
+        if field in request.data:
+            setattr(member, field, str(request.data.get(field) or "").strip())
+    if "club" in request.data:
+        club_value = request.data.get("club")
+        if club_value in (None, ""):
+            member.club = None
+        else:
+            club = _get_workspace_club(workspace, club_value)
+            if club is None:
+                return _workspace_error("The selected club is not in this workspace.")
+            member.club = club
+    if "user" in request.data:
+        user, user_error = _resolve_optional_user(request.data.get("user"))
+        if user_error:
+            return user_error
+        member.user = user
+
+    if (
+        member.user
+        and team.members.exclude(id=member.id)
+        .filter(user=member.user, member_type=member.member_type)
+        .exists()
+    ):
+        return _workspace_error(
+            "This user is already attached to the team in that role."
+        )
+
+    try:
+        member.save()
+    except IntegrityError:
+        return _workspace_error("This member already exists for the selected team.")
+
+    log_governance_action(
+        actor=request.user,
+        action="national_team_member_updated",
+        details={
+            "workspace": workspace.slug,
+            "national_team": team.id,
+            "member": member.id,
+        },
+    )
+    return Response(NationalTeamMemberSerializer(member).data)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_registration_applications_view(request):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+    workspace = membership.workspace
+    permission_error = _require_permission(
+        request.user, workspace, "union.players.approve"
+    )
+    if permission_error:
+        return permission_error
+
+    if request.method == "GET":
+        applications = UnionRegistrationApplication.objects.filter(
+            workspace=workspace
+        ).select_related(
+            "workspace",
+            "club",
+            "team",
+            "competition",
+            "player_registration",
+            "submitted_by",
+            "reviewed_by",
+        )
+        status_value = str(request.query_params.get("status") or "").strip().upper()
+        application_type = (
+            str(request.query_params.get("application_type") or "").strip().upper()
+        )
+        club_value = request.query_params.get("club")
+        query = str(request.query_params.get("q") or "").strip()
+        if status_value:
+            if status_value not in {
+                choice[0] for choice in UnionRegistrationApplication.Status.choices
+            }:
+                return _workspace_error("Invalid registration status value.")
+            applications = applications.filter(status=status_value)
+        if application_type:
+            if application_type not in {
+                choice[0]
+                for choice in UnionRegistrationApplication.ApplicationType.choices
+            }:
+                return _workspace_error("Invalid registration application type.")
+            applications = applications.filter(application_type=application_type)
+        if club_value:
+            club = _get_workspace_club(workspace, club_value)
+            if club is None:
+                return _workspace_error("Club not found.", status.HTTP_404_NOT_FOUND)
+            applications = applications.filter(club=club)
+        if query:
+            applications = applications.filter(
+                models.Q(applicant_name__icontains=query)
+                | models.Q(registration_number__icontains=query)
+                | models.Q(club__name__icontains=query)
+            )
+        return Response(
+            {
+                "count": applications.count(),
+                "results": UnionRegistrationApplicationSerializer(
+                    applications, many=True
+                ).data,
+            }
+        )
+
+    applicant_name = str(request.data.get("applicant_name") or "").strip()
+    if not applicant_name:
+        return _workspace_error("Applicant name is required.")
+    club = _get_workspace_club(workspace, request.data.get("club"))
+    if club is None:
+        return _workspace_error("A valid workspace club is required.")
+    application_type, choice_error = _validate_choice(
+        request.data.get("application_type"),
+        UnionRegistrationApplication.ApplicationType.choices,
+        "registration application type",
+        UnionRegistrationApplication.ApplicationType.NEW_PLAYER,
+    )
+    if choice_error:
+        return choice_error
+
+    team = None
+    if request.data.get("team") not in (None, ""):
+        team = _get_workspace_team(workspace, request.data.get("team"))
+        if team is None or team.club_id != club.id:
+            return _workspace_error("The selected team does not belong to the club.")
+    competition = None
+    if request.data.get("competition") not in (None, ""):
+        competition = _get_workspace_competition(
+            workspace, request.data.get("competition")
+        )
+        if competition is None:
+            return _workspace_error(
+                "The selected competition is not in this workspace."
+            )
+    player_registration = None
+    if request.data.get("player_registration") not in (None, ""):
+        player_registration = _get_workspace_player_registration(
+            workspace, request.data.get("player_registration")
+        )
+        if player_registration is None or player_registration.club_id != club.id:
+            return _workspace_error(
+                "The selected player registration does not belong to the club."
+            )
+        if team and player_registration.team_id != team.id:
+            return _workspace_error(
+                "The selected player registration does not belong to the team."
+            )
+
+    application = UnionRegistrationApplication.objects.create(
+        workspace=workspace,
+        application_type=application_type,
+        club=club,
+        team=team,
+        competition=competition,
+        player_registration=player_registration,
+        applicant_name=applicant_name,
+        registration_number=(
+            str(request.data.get("registration_number") or "").strip()
+            or (
+                player_registration.registration_number
+                if player_registration is not None
+                else ""
+            )
+        ),
+        status=UnionRegistrationApplication.Status.PENDING,
+        documents_complete=_parse_boolean(
+            request.data.get("documents_complete"), False
+        ),
+        submitted_by=request.user,
+        reviewer_notes=str(request.data.get("reviewer_notes") or "").strip(),
+        metadata=(
+            request.data.get("metadata")
+            if isinstance(request.data.get("metadata"), dict)
+            else {}
+        ),
+    )
+    log_governance_action(
+        actor=request.user,
+        action="union_registration_application_created",
+        details={"workspace": workspace.slug, "application": application.id},
+    )
+    return Response(
+        UnionRegistrationApplicationSerializer(application).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+_REGISTRATION_STATUS_TRANSITIONS = {
+    UnionRegistrationApplication.Status.PENDING: {
+        UnionRegistrationApplication.Status.PENDING,
+        UnionRegistrationApplication.Status.UNDER_REVIEW,
+        UnionRegistrationApplication.Status.DOCUMENTS_REQUIRED,
+        UnionRegistrationApplication.Status.APPROVED,
+        UnionRegistrationApplication.Status.REJECTED,
+        UnionRegistrationApplication.Status.WITHDRAWN,
+    },
+    UnionRegistrationApplication.Status.UNDER_REVIEW: {
+        UnionRegistrationApplication.Status.UNDER_REVIEW,
+        UnionRegistrationApplication.Status.DOCUMENTS_REQUIRED,
+        UnionRegistrationApplication.Status.APPROVED,
+        UnionRegistrationApplication.Status.REJECTED,
+        UnionRegistrationApplication.Status.WITHDRAWN,
+    },
+    UnionRegistrationApplication.Status.DOCUMENTS_REQUIRED: {
+        UnionRegistrationApplication.Status.PENDING,
+        UnionRegistrationApplication.Status.UNDER_REVIEW,
+        UnionRegistrationApplication.Status.DOCUMENTS_REQUIRED,
+        UnionRegistrationApplication.Status.APPROVED,
+        UnionRegistrationApplication.Status.REJECTED,
+        UnionRegistrationApplication.Status.WITHDRAWN,
+    },
+    UnionRegistrationApplication.Status.APPROVED: {
+        UnionRegistrationApplication.Status.APPROVED,
+    },
+    UnionRegistrationApplication.Status.REJECTED: {
+        UnionRegistrationApplication.Status.REJECTED,
+    },
+    UnionRegistrationApplication.Status.WITHDRAWN: {
+        UnionRegistrationApplication.Status.WITHDRAWN,
+        UnionRegistrationApplication.Status.PENDING,
+    },
+}
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_registration_application_detail_view(request, application_id):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+    workspace = membership.workspace
+    permission_error = _require_permission(
+        request.user, workspace, "union.players.approve"
+    )
+    if permission_error:
+        return permission_error
+
+    application = (
+        UnionRegistrationApplication.objects.filter(
+            workspace=workspace, id=application_id
+        )
+        .select_related(
+            "workspace",
+            "club",
+            "team",
+            "competition",
+            "player_registration",
+            "submitted_by",
+            "reviewed_by",
+        )
+        .first()
+    )
+    if application is None:
+        return _workspace_error(
+            "Registration application not found.", status.HTTP_404_NOT_FOUND
+        )
+    if request.method == "GET":
+        return Response(UnionRegistrationApplicationSerializer(application).data)
+
+    if "documents_complete" in request.data:
+        application.documents_complete = _parse_boolean(
+            request.data.get("documents_complete"), application.documents_complete
+        )
+    if "reviewer_notes" in request.data:
+        application.reviewer_notes = str(
+            request.data.get("reviewer_notes") or ""
+        ).strip()
+    if "metadata" in request.data:
+        if not isinstance(request.data.get("metadata"), dict):
+            return _workspace_error("Registration metadata must be an object.")
+        application.metadata = request.data.get("metadata")
+
+    if "status" in request.data:
+        new_status, choice_error = _validate_choice(
+            request.data.get("status"),
+            UnionRegistrationApplication.Status.choices,
+            "registration status",
+        )
+        if choice_error:
+            return choice_error
+        allowed = _REGISTRATION_STATUS_TRANSITIONS.get(application.status, set())
+        if new_status not in allowed:
+            return _workspace_error(
+                "Cannot change registration status from "
+                f"{application.status} to {new_status}."
+            )
+        if (
+            new_status == UnionRegistrationApplication.Status.APPROVED
+            and not application.documents_complete
+        ):
+            return _workspace_error(
+                "Complete the required documents before approving this application."
+            )
+        if (
+            new_status == UnionRegistrationApplication.Status.REJECTED
+            and not application.reviewer_notes
+        ):
+            return _workspace_error(
+                "Reviewer notes are required when rejecting an application."
+            )
+
+        application.status = new_status
+        if new_status in {
+            UnionRegistrationApplication.Status.APPROVED,
+            UnionRegistrationApplication.Status.REJECTED,
+            UnionRegistrationApplication.Status.DOCUMENTS_REQUIRED,
+        }:
+            application.reviewed_by = request.user
+            application.reviewed_at = timezone.now()
+        elif new_status in {
+            UnionRegistrationApplication.Status.PENDING,
+            UnionRegistrationApplication.Status.UNDER_REVIEW,
+        }:
+            application.reviewed_by = None
+            application.reviewed_at = None
+
+    application.save()
+    log_governance_action(
+        actor=request.user,
+        action="union_registration_application_updated",
+        details={
+            "workspace": workspace.slug,
+            "application": application.id,
+            "status": application.status,
+        },
+    )
+    return Response(UnionRegistrationApplicationSerializer(application).data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAudit])
+def union_admin_official_readiness_view(request):
+    membership, error = _resolve_membership(request)
+    if error:
+        return error
+    workspace = membership.workspace
+    permission_error = _require_permission(
+        request.user, workspace, "union.official.appointments.view"
+    )
+    if permission_error:
+        return permission_error
+
+    officials = UnionMatchOfficial.objects.filter(
+        union=workspace.related_union
+    ).select_related("union", "user")
+    upcoming_matches = (
+        Match.objects.filter(
+            competition__league__union=workspace.related_union,
+            match_date__gte=timezone.now(),
+            status__in=[Match.Status.SCHEDULED, Match.Status.POSTPONED],
+        )
+        .select_related("competition", "home_club", "away_club")
+        .prefetch_related("official_assignments")
+        .order_by("match_date")
+    )
+
+    fixture_rows = []
+    fixtures_without_assignments = 0
+    fixtures_with_pending_responses = 0
+    for match in upcoming_matches:
+        assignments = list(match.official_assignments.all())
+        accepted_count = sum(
+            assignment.status == FixtureOfficialAssignment.Status.ACCEPTED
+            for assignment in assignments
+        )
+        pending_count = sum(
+            assignment.status
+            in {
+                FixtureOfficialAssignment.Status.PROPOSED,
+                FixtureOfficialAssignment.Status.ASSIGNED,
+            }
+            for assignment in assignments
+        )
+        declined_count = sum(
+            assignment.status == FixtureOfficialAssignment.Status.DECLINED
+            for assignment in assignments
+        )
+        if not assignments:
+            readiness = "NO_ASSIGNMENTS"
+            fixtures_without_assignments += 1
+        elif pending_count:
+            readiness = "PENDING_RESPONSES"
+            fixtures_with_pending_responses += 1
+        elif accepted_count:
+            readiness = "HAS_ACCEPTED_ASSIGNMENTS"
+        else:
+            readiness = "REVIEW_REQUIRED"
+
+        fixture_rows.append(
+            {
+                "id": match.id,
+                "match": f"{match.home_club.name} vs {match.away_club.name}",
+                "competition": match.competition.name,
+                "match_date": match.match_date,
+                "venue": match.venue,
+                "assignment_count": len(assignments),
+                "accepted_count": accepted_count,
+                "pending_response_count": pending_count,
+                "declined_count": declined_count,
+                "readiness": readiness,
+            }
+        )
+
+    return Response(
+        {
+            "workspace": {
+                "slug": workspace.slug,
+                "acronym": workspace.acronym,
+                "name": workspace.name,
+            },
+            "summary": {
+                "officials_total": officials.count(),
+                "officials_available": officials.filter(
+                    status=UnionMatchOfficial.Status.AVAILABLE
+                ).count(),
+                "officials_unavailable": officials.filter(
+                    status=UnionMatchOfficial.Status.UNAVAILABLE
+                ).count(),
+                "officials_suspended": officials.filter(
+                    status=UnionMatchOfficial.Status.SUSPENDED
+                ).count(),
+                "upcoming_fixtures": upcoming_matches.count(),
+                "fixtures_without_assignments": fixtures_without_assignments,
+                "fixtures_with_pending_responses": fixtures_with_pending_responses,
+            },
+            "fixtures": fixture_rows,
+            "officials": UnionMatchOfficialManagementSerializer(
+                officials, many=True
+            ).data,
+        }
     )

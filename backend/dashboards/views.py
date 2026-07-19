@@ -27,8 +27,10 @@ from .models import (
     LeagueClubMembership,
     FixtureOfficialAssignment,
     Match,
+    NationalTeam,
     Standing,
     UnionMatchOfficial,
+    UnionRegistrationApplication,
     Union,
     UnionWorkspace,
     UnionWorkspaceMembership,
@@ -1219,17 +1221,14 @@ def union_admin_workspace_dashboard_view(request):
 
         member_clubs = (
             Club.objects.filter(
-                models.Q(home_matches__competition__league__union=related_union)
+                models.Q(league_memberships__league__union=related_union)
+                | models.Q(home_matches__competition__league__union=related_union)
                 | models.Q(away_matches__competition__league__union=related_union)
                 | models.Q(standings__competition__league__union=related_union)
             )
             .distinct()
             .count()
         )
-
-        if member_clubs == 0 and workspace.sport:
-            sport_value = workspace.sport.strip().upper().replace(" ", "_")
-            member_clubs = Club.objects.filter(sport=sport_value).count()
     else:
         leagues = League.objects.none()
         competitions = Competition.objects.none()
@@ -1246,8 +1245,22 @@ def union_admin_workspace_dashboard_view(request):
                 "leagues": leagues.count(),
                 "active_competitions": competitions.filter(is_active=True).count(),
                 "member_clubs": member_clubs,
-                "pending_approvals": 0,
-                "referees": 0,
+                "national_teams": NationalTeam.objects.filter(
+                    workspace=workspace, is_active=True
+                ).count(),
+                "pending_approvals": UnionRegistrationApplication.objects.filter(
+                    workspace=workspace,
+                    status__in=[
+                        UnionRegistrationApplication.Status.PENDING,
+                        UnionRegistrationApplication.Status.UNDER_REVIEW,
+                        UnionRegistrationApplication.Status.DOCUMENTS_REQUIRED,
+                    ],
+                ).count(),
+                "referees": (
+                    UnionMatchOfficial.objects.filter(union=related_union).count()
+                    if related_union
+                    else 0
+                ),
                 "upcoming_matches": matches.filter(
                     status=Match.Status.SCHEDULED
                 ).count(),
