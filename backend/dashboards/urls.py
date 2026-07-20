@@ -7,6 +7,7 @@ from . import (
     union_management_views,
     union_player_eligibility_views,
     union_player_review_views,
+    union_player_transfer_views,
     views,
 )
 
@@ -290,6 +291,41 @@ urlpatterns = [
         "union-admin/player-eligibilities/<int:eligibility_id>/cancel/",
         union_player_eligibility_views.union_player_eligibility_cancel_view,
         name="union-player-eligibility-cancel",
+    ),
+    path(
+        "union-admin/player-transfers/",
+        union_player_transfer_views.union_player_transfers_view,
+        name="union-player-transfers",
+    ),
+    path(
+        "union-admin/player-transfers/<int:transfer_id>/",
+        union_player_transfer_views.union_player_transfer_detail_view,
+        name="union-player-transfer-detail",
+    ),
+    path(
+        "union-admin/player-transfers/<int:transfer_id>/record-offline-consent/",
+        union_player_transfer_views.union_player_transfer_offline_consent_view,
+        name="union-player-transfer-offline-consent",
+    ),
+    path(
+        "union-admin/player-transfers/<int:transfer_id>/record-offline-decline/",
+        union_player_transfer_views.union_player_transfer_offline_decline_view,
+        name="union-player-transfer-offline-decline",
+    ),
+    path(
+        "union-admin/player-transfers/<int:transfer_id>/request-changes/",
+        union_player_transfer_views.union_player_transfer_request_changes_view,
+        name="union-player-transfer-request-changes",
+    ),
+    path(
+        "union-admin/player-transfers/<int:transfer_id>/reject/",
+        union_player_transfer_views.union_player_transfer_reject_view,
+        name="union-player-transfer-reject",
+    ),
+    path(
+        "union-admin/player-transfers/<int:transfer_id>/approve/",
+        union_player_transfer_views.union_player_transfer_approve_view,
+        name="union-player-transfer-approve",
     ),
     path(
         "union-admin/official-readiness/",
