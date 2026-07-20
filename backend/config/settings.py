@@ -75,6 +75,7 @@ INSTALLED_APPS = [
     "engagements",
     "monitoring",
     "platform_admin",
+    "club_operations",
     "rbac.apps.RbacConfig",
     "analytics.apps.AnalyticsConfig",
 ]
