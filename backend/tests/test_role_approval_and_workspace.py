@@ -135,7 +135,7 @@ class TestSwitchWorkspaceAPI:
         )
         assert response.status_code == 200
         assert response.data["role"] == "SPONSOR"
-        assert response.data["frontend_dashboard_route"] == "/dashboard/sponsor"
+        assert response.data["frontend_dashboard_route"] == "/sponsor/dashboard"
 
     def test_switch_returns_available_dashboards(self, api_client, fan_user):
         """The response should include available_dashboards."""

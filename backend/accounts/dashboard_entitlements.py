@@ -148,7 +148,10 @@ def _resolve_individual_sponsor_entitlements(user):
         SponsorAccount.objects.filter(
             owner=user,
             sponsor_type=SponsorAccount.SponsorType.INDIVIDUAL,
-            status=SponsorAccount.Status.APPROVED,
+            status__in=(
+                SponsorAccount.Status.PENDING,
+                SponsorAccount.Status.APPROVED,
+            ),
         ).order_by("id")
     )
     if len(accounts) > 1:
@@ -159,7 +162,7 @@ def _resolve_individual_sponsor_entitlements(user):
             _entitlement(
                 entitlement_id=f"individual-sponsor-{account.id}",
                 dashboard="SPONSOR",
-                route="/dashboard/sponsor",
+                route="/sponsor/dashboard",
                 scope_type="INDIVIDUAL_SPONSOR_ACCOUNT",
                 scope_id=account.id,
                 workspace_role="OWNER",
@@ -169,7 +172,7 @@ def _resolve_individual_sponsor_entitlements(user):
 
     has_contradicting_account = SponsorAccount.objects.filter(
         owner=user,
-        status__in=(SponsorAccount.Status.PENDING, SponsorAccount.Status.REJECTED),
+        status=SponsorAccount.Status.REJECTED,
     ).exists()
     is_legacy_individual = (
         user.role == User.Role.SPONSOR or bool(user.is_sponsor)
@@ -179,7 +182,7 @@ def _resolve_individual_sponsor_entitlements(user):
             _entitlement(
                 entitlement_id="individual-sponsor-legacy",
                 dashboard="SPONSOR",
-                route="/dashboard/sponsor",
+                route="/sponsor/dashboard",
                 scope_type="INDIVIDUAL_SPONSOR_ACCOUNT",
                 scope_id=user.id,
                 workspace_role="OWNER",
@@ -199,7 +202,10 @@ def _resolve_corporate_sponsor_entitlements(user):
             user=user,
             is_active=True,
             sponsor_account__sponsor_type=SponsorAccount.SponsorType.CORPORATE,
-            sponsor_account__status=SponsorAccount.Status.APPROVED,
+            sponsor_account__status__in=(
+                SponsorAccount.Status.PENDING,
+                SponsorAccount.Status.APPROVED,
+            ),
             member_role__in=valid_roles,
         )
         .select_related("sponsor_account")
@@ -215,7 +221,7 @@ def _resolve_corporate_sponsor_entitlements(user):
             _entitlement(
                 entitlement_id=f"corporate-sponsor-{membership.sponsor_account_id}",
                 dashboard="SPONSOR",
-                route="/dashboard/sponsor",
+                route="/sponsor/dashboard",
                 scope_type="CORPORATE_SPONSOR_WORKSPACE",
                 scope_id=membership.sponsor_account_id,
                 workspace_role=membership.member_role,

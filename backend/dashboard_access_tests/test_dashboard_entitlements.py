@@ -313,7 +313,7 @@ class DashboardEntitlementContractTests(TestCase):
                 else f"individual-sponsor-{account.id}"
             ),
             "dashboard": "SPONSOR",
-            "route": "/dashboard/sponsor",
+            "route": "/sponsor/dashboard",
             "scope_type": "INDIVIDUAL_SPONSOR_ACCOUNT",
             "scope_id": legacy_user.id if legacy_user else account.id,
             "workspace_role": "OWNER",
@@ -324,7 +324,7 @@ class DashboardEntitlementContractTests(TestCase):
         return {
             "id": f"corporate-sponsor-{account.id}",
             "dashboard": "SPONSOR",
-            "route": "/dashboard/sponsor",
+            "route": "/sponsor/dashboard",
             "scope_type": "CORPORATE_SPONSOR_WORKSPACE",
             "scope_id": account.id,
             "workspace_role": role,
@@ -423,16 +423,36 @@ class DashboardEntitlementContractTests(TestCase):
             entitlements=[self.fan(member)],
         )
 
-    def test_unapproved_individual_accounts_do_not_grant_sponsor(self):
-        for status in (SponsorAccount.Status.PENDING, SponsorAccount.Status.REJECTED):
-            with self.subTest(status=status):
-                user = self.create_user(f"individual-{status.lower()}")
-                self.create_sponsor_account(user, status=status)
-                self.assert_contract(
-                    resolve_dashboard_access(user),
-                    default_id="fan",
-                    entitlements=[self.fan(user)],
-                )
+    def test_pending_individual_account_grants_sponsor_dashboard(self):
+        user = self.create_user("individual-pending")
+        account = self.create_sponsor_account(
+            user,
+            status=SponsorAccount.Status.PENDING,
+        )
+
+        self.assert_contract(
+            resolve_dashboard_access(user),
+            default_id=f"individual-sponsor-{account.id}",
+            entitlements=[
+                self.individual(account),
+                self.fan(user),
+            ],
+        )
+
+    def test_rejected_individual_account_does_not_grant_sponsor_dashboard(
+        self,
+    ):
+        user = self.create_user("individual-rejected")
+        self.create_sponsor_account(
+            user,
+            status=SponsorAccount.Status.REJECTED,
+        )
+
+        self.assert_contract(
+            resolve_dashboard_access(user),
+            default_id="fan",
+            entitlements=[self.fan(user)],
+        )
 
     def test_legacy_individual_compatibility_and_corporate_flag_rejection(self):
         for source in ("role", "flag"):
@@ -470,29 +490,53 @@ class DashboardEntitlementContractTests(TestCase):
                     entitlements=[self.corporate(account, role), self.fan(user)],
                 )
 
-    def test_invalid_or_inactive_corporate_membership_preserves_personal_fan(self):
-        for case in ("invalid-role", "inactive", "pending", "rejected"):
+    def test_invalid_inactive_or_rejected_corporate_membership_preserves_fan(
+        self,
+    ):
+        for case in ("invalid-role", "inactive", "rejected"):
             with self.subTest(case=case):
                 user = self.create_user(f"corporate-{case}")
-                status = {
-                    "pending": SponsorAccount.Status.PENDING,
-                    "rejected": SponsorAccount.Status.REJECTED,
-                }.get(case, SponsorAccount.Status.APPROVED)
+                status = (
+                    SponsorAccount.Status.REJECTED
+                    if case == "rejected"
+                    else SponsorAccount.Status.APPROVED
+                )
                 account, membership = self.add_corporate_membership(
                     user,
                     active=case != "inactive",
                     status=status,
                 )
+
                 if case == "invalid-role":
-                    SponsorAccountMember.objects.filter(pk=membership.pk).update(
-                        member_role="INVALID"
-                    )
+                    SponsorAccountMember.objects.filter(
+                        pk=membership.pk,
+                    ).update(member_role="INVALID")
+
                 self.assert_contract(
                     resolve_dashboard_access(user),
                     default_id="fan",
                     entitlements=[self.fan(user)],
                 )
                 self.assertIsNotNone(account.id)
+
+    def test_pending_corporate_membership_grants_sponsor_dashboard(self):
+        user = self.create_user("corporate-pending")
+        account, _membership = self.add_corporate_membership(
+            user,
+            status=SponsorAccount.Status.PENDING,
+        )
+
+        self.assert_contract(
+            resolve_dashboard_access(user),
+            default_id=f"corporate-sponsor-{account.id}",
+            entitlements=[
+                self.corporate(
+                    account,
+                    SponsorAccountMember.MemberRole.OWNER,
+                ),
+                self.fan(user),
+            ],
+        )
 
     def test_corporate_members_share_workspace_but_not_fan_identity(self):
         owner = self.create_user("corp-owner")
@@ -551,10 +595,7 @@ class DashboardEntitlementContractTests(TestCase):
 
     def test_sponsor_humans_keep_fan_when_workspace_is_unavailable(self):
         for primary_role in (User.Role.SPONSOR, User.Role.FAN):
-            for status in (
-                SponsorAccount.Status.PENDING,
-                SponsorAccount.Status.REJECTED,
-            ):
+            for status in (SponsorAccount.Status.REJECTED,):
                 with self.subTest(
                     sponsor_type="individual",
                     primary_role=primary_role,
@@ -572,7 +613,7 @@ class DashboardEntitlementContractTests(TestCase):
                         entitlements=[self.fan(user)],
                     )
 
-            for case in ("inactive", "pending", "rejected"):
+            for case in ("inactive", "rejected"):
                 with self.subTest(
                     sponsor_type="corporate",
                     primary_role=primary_role,
