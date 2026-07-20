@@ -1,8 +1,15 @@
 from django.urls import path
 
 from .views import (
+    player_registry_search_view,
     player_registration_detail_view,
     player_registration_list_create_view,
+    player_registration_submission_decision_view,
+    player_registration_submission_detail_view,
+    player_registration_submission_list_create_view,
+    player_registration_submission_resubmit_view,
+    player_registration_submission_submit_view,
+    player_registration_submission_withdraw_view,
     player_transfer_detail_view,
     player_transfer_list_create_view,
     squad_detail_view,
@@ -46,6 +53,41 @@ urlpatterns = [
         "players/<int:pk>/",
         player_registration_detail_view,
         name="player-registration-detail",
+    ),
+    path(
+        "player-registry-search/",
+        player_registry_search_view,
+        name="player-registry-search",
+    ),
+    path(
+        "player-registration-submissions/",
+        player_registration_submission_list_create_view,
+        name="player-registration-submission-list-create",
+    ),
+    path(
+        "player-registration-submissions/<int:pk>/",
+        player_registration_submission_detail_view,
+        name="player-registration-submission-detail",
+    ),
+    path(
+        "player-registration-submissions/<int:pk>/submit/",
+        player_registration_submission_submit_view,
+        name="player-registration-submission-submit",
+    ),
+    path(
+        "player-registration-submissions/<int:pk>/resubmit/",
+        player_registration_submission_resubmit_view,
+        name="player-registration-submission-resubmit",
+    ),
+    path(
+        "player-registration-submissions/<int:pk>/withdraw/",
+        player_registration_submission_withdraw_view,
+        name="player-registration-submission-withdraw",
+    ),
+    path(
+        "player-registration-submissions/<int:pk>/decision/",
+        player_registration_submission_decision_view,
+        name="player-registration-submission-decision",
     ),
     # Staff Members
     path(
