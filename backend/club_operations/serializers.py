@@ -54,6 +54,19 @@ class ClubDocumentCreateSerializer(serializers.ModelSerializer):
             "notes",
         ]
 
+    def validate_file(self, value):
+        allowed_types = ClubDocument.ALLOWED_FILE_TYPES
+        if value.content_type not in allowed_types:
+            raise serializers.ValidationError(
+                f"Unsupported file type. Allowed types: {', '.join(sorted(allowed_types))}"
+            )
+        max_bytes = ClubDocument.MAX_FILE_SIZE_MB * 1024 * 1024
+        if value.size > max_bytes:
+            raise serializers.ValidationError(
+                f"File size exceeds {ClubDocument.MAX_FILE_SIZE_MB}MB limit."
+            )
+        return value
+
 
 class ComplianceChecklistSerializer(serializers.ModelSerializer):
     completed_by = UserSummarySerializer(read_only=True)
