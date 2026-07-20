@@ -235,9 +235,19 @@ def present_dashboard_entitlement(entitlement):
 
     role = entitlement_legacy_role(entitlement)
     backend_route = (
-        "/api/dashboards/union-admin/"
+        "/api/dashboards/referee/"
         if entitlement["dashboard"] == "UNION_WORKSPACE"
-        else LEGACY_BACKEND_ROUTES.get(role)
+        and entitlement.get("workspace_role") == "MATCH_OFFICIAL"
+        else (
+            "/api/dashboards/ticketing-officer/"
+            if entitlement["dashboard"] == "UNION_WORKSPACE"
+            and entitlement.get("workspace_role") == "TICKETING_OFFICER"
+            else (
+                "/api/dashboards/union-admin/"
+                if entitlement["dashboard"] == "UNION_WORKSPACE"
+                else LEGACY_BACKEND_ROUTES.get(role)
+            )
+        )
     )
     return {
         "role": role,

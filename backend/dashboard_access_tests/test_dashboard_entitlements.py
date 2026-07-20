@@ -332,10 +332,15 @@ class DashboardEntitlementContractTests(TestCase):
         }
 
     def union(self, membership):
+        route = "/dashboard/union-admin"
+        if membership.role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL:
+            route = "/dashboard/referee"
+        elif membership.role == UnionWorkspaceMembership.Role.TICKETING_OFFICER:
+            route = "/dashboard/ticketing-officer"
         return {
             "id": f"union-workspace-{membership.workspace_id}",
             "dashboard": "UNION_WORKSPACE",
-            "route": "/dashboard/union-admin",
+            "route": route,
             "scope_type": "UNION_WORKSPACE",
             "scope_id": membership.workspace_id,
             "workspace_role": membership.role,

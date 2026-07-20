@@ -234,8 +234,8 @@ class DashboardAccessApiTests(TestCase):
             (
                 "official",
                 official,
-                "/dashboard/union-admin",
-                "/api/dashboards/union-admin/",
+                "/dashboard/referee",
+                "/api/dashboards/referee/",
             )
         )
 
@@ -251,8 +251,8 @@ class DashboardAccessApiTests(TestCase):
             (
                 "union-ticketing",
                 union_ticketing,
-                "/dashboard/union-admin",
-                "/api/dashboards/union-admin/",
+                "/dashboard/ticketing-officer",
+                "/api/dashboards/ticketing-officer/",
             )
         )
 
@@ -419,8 +419,8 @@ class DashboardAccessApiTests(TestCase):
             (
                 match_official,
                 f"union-workspace-{official_membership.workspace_id}",
-                "/dashboard/union-admin",
-                "/api/dashboards/union-admin/",
+                "/dashboard/referee",
+                "/api/dashboards/referee/",
             ),
             (no_access, None, None, None),
         )
@@ -775,13 +775,13 @@ class DashboardAccessApiTests(TestCase):
                 match_official,
                 User.Role.REFEREE,
                 "Match Official Dashboard",
-                "/api/dashboards/union-admin/",
+                "/api/dashboards/referee/",
             ),
             (
                 union_ticketing,
                 User.Role.TICKETING_OFFICER,
                 "Ticketing Officer Dashboard",
-                "/api/dashboards/union-admin/",
+                "/api/dashboards/ticketing-officer/",
             ),
         )
         for user, dashboard_role, title, backend_route in cases:
@@ -849,10 +849,12 @@ class DashboardAccessApiTests(TestCase):
                 self.assertEqual(entry["role_display"], expected_display)
                 if workspace_role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL:
                     self.assertNotEqual(entry["role_display"], "Referee")
-                self.assertEqual(
-                    entry["backend_route"],
-                    "/api/dashboards/union-admin/",
-                )
+                expected_backend = "/api/dashboards/union-admin/"
+                if workspace_role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL:
+                    expected_backend = "/api/dashboards/referee/"
+                elif workspace_role == UnionWorkspaceMembership.Role.TICKETING_OFFICER:
+                    expected_backend = "/api/dashboards/ticketing-officer/"
+                self.assertEqual(entry["backend_route"], expected_backend)
                 shared_route_response = self.client.get(entry["backend_route"])
                 self.assertEqual(shared_route_response.status_code, 200)
                 self.assertEqual(
@@ -961,9 +963,9 @@ class DashboardAccessApiTests(TestCase):
             ),
             (
                 match_official,
-                "/api/dashboards/union-admin/",
-                "/dashboard/union-admin",
-                "/api/dashboards/union-admin/",
+                "/api/dashboards/referee/",
+                "/dashboard/referee",
+                "/api/dashboards/referee/",
                 2,
                 User.Role.REFEREE,
             ),
