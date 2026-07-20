@@ -1,3 +1,4 @@
+import warnings
 from pathlib import Path
 from datetime import timedelta
 
@@ -30,6 +31,7 @@ INSTALLED_APPS = [
     "engagements",
     "monitoring.apps.MonitoringConfig",
     "platform_admin",
+    "club_operations",
     "rbac.apps.RbacConfig",
     "analytics.apps.AnalyticsConfig",
 ]
@@ -135,3 +137,8 @@ CHANNEL_LAYERS = {
         "BACKEND": "channels.layers.InMemoryChannelLayer",
     },
 }
+
+# Suppress DRF URL converter deprecation warning during tests
+warnings.filterwarnings(
+    "ignore", category=DeprecationWarning, module="rest_framework.urlpatterns"
+)

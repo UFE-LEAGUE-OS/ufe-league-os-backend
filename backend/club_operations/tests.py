@@ -1,3 +1,5 @@
+from django.core.files.uploadedfile import SimpleUploadedFile
+
 from rest_framework.test import APITestCase
 
 from accounts.models import Club, User
@@ -37,37 +39,43 @@ class ClubOperationsTests(APITestCase):
         self.client.force_authenticate(user=self.club_admin)
 
     def test_document_crud(self):
+        # Create a dummy file for upload
+        dummy_file = SimpleUploadedFile(
+            "constitution.pdf", b"file_content", content_type="application/pdf"
+        )
         response = self.client.post(
-            "/api/club/documents/",
+            "/api/documents/",
             {
                 "title": "Constitution",
                 "category": ClubDocument.Category.CONSTITUTION,
                 "club": self.club.id,
+                "file": dummy_file,
             },
+            format="multipart",
         )
-        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.status_code, 201, response.data)
 
-        response = self.client.get("/api/club/documents/")
+        response = self.client.get("/api/documents/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data["results"]), 1)
 
     def test_communication_logs_read_only(self):
-        response = self.client.post("/api/club/communications/", {})
+        response = self.client.post("/api/communications/", {})
         self.assertEqual(response.status_code, 405)
 
     def test_fan_cannot_access_documents(self):
         self.client.force_authenticate(user=self.fan)
-        response = self.client.get("/api/club/documents/")
+        response = self.client.get("/api/documents/")
         self.assertEqual(response.status_code, 403)
 
     def test_super_admin_can_access_club_documents(self):
         self.client.force_authenticate(user=self.super_admin)
-        response = self.client.get("/api/club/documents/")
+        response = self.client.get("/api/documents/")
         self.assertEqual(response.status_code, 200)
 
     def test_compliance_task_lifecycle(self):
         response = self.client.post(
-            "/api/club/compliance/",
+            "/api/compliance/",
             {
                 "club": self.club.id,
                 "title": "Annual Return",
@@ -76,14 +84,14 @@ class ClubOperationsTests(APITestCase):
                 "priority": ComplianceChecklist.Priority.HIGH,
             },
         )
-        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.status_code, 201, response.data)
         item_id = response.data["id"]
 
-        response = self.client.post(f"/api/club/compliance/{item_id}/complete/")
+        response = self.client.post(f"/api/compliance/{item_id}/complete/")
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data["completed"])
 
-        response = self.client.post(f"/api/club/compliance/{item_id}/reopen/")
+        response = self.client.post(f"/api/compliance/{item_id}/reopen/")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.data["completed"])
 
@@ -103,11 +111,14 @@ class ClubOperationsServiceTests(APITestCase):
         )
 
     def test_mark_expired_documents(self):
+        dummy_file = SimpleUploadedFile(
+            "expired.pdf", b"file_content", content_type="application/pdf"
+        )
         ClubDocument.objects.create(
             club=self.club,
             title="Expired Doc",
             category=ClubDocument.Category.CONSTITUTION,
-            file="fake.pdf",
+            file=dummy_file,
             uploaded_by=self.club_admin,
             expiry_date="2000-01-01",
         )
