@@ -2,8 +2,18 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from accounts.models import User, Club
-from dashboards.models import League, Union, Competition, Season
+from accounts.models import Club, ClubAdminScope, User
+from dashboards.models import (
+    ClubAffiliation,
+    Competition,
+    League,
+    LeagueClubMembership,
+    Season,
+    Union,
+    UnionPlayer,
+    UnionPlayerRegistration,
+    UnionPlayerTransfer,
+)
 from teams.models import (
     PlayerRegistration,
     PlayerTransfer,
@@ -70,6 +80,11 @@ class TeamsAPITestCase(APITestCase):
             season="2025/26",
             season_record=self.season,
             is_active=True,
+        )
+        LeagueClubMembership.objects.create(
+            league=self.league,
+            club=self.club,
+            season=self.season,
         )
 
         # Create union workspace
@@ -168,7 +183,15 @@ class PlayerRegistrationTests(TeamsAPITestCase):
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(PlayerRegistration.objects.count(), 1)
-        self.assertEqual(PlayerRegistration.objects.first().full_name, "John Doe")
+        created = PlayerRegistration.objects.get()
+        self.assertEqual(created.full_name, "John Doe")
+        self.assertEqual(
+            created.submission_status,
+            PlayerRegistration.SubmissionStatus.DRAFT,
+        )
+        self.assertEqual(created.status, PlayerRegistration.RegistrationStatus.INACTIVE)
+        self.assertEqual(response.data["workflow"], "PLAYER_REGISTRATION_SUBMISSION")
+        self.assertTrue(response.data["deprecated_direct_creation"])
 
 
 class StaffMemberTests(TeamsAPITestCase):
@@ -216,22 +239,59 @@ class PlayerTransferTests(TeamsAPITestCase):
             sport=Club.Sport.FOOTBALL,
             admin=self.club_admin,
         )
+        ClubAdminScope.objects.create(
+            user=self.club_admin,
+            club=self.other_club,
+            role=ClubAdminScope.Role.CHAIRMAN,
+        )
+        for club in (self.club, self.other_club):
+            ClubAffiliation.objects.create(
+                workspace=self.workspace,
+                club=club,
+                status=ClubAffiliation.Status.ACTIVE,
+            )
+        self.union_player = UnionPlayer.objects.create(
+            union=self.union,
+            union_player_number="TEST-P000001",
+            first_name="John",
+            last_name="Doe",
+            date_of_birth="1995-06-15",
+            nationality="Ugandan",
+            status=UnionPlayer.Status.APPROVED,
+        )
+        self.authoritative_registration = UnionPlayerRegistration.objects.create(
+            workspace=self.workspace,
+            player=self.union_player,
+            club=self.club,
+            team=self.team,
+            season=self.season,
+            status=UnionPlayerRegistration.Status.ACTIVE,
+            registration_type="FIRST_REGISTRATION",
+            effective_from="2026-01-01",
+            effective_to="2026-12-31",
+            approved_by=self.union_admin,
+        )
 
     def test_create_transfer(self):
         url = reverse("player-transfer-list-create")
         data = {
-            "player": self.player.id,
-            "from_club": self.club.id,
-            "to_club": self.other_club.id,
+            "workspace": self.workspace.id,
+            "source_registration": self.authoritative_registration.id,
+            "destination_club": self.other_club.id,
             "transfer_type": PlayerTransfer.TransferType.PERMANENT,
-            "transfer_fee": "50000.00",
-            "currency": "USD",
-            "transfer_date": "2025-07-01",
+            "effective_on": "2026-08-01",
+            "documents": ["maintained-transfer-reference"],
+            "fee_status": "PAID",
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(PlayerTransfer.objects.count(), 1)
-        self.assertEqual(PlayerTransfer.objects.first().transfer_type, "PERMANENT")
+        self.assertEqual(PlayerTransfer.objects.count(), 0)
+        self.assertEqual(UnionPlayerTransfer.objects.count(), 1)
+        created = UnionPlayerTransfer.objects.get()
+        self.assertEqual(created.transfer_type, "PERMANENT")
+        self.assertEqual(created.status, UnionPlayerTransfer.Status.DRAFT)
+        self.assertEqual(response.data["workflow"], "UNION_PLAYER_TRANSFER")
+        self.assertTrue(response.data["deprecated_direct_creation"])
 
 
 class SquadSubmissionTests(TeamsAPITestCase):
