@@ -5,7 +5,6 @@ from dashboards.models import CompetitionEdition
 
 from .models import (
     PlayerRegistration,
-    PlayerTransfer,
     Squad,
     SquadMember,
     SquadSubmission,
@@ -534,71 +533,6 @@ class StaffMemberSummarySerializer(serializers.ModelSerializer):
             "role",
             "employment_type",
             "is_active",
-        ]
-
-
-class PlayerTransferSerializer(serializers.ModelSerializer):
-    player_name = serializers.CharField(source="player.full_name", read_only=True)
-    player_registration_number = serializers.CharField(
-        source="player.registration_number", read_only=True
-    )
-    from_club_name = serializers.CharField(source="from_club.name", read_only=True)
-    to_club_name = serializers.CharField(source="to_club.name", read_only=True)
-
-    class Meta:
-        model = PlayerTransfer
-        fields = [
-            "id",
-            "transfer_number",
-            "player",
-            "player_name",
-            "player_registration_number",
-            "from_club",
-            "from_club_name",
-            "to_club",
-            "to_club_name",
-            "transfer_type",
-            "transfer_fee",
-            "currency",
-            "transfer_date",
-            "contract_until",
-            "status",
-            "requested_by",
-            "approved_by",
-            "approved_at",
-            "rejection_reason",
-            "documents",
-            "notes",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = [
-            "id",
-            "transfer_number",
-            "created_at",
-            "updated_at",
-            "requested_by",
-        ]
-
-
-class PlayerTransferSummarySerializer(serializers.ModelSerializer):
-    player_name = serializers.CharField(source="player.full_name", read_only=True)
-    from_club_name = serializers.CharField(source="from_club.name", read_only=True)
-    to_club_name = serializers.CharField(source="to_club.name", read_only=True)
-
-    class Meta:
-        model = PlayerTransfer
-        fields = [
-            "id",
-            "transfer_number",
-            "player_name",
-            "from_club_name",
-            "to_club_name",
-            "transfer_type",
-            "transfer_fee",
-            "currency",
-            "transfer_date",
-            "status",
         ]
 
 

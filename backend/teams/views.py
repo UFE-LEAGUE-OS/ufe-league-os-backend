@@ -11,7 +11,6 @@ from accounts.rbac import get_user_clubs, get_user_union_workspaces
 
 from .models import (
     PlayerRegistration,
-    PlayerTransfer,
     Squad,
     SquadMember,
     SquadSubmission,
@@ -30,8 +29,6 @@ from .serializers import (
     LegacyPlayerRegistrationReadSerializer,
     LegacyPlayerRegistrationUpdateSerializer,
     PlayerRegistrationSummarySerializer,
-    PlayerTransferSerializer,
-    PlayerTransferSummarySerializer,
     SquadMemberSerializer,
     SquadSerializer,
     SquadSubmissionSerializer,
@@ -642,95 +639,6 @@ def staff_member_detail_view(request, pk):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     staff.delete()
-    return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-# ---------------------------------------------------------------------------
-# PLAYER TRANSFERS
-# ---------------------------------------------------------------------------
-
-
-@api_view(["GET", "POST"])
-@permission_classes([IsClubAdmin])
-def player_transfer_list_create_view(request):
-    """
-    GET: List transfers involving clubs the user manages.
-    POST: Initiate a player transfer.
-    """
-    user_clubs = get_user_clubs(request.user)
-
-    if request.method == "GET":
-        queryset = PlayerTransfer.objects.filter(
-            Q(from_club__in=user_clubs) | Q(to_club__in=user_clubs)
-        ).select_related("player", "from_club", "to_club", "requested_by")
-        serializer = PlayerTransferSummarySerializer(queryset, many=True)
-        return Response(serializer.data)
-
-    # POST
-    serializer = PlayerTransferSerializer(data=request.data)
-    if serializer.is_valid():
-        from_club = serializer.validated_data["from_club"]
-        to_club = serializer.validated_data["to_club"]
-        if from_club not in user_clubs and to_club not in user_clubs:
-            return Response(
-                {
-                    "detail": "You do not have permission to initiate transfers for these clubs."
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        # Auto-generate transfer number
-        import uuid
-
-        transfer_number = f"TRF-{uuid.uuid4().hex[:8].upper()}"
-        transfer = serializer.save(
-            requested_by=request.user,
-            transfer_number=transfer_number,
-        )
-        return Response(
-            PlayerTransferSerializer(transfer).data, status=status.HTTP_201_CREATED
-        )
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-@api_view(["GET", "PUT", "PATCH", "DELETE"])
-@permission_classes([IsClubAdmin])
-def player_transfer_detail_view(request, pk):
-    """
-    GET: Retrieve a transfer.
-    PUT/PATCH: Update a transfer.
-    DELETE: Cancel a transfer.
-    """
-    try:
-        transfer = PlayerTransfer.objects.get(pk=pk)
-    except PlayerTransfer.DoesNotExist:
-        return Response(
-            {"detail": "Transfer not found."}, status=status.HTTP_404_NOT_FOUND
-        )
-
-    user_clubs = get_user_clubs(request.user)
-    if transfer.from_club not in user_clubs and transfer.to_club not in user_clubs:
-        return Response(
-            {"detail": "You do not have permission to manage this transfer."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
-    if request.method == "GET":
-        serializer = PlayerTransferSerializer(transfer)
-        return Response(serializer.data)
-
-    if request.method in ("PUT", "PATCH"):
-        partial = request.method == "PATCH"
-        serializer = PlayerTransferSerializer(
-            transfer, data=request.data, partial=partial
-        )
-        if serializer.is_valid():
-            updated = serializer.save()
-            return Response(PlayerTransferSerializer(updated).data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    if transfer.status in (PlayerTransfer.TransferStatus.PENDING,):
-        transfer.status = PlayerTransfer.TransferStatus.CANCELLED
-        transfer.save(update_fields=["status"])
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
