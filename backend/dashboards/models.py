@@ -257,6 +257,7 @@ class Standing(models.Model):
 UNION_WORKSPACE_ROLE_PERMISSIONS = {
     "OWNER": {
         "union.dashboard.view",
+        "union.teams.manage",
         "union.competitions.manage",
         "union.clubs.manage",
         "union.players.approve",
@@ -273,6 +274,7 @@ UNION_WORKSPACE_ROLE_PERMISSIONS = {
     },
     "UNION_ADMIN": {
         "union.dashboard.view",
+        "union.teams.manage",
         "union.competitions.manage",
         "union.clubs.manage",
         "union.players.approve",
@@ -288,6 +290,7 @@ UNION_WORKSPACE_ROLE_PERMISSIONS = {
     },
     "COMPETITIONS_MANAGER": {
         "union.dashboard.view",
+        "union.teams.manage",
         "union.competitions.manage",
         "union.reports.view",
     },
@@ -708,3 +711,237 @@ class FixtureOfficialAssignment(models.Model):
         return (
             f"{self.official.full_name} - {self.match} ({self.get_role_type_display()})"
         )
+
+
+class NationalTeam(models.Model):
+    """A maintained representative team owned by one Union workspace."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        CAMP = "CAMP", "In Camp"
+        SELECTION = "SELECTION", "Selection"
+        INACTIVE = "INACTIVE", "Inactive"
+
+    workspace = models.ForeignKey(
+        UnionWorkspace,
+        on_delete=models.CASCADE,
+        related_name="national_teams",
+    )
+    name = models.CharField(max_length=180)
+    slug = models.SlugField(max_length=200)
+    category = models.CharField(
+        max_length=120,
+        help_text="Examples: Senior Men, Senior Women, U20, Sevens.",
+    )
+    gender = models.CharField(max_length=40, blank=True)
+    age_group = models.CharField(max_length=40, blank=True)
+    head_coach = models.CharField(max_length=160, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+    )
+    notes = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_national_teams",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        unique_together = ["workspace", "slug"]
+        indexes = [
+            models.Index(
+                fields=["workspace", "status"],
+                name="dash_natteam_ws_status_idx",
+            ),
+            models.Index(
+                fields=["workspace", "is_active"],
+                name="dash_natteam_ws_active_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.workspace.acronym} - {self.name}"
+
+
+class NationalTeamMember(models.Model):
+    """A maintained player or staff member attached to a representative team."""
+
+    class MemberType(models.TextChoices):
+        PLAYER = "PLAYER", "Player"
+        STAFF = "STAFF", "Staff"
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        INJURED = "INJURED", "Injured"
+        UNAVAILABLE = "UNAVAILABLE", "Unavailable"
+        RELEASED = "RELEASED", "Released"
+
+    team = models.ForeignKey(
+        NationalTeam,
+        on_delete=models.CASCADE,
+        related_name="members",
+    )
+    user = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="national_team_memberships",
+    )
+    club = models.ForeignKey(
+        "accounts.Club",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="national_team_members",
+    )
+    full_name = models.CharField(max_length=160)
+    member_type = models.CharField(
+        max_length=20,
+        choices=MemberType.choices,
+        default=MemberType.PLAYER,
+    )
+    role = models.CharField(max_length=100, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+    )
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["member_type", "full_name"]
+        indexes = [
+            models.Index(
+                fields=["team", "member_type", "status"],
+                name="dash_natmem_team_type_idx",
+            ),
+            models.Index(
+                fields=["club", "status"],
+                name="dash_natmem_club_status_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["team", "user", "member_type"],
+                condition=models.Q(user__isnull=False),
+                name="unique_team_user_member_type",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.full_name} - {self.team.name}"
+
+
+class UnionRegistrationApplication(models.Model):
+    """A workspace-scoped registration or eligibility application."""
+
+    class ApplicationType(models.TextChoices):
+        NEW_PLAYER = "NEW_PLAYER", "New Player"
+        TRANSFER = "TRANSFER", "Transfer"
+        RENEWAL = "RENEWAL", "Renewal"
+        SQUAD = "SQUAD", "Squad Registration"
+        STAFF = "STAFF", "Staff Registration"
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        UNDER_REVIEW = "UNDER_REVIEW", "Under Review"
+        DOCUMENTS_REQUIRED = "DOCUMENTS_REQUIRED", "Documents Required"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        WITHDRAWN = "WITHDRAWN", "Withdrawn"
+
+    workspace = models.ForeignKey(
+        UnionWorkspace,
+        on_delete=models.CASCADE,
+        related_name="registration_applications",
+    )
+    application_type = models.CharField(
+        max_length=30,
+        choices=ApplicationType.choices,
+        default=ApplicationType.NEW_PLAYER,
+    )
+    club = models.ForeignKey(
+        "accounts.Club",
+        on_delete=models.CASCADE,
+        related_name="union_registration_applications",
+    )
+    team = models.ForeignKey(
+        "teams.Team",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="union_registration_applications",
+    )
+    competition = models.ForeignKey(
+        Competition,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="registration_applications",
+    )
+    player_registration = models.ForeignKey(
+        "teams.PlayerRegistration",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="union_review_applications",
+    )
+    applicant_name = models.CharField(max_length=180)
+    registration_number = models.CharField(max_length=80, blank=True)
+    status = models.CharField(
+        max_length=30,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    documents_complete = models.BooleanField(default=False)
+    submitted_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="submitted_union_registration_applications",
+    )
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    reviewed_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reviewed_union_registration_applications",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewer_notes = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-submitted_at", "applicant_name"]
+        indexes = [
+            models.Index(
+                fields=["workspace", "status", "submitted_at"],
+                name="dash_regapp_ws_status_idx",
+            ),
+            models.Index(
+                fields=["workspace", "club", "status"],
+                name="dash_regapp_ws_club_idx",
+            ),
+            models.Index(
+                fields=["registration_number"],
+                name="dash_regapp_regnum_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.applicant_name} - {self.get_application_type_display()}"

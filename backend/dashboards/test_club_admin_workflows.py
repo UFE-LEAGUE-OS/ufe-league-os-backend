@@ -61,7 +61,7 @@ class TestClubAdminDashboard(TestCase):
         )
 
     def test_user_without_scope_cannot_access_dashboard(self):
-        """A user with CLUB_ADMIN role but no scope gets fallback dashboard."""
+        """A CLUB_ADMIN role without an active scope fails closed."""
         user = User.objects.create_user(
             email="noscope@example.com",
             password="testpass123",
@@ -70,5 +70,8 @@ class TestClubAdminDashboard(TestCase):
         self.api_client.force_authenticate(user=user)
         url = reverse("club-admin-dashboard")
         response = self.api_client.get(url)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)  # Fallback is used
-        self.assertIn("Admin", response.data["dashboard"]["title"])
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.data["detail"],
+            "You do not have active access to this dashboard.",
+        )

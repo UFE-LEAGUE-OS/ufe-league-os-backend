@@ -8,8 +8,11 @@ from .models import (
     League,
     LeagueAdminScope,
     LeagueClubMembership,
+    NationalTeam,
+    NationalTeamMember,
     Season,
     UnionMatchOfficial,
+    UnionRegistrationApplication,
 )
 from .serializers import MatchListSerializer
 
@@ -88,10 +91,12 @@ class ClubManagementSerializer(serializers.ModelSerializer):
         return obj.admin.email if obj.admin else ""
 
     def get_teams(self, obj):
-        return max(1, obj.league_memberships.values("season_id").distinct().count())
+        annotated = getattr(obj, "teams_count", None)
+        return annotated if annotated is not None else obj.teams.count()
 
     def get_players(self, obj):
-        return getattr(obj, "players_count", 0) or 0
+        annotated = getattr(obj, "players_count", None)
+        return annotated if annotated is not None else obj.player_registrations.count()
 
     def get_compliance(self, obj):
         if not obj.admin:
@@ -509,3 +514,190 @@ class FixtureOfficialAssignmentManagementSerializer(serializers.ModelSerializer)
 
     def get_match_label(self, obj):
         return f"{obj.match.home_club.name} vs {obj.match.away_club.name}"
+
+
+class NationalTeamSerializer(serializers.ModelSerializer):
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    workspace_slug = serializers.CharField(source="workspace.slug", read_only=True)
+    workspace_acronym = serializers.CharField(
+        source="workspace.acronym", read_only=True
+    )
+    players = serializers.SerializerMethodField()
+    staff = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NationalTeam
+        fields = [
+            "id",
+            "workspace",
+            "workspace_slug",
+            "workspace_acronym",
+            "name",
+            "slug",
+            "category",
+            "gender",
+            "age_group",
+            "head_coach",
+            "status",
+            "status_display",
+            "players",
+            "staff",
+            "notes",
+            "is_active",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "workspace",
+            "workspace_slug",
+            "workspace_acronym",
+            "slug",
+            "status_display",
+            "players",
+            "staff",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ]
+
+    def _member_count(self, obj, member_type):
+        annotation_name = (
+            "players_count"
+            if member_type == NationalTeamMember.MemberType.PLAYER
+            else "staff_count"
+        )
+        annotated = getattr(obj, annotation_name, None)
+        if annotated is not None:
+            return annotated
+        return (
+            obj.members.filter(
+                member_type=member_type,
+            )
+            .exclude(status=NationalTeamMember.Status.RELEASED)
+            .count()
+        )
+
+    def get_players(self, obj):
+        return self._member_count(obj, NationalTeamMember.MemberType.PLAYER)
+
+    def get_staff(self, obj):
+        return self._member_count(obj, NationalTeamMember.MemberType.STAFF)
+
+
+class NationalTeamMemberSerializer(serializers.ModelSerializer):
+    member_type_display = serializers.CharField(
+        source="get_member_type_display", read_only=True
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    team_name = serializers.CharField(source="team.name", read_only=True)
+    club_name = serializers.CharField(source="club.name", read_only=True)
+    user_email = serializers.EmailField(source="user.email", read_only=True)
+
+    class Meta:
+        model = NationalTeamMember
+        fields = [
+            "id",
+            "team",
+            "team_name",
+            "user",
+            "user_email",
+            "club",
+            "club_name",
+            "full_name",
+            "member_type",
+            "member_type_display",
+            "role",
+            "status",
+            "status_display",
+            "notes",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "team",
+            "team_name",
+            "user_email",
+            "club_name",
+            "member_type_display",
+            "status_display",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class UnionRegistrationApplicationSerializer(serializers.ModelSerializer):
+    application_type_display = serializers.CharField(
+        source="get_application_type_display", read_only=True
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    workspace_slug = serializers.CharField(source="workspace.slug", read_only=True)
+    workspace_acronym = serializers.CharField(
+        source="workspace.acronym", read_only=True
+    )
+    club_name = serializers.CharField(source="club.name", read_only=True)
+    club_slug = serializers.CharField(source="club.slug", read_only=True)
+    team_name = serializers.CharField(source="team.name", read_only=True)
+    competition_name = serializers.CharField(source="competition.name", read_only=True)
+    submitted_by_email = serializers.EmailField(
+        source="submitted_by.email", read_only=True
+    )
+    reviewed_by_email = serializers.EmailField(
+        source="reviewed_by.email", read_only=True
+    )
+
+    class Meta:
+        model = UnionRegistrationApplication
+        fields = [
+            "id",
+            "workspace",
+            "workspace_slug",
+            "workspace_acronym",
+            "application_type",
+            "application_type_display",
+            "club",
+            "club_name",
+            "club_slug",
+            "team",
+            "team_name",
+            "competition",
+            "competition_name",
+            "player_registration",
+            "applicant_name",
+            "registration_number",
+            "status",
+            "status_display",
+            "documents_complete",
+            "submitted_by",
+            "submitted_by_email",
+            "submitted_at",
+            "reviewed_by",
+            "reviewed_by_email",
+            "reviewed_at",
+            "reviewer_notes",
+            "metadata",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "workspace",
+            "workspace_slug",
+            "workspace_acronym",
+            "application_type_display",
+            "club_name",
+            "club_slug",
+            "team_name",
+            "competition_name",
+            "status_display",
+            "submitted_by",
+            "submitted_by_email",
+            "submitted_at",
+            "reviewed_by",
+            "reviewed_by_email",
+            "reviewed_at",
+            "created_at",
+            "updated_at",
+        ]

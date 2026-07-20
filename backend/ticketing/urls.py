@@ -3,6 +3,7 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    # Public / fan-facing endpoints
     path(
         "matches/<int:match_id>/ticket-types/",
         views.match_ticket_types_view,
@@ -47,5 +48,51 @@ urlpatterns = [
         "tickets/<int:ticket_id>/qr/",
         views.ticket_qr_svg_view,
         name="ticketing-ticket-qr-svg",
+    ),
+    # Admin / management endpoints
+    path(
+        "admin/ticket-types/",
+        views.admin_ticket_types_list_view,
+        name="ticketing-admin-ticket-types-list",
+    ),
+    path(
+        "admin/ticket-types/create/",
+        views.admin_ticket_type_create_view,
+        name="ticketing-admin-ticket-types-create",
+    ),
+    path(
+        "admin/ticket-types/<int:pk>/",
+        views.admin_ticket_type_detail_view,
+        name="ticketing-admin-ticket-types-detail",
+    ),
+    path(
+        "admin/ticket-types/<int:pk>/update/",
+        views.admin_ticket_type_update_view,
+        name="ticketing-admin-ticket-types-update",
+    ),
+    path(
+        "admin/ticket-types/<int:pk>/delete/",
+        views.admin_ticket_type_delete_view,
+        name="ticketing-admin-ticket-types-delete",
+    ),
+    path(
+        "admin/ticket-types/<int:pk>/inventory/",
+        views.admin_ticket_type_inventory_view,
+        name="ticketing-admin-ticket-types-inventory",
+    ),
+    path(
+        "admin/ticket-types/<int:pk>/publish/",
+        views.admin_ticket_type_publish_view,
+        name="ticketing-admin-ticket-types-publish",
+    ),
+    path(
+        "admin/matches/<int:match_id>/publish-sale/",
+        views.admin_match_publish_sale_view,
+        name="ticketing-admin-match-publish-sale",
+    ),
+    path(
+        "admin/sales-monitoring/",
+        views.admin_sales_monitoring_view,
+        name="ticketing-admin-sales-monitoring",
     ),
 ]

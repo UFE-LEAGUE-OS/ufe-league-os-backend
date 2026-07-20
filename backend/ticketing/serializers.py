@@ -246,3 +246,91 @@ class TicketValidationResultSerializer(serializers.ModelSerializer):
 
 class ExpireTicketReservationsSerializer(serializers.Serializer):
     dry_run = serializers.BooleanField(default=False, required=False)
+
+
+class TicketTypeAdminSerializer(serializers.ModelSerializer):
+    match_label = serializers.SerializerMethodField()
+    remaining_quantity = serializers.IntegerField(read_only=True)
+    active_reserved_quantity = serializers.IntegerField(read_only=True)
+    tickets_sold_count = serializers.IntegerField(read_only=True)
+    revenue_generated = serializers.DecimalField(
+        max_digits=14, decimal_places=2, read_only=True
+    )
+    created_by_email = serializers.CharField(source="created_by.email", read_only=True)
+
+    class Meta:
+        model = TicketType
+        fields = [
+            "id",
+            "match",
+            "match_label",
+            "name",
+            "description",
+            "price",
+            "currency",
+            "quantity_available",
+            "quantity_sold",
+            "active_reserved_quantity",
+            "remaining_quantity",
+            "tickets_sold_count",
+            "revenue_generated",
+            "sale_start_at",
+            "sale_end_at",
+            "status",
+            "created_by_email",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "match_label",
+            "active_reserved_quantity",
+            "remaining_quantity",
+            "tickets_sold_count",
+            "revenue_generated",
+            "created_by_email",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_match_label(self, obj):
+        return str(obj.match)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["revenue_generated"] = instance.revenue_generated
+        data["tickets_sold_count"] = instance.tickets_sold_count
+        return data
+
+
+class TicketTypeInventoryUpdateSerializer(serializers.Serializer):
+    quantity_available = serializers.IntegerField(min_value=0, required=True)
+
+
+class TicketTypePublishSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(
+        choices=["publish", "unpublish", "sell_out", "reopen"]
+    )
+    sale_start_at = serializers.DateTimeField(required=False, allow_null=True)
+    sale_end_at = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class MatchSalesStatsSerializer(serializers.Serializer):
+    match_id = serializers.IntegerField()
+    match_label = serializers.CharField()
+    match_date = serializers.DateTimeField()
+    venue = serializers.CharField()
+    status = serializers.CharField()
+    ticket_types_count = serializers.IntegerField()
+    total_quantity_available = serializers.IntegerField()
+    total_quantity_sold = serializers.IntegerField()
+    total_revenue = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_orders = serializers.IntegerField()
+    sold_out_types = serializers.IntegerField()
+    active_types = serializers.IntegerField()
+
+
+class TicketSalesMonitoringSerializer(serializers.Serializer):
+    overview = serializers.DictField()
+    matches = MatchSalesStatsSerializer(many=True)
+    ticket_types = TicketTypeAdminSerializer(many=True)

@@ -500,6 +500,7 @@ class SponsorshipAPITests(TestCase):
             owner=user,
             sponsor_type=SponsorAccount.SponsorType.INDIVIDUAL,
             name=user.full_name,
+            status=SponsorAccount.Status.APPROVED,
         )
 
         SponsorAccountMember.objects.create(

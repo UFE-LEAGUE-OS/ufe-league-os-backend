@@ -278,19 +278,21 @@ class TestRoleSpecificDashboardStructure:
     """Each role's dashboard should return consistent structure."""
 
     @pytest.mark.parametrize(
-        "role",
+        "role, has_dashboard",
         [
-            User.Role.FAN,
-            User.Role.CLUB_ADMIN,
-            User.Role.LEAGUE_ADMIN,
-            User.Role.UNION_ADMIN,
-            User.Role.SUPER_ADMIN,
-            User.Role.REFEREE,
-            User.Role.TICKETING_OFFICER,
-            User.Role.SPONSOR,  # Add trailing comma
+            (User.Role.FAN, True),
+            (User.Role.CLUB_ADMIN, False),
+            (User.Role.LEAGUE_ADMIN, False),
+            (User.Role.UNION_ADMIN, False),
+            (User.Role.SUPER_ADMIN, True),
+            (User.Role.REFEREE, False),
+            (User.Role.TICKETING_OFFICER, False),
+            (User.Role.SPONSOR, False),
         ],
     )
-    def test_all_roles_get_consistent_dashboard_structure(self, client, role, db):
+    def test_all_roles_get_consistent_dashboard_structure(
+        self, client, role, has_dashboard, db
+    ):
         user = User.objects.create_user(
             email=f"{role.lower()}@example.com",
             password="testpass123",
@@ -306,9 +308,23 @@ class TestRoleSpecificDashboardStructure:
         data = response.json()
 
         assert "dashboard" in data
-        assert "title" in data["dashboard"]
-        assert "modules" in data["dashboard"]
-        assert "quick_actions" in data["dashboard"]
+        if has_dashboard:
+            assert "title" in data["dashboard"]
+            assert "modules" in data["dashboard"]
+            assert "quick_actions" in data["dashboard"]
+        else:
+            assert data["message"] == "Dashboard access is unavailable."
+            assert data["role"] == role
+            assert data["dashboard_role"] is None
+            assert data["frontend_dashboard_route"] is None
+            assert data["backend_dashboard_route"] is None
+            assert data["available_dashboards"] == []
+            assert data["dashboard"] is None
+            assert data["user"]["dashboard_access"] == {
+                "version": 1,
+                "default_entitlement_id": None,
+                "entitlements": [],
+            }
 
 
 # ============================================================================

@@ -7,24 +7,19 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from accounts.models import Club, User
-from accounts.rbac import get_user_permissions, get_club_admin_sub_role
-from accounts.permissions import (
-    IsAuthenticatedAudit,
-    IsClubAdmin,
-    IsFan,
-    IsLeagueAdmin,
-    IsReferee,
-    IsSponsor,
-    IsSuperAdmin,
-    IsTicketingOfficer,
-    IsUnionAdmin,
+from accounts.dashboard_entitlements import resolve_dashboard_access
+from accounts.rbac import (
+    get_club_admin_sub_role,
+    get_user_permissions,
+    log_access_violation,
 )
-from accounts.routing import (
-    get_backend_dashboard_route,
-    get_dashboard_route,
-    get_dashboard_routes,
+from accounts.permissions import IsAuthenticatedAudit
+from accounts.serializers import (
+    CurrentUserSerializer,
+    entitlement_legacy_role,
+    present_dashboard_access,
+    select_dashboard_route_for_role,
 )
-from accounts.serializers import UserSerializer
 
 from .models import (
     Competition,
@@ -32,8 +27,10 @@ from .models import (
     LeagueClubMembership,
     FixtureOfficialAssignment,
     Match,
+    NationalTeam,
     Standing,
     UnionMatchOfficial,
+    UnionRegistrationApplication,
     Union,
     UnionWorkspace,
     UnionWorkspaceMembership,
@@ -181,22 +178,23 @@ DASHBOARD_CONTENT = {
         ],
     },
     User.Role.REFEREE: {
-        "title": "Referee Dashboard",
-        "description": "View match assignments, submit reports, and manage match official duties.",
+        "title": "Match Official Dashboard",
+        "description": "Manage match appointments, assigned responsibilities, reports, and availability.",
         "summary_cards": [
-            {"label": "Assignments", "value": 0},
+            {"label": "Match Appointments", "value": 0},
             {"label": "Upcoming Matches", "value": 0},
             {"label": "Reports Due", "value": 0},
-            {"label": "Completed Matches", "value": 0},
+            {"label": "Payments", "value": 0},
         ],
         "modules": [
-            "Assignments",
+            "Assigned Responsibilities",
             "Match Reports",
             "Availability",
-            "Disciplinary Notes",
+            "Documents and Certification",
+            "Allowances and Payments",
         ],
         "quick_actions": [
-            "View assignment",
+            "View match appointment",
             "Submit match report",
             "Update availability",
         ],
@@ -246,35 +244,35 @@ DASHBOARD_CONTENT = {
 }
 
 
-def user_has_sponsor_access(user):
-    if user.role == User.Role.SPONSOR:
-        return True
-
-    return user.sponsor_memberships.filter(is_active=True).exists()
-
-
-def build_available_dashboards(user):
-    dashboards = [
-        {
-            "label": user.get_role_display(),
-            "frontend_route": get_dashboard_route(user),
-            "backend_route": get_backend_dashboard_route(user),
-        }
-    ]
-
-    sponsor_dashboard = {
-        "label": "Sponsor Dashboard",
-        "frontend_route": "/dashboard/sponsor",
-        "backend_route": "/api/dashboards/sponsor/",
-    }
-
-    if user_has_sponsor_access(user) and sponsor_dashboard not in dashboards:
-        dashboards.append(sponsor_dashboard)
-
-    return dashboards
+def _dashboard_presentation(request):
+    user_data = CurrentUserSerializer(
+        request.user,
+        context={"request": request},
+    ).data
+    dashboard_access = user_data["dashboard_access"]
+    _default_dashboard, available_dashboards = present_dashboard_access(
+        dashboard_access
+    )
+    return user_data, dashboard_access, available_dashboards
 
 
-def build_dashboard_response(request, role, message=None):
+def _matching_dashboard_entries(available_dashboards, role):
+    return [item for item in available_dashboards if item["role"] == role]
+
+
+def _dashboard_access_denied(request, role):
+    log_access_violation(
+        request,
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"permission": f"dashboard.{str(role).lower()}"},
+    )
+    return Response(
+        {"detail": "You do not have active access to this dashboard."},
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def build_dashboard_response(request, role, message=None, presentation=None):
     """Build a consistent dashboard response for the authenticated user's role."""
 
     user = request.user
@@ -286,12 +284,15 @@ def build_dashboard_response(request, role, message=None):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    frontend_dashboard_route = get_dashboard_route(user)
-    backend_dashboard_route = get_backend_dashboard_route(user)
+    if presentation is None:
+        presentation = _dashboard_presentation(request)
+    user_data, _dashboard_access, available_dashboards = presentation
+    if not _matching_dashboard_entries(available_dashboards, role):
+        return _dashboard_access_denied(request, role)
 
-    if role == User.Role.SPONSOR:
-        frontend_dashboard_route = "/dashboard/sponsor"
-        backend_dashboard_route = "/api/dashboards/sponsor/"
+    frontend_dashboard_route, backend_dashboard_route = select_dashboard_route_for_role(
+        available_dashboards, role
+    )
 
     success_message = message or f"{content['title']} loaded successfully."
 
@@ -303,9 +304,9 @@ def build_dashboard_response(request, role, message=None):
             "dashboard_role": role,
             "frontend_dashboard_route": frontend_dashboard_route,
             "backend_dashboard_route": backend_dashboard_route,
-            "available_dashboards": get_dashboard_routes(user),
+            "available_dashboards": available_dashboards,
             "dashboard": content,
-            "user": UserSerializer(user, context={"request": request}).data,
+            "user": user_data,
         },
         status=status.HTTP_200_OK,
     )
@@ -314,35 +315,110 @@ def build_dashboard_response(request, role, message=None):
 @api_view(["GET"])
 @permission_classes([IsAuthenticatedAudit])
 def my_dashboard_view(request):
-    """Return the dashboard route and summary for the authenticated user's role"""
+    """Return dashboard content selected by the user's default entitlement."""
 
-    return build_dashboard_response(
-        request,
-        request.user.role,
-        message="Dashboard resolved successfully.",
+    user = request.user
+    user_data = CurrentUserSerializer(user, context={"request": request}).data
+    dashboard_access = user_data["dashboard_access"]
+    default_dashboard, available_dashboards = present_dashboard_access(dashboard_access)
+    default_id = dashboard_access["default_entitlement_id"]
+    default_entitlement = next(
+        (item for item in dashboard_access["entitlements"] if item["id"] == default_id),
+        None,
+    )
+
+    dashboard_role = None
+    if default_entitlement:
+        dashboard_role = {
+            "FAN": User.Role.FAN,
+            "SPONSOR": User.Role.SPONSOR,
+            "SUPER_ADMIN": User.Role.SUPER_ADMIN,
+            "LEAGUE_ADMIN": User.Role.LEAGUE_ADMIN,
+            "CLUB_ADMIN": User.Role.CLUB_ADMIN,
+            "TICKETING_OFFICER": User.Role.TICKETING_OFFICER,
+        }.get(default_entitlement["dashboard"])
+        if default_entitlement["dashboard"] == "UNION_WORKSPACE":
+            if default_entitlement["workspace_role"] == "MATCH_OFFICIAL":
+                dashboard_role = User.Role.REFEREE
+            elif default_entitlement["workspace_role"] == "TICKETING_OFFICER":
+                dashboard_role = User.Role.TICKETING_OFFICER
+            else:
+                dashboard_role = User.Role.UNION_ADMIN
+
+    return Response(
+        {
+            "message": (
+                "Dashboard resolved successfully."
+                if dashboard_role
+                else "Dashboard access is unavailable."
+            ),
+            "role": user.role,
+            "role_display": user.get_role_display(),
+            "dashboard_role": dashboard_role,
+            "frontend_dashboard_route": (
+                default_dashboard["route"] if default_dashboard else None
+            ),
+            "backend_dashboard_route": (
+                default_dashboard["backend_route"] if default_dashboard else None
+            ),
+            "available_dashboards": available_dashboards,
+            "dashboard": DASHBOARD_CONTENT.get(dashboard_role),
+            "user": user_data,
+        },
+        status=status.HTTP_200_OK,
     )
 
 
 @api_view(["GET"])
-@permission_classes([IsFan])
+@permission_classes([IsAuthenticatedAudit])
 def fan_dashboard_view(request):
     return build_dashboard_response(request, User.Role.FAN)
 
 
 @api_view(["GET"])
-@permission_classes([IsClubAdmin])
+@permission_classes([IsAuthenticatedAudit])
 def club_admin_dashboard_view(request):
     user = request.user
-    # Find the user's active club scope
+    presentation = _dashboard_presentation(request)
+    user_data, dashboard_access, available_dashboards = presentation
+    matching_entries = _matching_dashboard_entries(
+        available_dashboards,
+        User.Role.CLUB_ADMIN,
+    )
+    if not matching_entries:
+        return _dashboard_access_denied(request, User.Role.CLUB_ADMIN)
+
+    if len(matching_entries) != 1:
+        return build_dashboard_response(
+            request,
+            User.Role.CLUB_ADMIN,
+            presentation=presentation,
+        )
+
+    entitlement = next(
+        (
+            item
+            for item in dashboard_access["entitlements"]
+            if item["id"] == matching_entries[0]["entitlement_id"]
+        ),
+        None,
+    )
     scope = (
-        ClubAdminScope.objects.filter(user=user, is_active=True)
+        ClubAdminScope.objects.filter(
+            user=user,
+            is_active=True,
+            club_id=entitlement["scope_id"] if entitlement else None,
+        )
         .select_related("club")
         .first()
     )
 
     if not scope:
-        # Fallback for users with the direct role but no scope object
-        return build_dashboard_response(request, User.Role.CLUB_ADMIN)
+        return build_dashboard_response(
+            request,
+            User.Role.CLUB_ADMIN,
+            presentation=presentation,
+        )
 
     # Get all permissions (base role + club scope)
     permissions = get_user_permissions(user)
@@ -455,9 +531,10 @@ def club_admin_dashboard_view(request):
         "permissions": sorted(list(permissions)),
     }
 
-    user = request.user
-    frontend_dashboard_route = get_dashboard_route(user)
-    backend_dashboard_route = get_backend_dashboard_route(user)
+    frontend_dashboard_route, backend_dashboard_route = select_dashboard_route_for_role(
+        available_dashboards,
+        User.Role.CLUB_ADMIN,
+    )
 
     return Response(
         {
@@ -467,46 +544,59 @@ def club_admin_dashboard_view(request):
             "dashboard_role": User.Role.CLUB_ADMIN,
             "frontend_dashboard_route": frontend_dashboard_route,
             "backend_dashboard_route": backend_dashboard_route,
-            "available_dashboards": get_dashboard_routes(user),
+            "available_dashboards": available_dashboards,
             "dashboard": dashboard_content,
-            "user": UserSerializer(user, context={"request": request}).data,
+            "user": user_data,
         },
         status=status.HTTP_200_OK,
     )
 
 
 @api_view(["GET"])
-@permission_classes([IsLeagueAdmin])
+@permission_classes([IsAuthenticatedAudit])
 def league_admin_dashboard_view(request):
     return build_dashboard_response(request, User.Role.LEAGUE_ADMIN)
 
 
 @api_view(["GET"])
-@permission_classes([IsUnionAdmin])
+@permission_classes([IsAuthenticatedAudit])
 def union_admin_dashboard_view(request):
-    return build_dashboard_response(request, User.Role.UNION_ADMIN)
+    presentation = _dashboard_presentation(request)
+    _user_data, dashboard_access, _available_dashboards = presentation
+    union_roles = {
+        entitlement_legacy_role(item)
+        for item in dashboard_access["entitlements"]
+        if item["dashboard"] == "UNION_WORKSPACE"
+    }
+    if len(union_roles) != 1:
+        return _dashboard_access_denied(request, User.Role.UNION_ADMIN)
+    return build_dashboard_response(
+        request,
+        union_roles.pop(),
+        presentation=presentation,
+    )
 
 
 @api_view(["GET"])
-@permission_classes([IsSuperAdmin])
+@permission_classes([IsAuthenticatedAudit])
 def super_admin_dashboard_view(request):
     return build_dashboard_response(request, User.Role.SUPER_ADMIN)
 
 
 @api_view(["GET"])
-@permission_classes([IsReferee])
+@permission_classes([IsAuthenticatedAudit])
 def referee_dashboard_view(request):
     return build_dashboard_response(request, User.Role.REFEREE)
 
 
 @api_view(["GET"])
-@permission_classes([IsTicketingOfficer])
+@permission_classes([IsAuthenticatedAudit])
 def ticketing_officer_dashboard_view(request):
     return build_dashboard_response(request, User.Role.TICKETING_OFFICER)
 
 
 @api_view(["GET"])
-@permission_classes([IsSponsor])
+@permission_classes([IsAuthenticatedAudit])
 def sponsor_dashboard_view(request):
     return build_dashboard_response(request, User.Role.SPONSOR)
 
@@ -1082,7 +1172,29 @@ def union_admin_switch_workspace_view(request):
         context={"request": request},
     )
 
-    return Response(serializer.data)
+    dashboard_access = resolve_dashboard_access(request.user)
+    entitlement_id = f"union-workspace-{membership.workspace_id}"
+    selected_entitlement_id = (
+        entitlement_id
+        if any(
+            item["id"] == entitlement_id for item in dashboard_access["entitlements"]
+        )
+        else None
+    )
+
+    if selected_entitlement_id is None:
+        return Response(
+            {"detail": "You do not have active dashboard access to this workspace."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    return Response(
+        {
+            **serializer.data,
+            "selected_entitlement_id": selected_entitlement_id,
+            "dashboard_access": dashboard_access,
+        }
+    )
 
 
 @api_view(["GET"])
@@ -1109,17 +1221,14 @@ def union_admin_workspace_dashboard_view(request):
 
         member_clubs = (
             Club.objects.filter(
-                models.Q(home_matches__competition__league__union=related_union)
+                models.Q(league_memberships__league__union=related_union)
+                | models.Q(home_matches__competition__league__union=related_union)
                 | models.Q(away_matches__competition__league__union=related_union)
                 | models.Q(standings__competition__league__union=related_union)
             )
             .distinct()
             .count()
         )
-
-        if member_clubs == 0 and workspace.sport:
-            sport_value = workspace.sport.strip().upper().replace(" ", "_")
-            member_clubs = Club.objects.filter(sport=sport_value).count()
     else:
         leagues = League.objects.none()
         competitions = Competition.objects.none()
@@ -1136,8 +1245,22 @@ def union_admin_workspace_dashboard_view(request):
                 "leagues": leagues.count(),
                 "active_competitions": competitions.filter(is_active=True).count(),
                 "member_clubs": member_clubs,
-                "pending_approvals": 0,
-                "referees": 0,
+                "national_teams": NationalTeam.objects.filter(
+                    workspace=workspace, is_active=True
+                ).count(),
+                "pending_approvals": UnionRegistrationApplication.objects.filter(
+                    workspace=workspace,
+                    status__in=[
+                        UnionRegistrationApplication.Status.PENDING,
+                        UnionRegistrationApplication.Status.UNDER_REVIEW,
+                        UnionRegistrationApplication.Status.DOCUMENTS_REQUIRED,
+                    ],
+                ).count(),
+                "referees": (
+                    UnionMatchOfficial.objects.filter(union=related_union).count()
+                    if related_union
+                    else 0
+                ),
                 "upcoming_matches": matches.filter(
                     status=Match.Status.SCHEDULED
                 ).count(),

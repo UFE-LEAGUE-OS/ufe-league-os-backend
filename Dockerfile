@@ -2,6 +2,8 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+ARG REQUIREMENTS_FILE=requirements.txt
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -9,10 +11,10 @@ RUN apt-get update \
         netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/requirements.txt /app/requirements.txt
+COPY backend/requirements*.txt /app/
 
 RUN pip install --upgrade pip \
-    && pip install -r /app/requirements.txt
+    && pip install -r "/app/${REQUIREMENTS_FILE}"
 
 COPY backend /app
 

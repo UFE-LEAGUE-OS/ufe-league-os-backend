@@ -2,6 +2,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from django.db import models
+from django.http import HttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
@@ -1054,8 +1055,11 @@ def membership_reports_export_view(request):
         writer.writerows(rows)
 
         buffer.seek(0)
-        response = Response(buffer.getvalue(), content_type="text/csv")
-        response["Content-Disposition"] = "attachment; filename=membership-report.csv"
+        response = HttpResponse(
+            buffer.getvalue(),
+            content_type="text/csv",
+        )
+        response["Content-Disposition"] = 'attachment; filename="membership-report.csv"'
         return response
 
     # PDF export using reportlab
@@ -1137,6 +1141,6 @@ def membership_reports_export_view(request):
     doc.build(elements)
     buffer.seek(0)
 
-    response = Response(buffer.getvalue(), content_type="application/pdf")
-    response["Content-Disposition"] = "attachment; filename=membership-report.pdf"
+    response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+    response["Content-Disposition"] = 'attachment; filename="membership-report.pdf"'
     return response
