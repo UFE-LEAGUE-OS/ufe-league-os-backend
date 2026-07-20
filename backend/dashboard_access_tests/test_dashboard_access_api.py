@@ -181,7 +181,7 @@ class DashboardAccessApiTests(TestCase):
             (
                 "individual",
                 individual,
-                "/dashboard/sponsor",
+                "/sponsor/dashboard",
                 "/api/dashboards/sponsor/",
             )
         )
@@ -199,7 +199,7 @@ class DashboardAccessApiTests(TestCase):
                 (
                     f"corporate-{member_role}",
                     user,
-                    "/dashboard/sponsor",
+                    "/sponsor/dashboard",
                     "/api/dashboards/sponsor/",
                 )
             )
@@ -407,7 +407,7 @@ class DashboardAccessApiTests(TestCase):
             (
                 sponsor,
                 f"individual-sponsor-{sponsor_account.id}",
-                "/dashboard/sponsor",
+                "/sponsor/dashboard",
                 "/api/dashboards/sponsor/",
             ),
             (
@@ -940,7 +940,7 @@ class DashboardAccessApiTests(TestCase):
             (
                 corporate,
                 "/api/dashboards/sponsor/",
-                "/dashboard/sponsor",
+                "/sponsor/dashboard",
                 "/api/dashboards/sponsor/",
                 3,
                 User.Role.SPONSOR,
@@ -1122,12 +1122,12 @@ class DashboardAccessApiTests(TestCase):
         expected = {
             "/api/dashboards/me/": (
                 User.Role.SPONSOR,
-                "/dashboard/sponsor",
+                "/sponsor/dashboard",
                 "/api/dashboards/sponsor/",
             ),
             "/api/dashboards/sponsor/": (
                 User.Role.SPONSOR,
-                "/dashboard/sponsor",
+                "/sponsor/dashboard",
                 "/api/dashboards/sponsor/",
             ),
             "/api/dashboards/fan/": (

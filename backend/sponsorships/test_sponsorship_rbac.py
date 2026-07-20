@@ -90,10 +90,31 @@ class SponsorshipRBACRegressionTests(TestCase):
                 is_active=True,
             ).exists()
         )
-        self.assert_fan_only_access(create_response.data["dashboard_access"], user)
+        dashboard_access = create_response.data["dashboard_access"]
+
+        self.assertEqual(
+            dashboard_access["default_entitlement_id"],
+            f"individual-sponsor-{sponsor_account.id}",
+        )
+        self.assertEqual(
+            [item["dashboard"] for item in dashboard_access["entitlements"]],
+            ["SPONSOR", "FAN"],
+        )
+        self.assertEqual(
+            dashboard_access["entitlements"][0]["route"],
+            "/sponsor/dashboard",
+        )
 
         pending_response = self.client.get("/api/dashboards/sponsor/")
-        self.assertEqual(pending_response.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.assertEqual(
+            pending_response.status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(
+            pending_response.data["dashboard_role"],
+            User.Role.SPONSOR,
+        )
 
         sponsor_account.status = SponsorAccount.Status.REJECTED
         sponsor_account.save(update_fields=["status"])
@@ -167,6 +188,12 @@ class SponsorshipRBACRegressionTests(TestCase):
 
         self.assertEqual(first_response.status_code, status.HTTP_201_CREATED)
 
+        second_user = self.create_fan(
+            email="second-corporate@example.com",
+            phone_number="+256700000004",
+        )
+        self.authenticate(second_user)
+
         duplicate_response = self.client.post(
             "/api/sponsorships/accounts/",
             {
@@ -230,17 +257,35 @@ class SponsorshipRBACRegressionTests(TestCase):
                 is_active=True,
             ).exists()
         )
-        self.assert_fan_only_access(
-            become_response.data["user"]["dashboard_access"],
-            user,
+        dashboard_access = become_response.data["user"]["dashboard_access"]
+
+        self.assertEqual(
+            dashboard_access["default_entitlement_id"],
+            f"individual-sponsor-{sponsor_account.id}",
+        )
+        self.assertEqual(
+            [item["dashboard"] for item in dashboard_access["entitlements"]],
+            ["SPONSOR", "FAN"],
+        )
+        self.assertEqual(
+            dashboard_access["entitlements"][0]["route"],
+            "/sponsor/dashboard",
         )
         self.assertEqual(
             {item["role"] for item in become_response.data["dashboard_routes"]},
-            {User.Role.FAN},
+            {User.Role.SPONSOR, User.Role.FAN},
         )
 
         pending_response = self.client.get("/api/dashboards/sponsor/")
-        self.assertEqual(pending_response.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.assertEqual(
+            pending_response.status_code,
+            status.HTTP_200_OK,
+        )
+        self.assertEqual(
+            pending_response.data["dashboard_role"],
+            User.Role.SPONSOR,
+        )
 
         sponsor_account.status = SponsorAccount.Status.APPROVED
         sponsor_account.save(update_fields=["status"])

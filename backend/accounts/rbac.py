@@ -48,7 +48,7 @@ FRONTEND_DASHBOARD_ROUTES = {
     User.Role.SUPER_ADMIN: "/dashboard/super-admin",
     User.Role.REFEREE: "/dashboard/referee",
     User.Role.TICKETING_OFFICER: "/dashboard/ticketing-officer",
-    User.Role.SPONSOR: "/dashboard/sponsor",
+    User.Role.SPONSOR: "/sponsor/dashboard",
 }
 
 BACKEND_DASHBOARD_ROUTES = {

@@ -304,19 +304,26 @@ class SponsorAccountCreateSerializer(serializers.Serializer):
         brn = normalize_identifier(attrs.get("brn"))
         tin = normalize_identifier(attrs.get("tin"))
 
-        if sponsor_type == SponsorAccount.SponsorType.INDIVIDUAL:
-            if SponsorAccount.objects.filter(
-                owner=user,
-                sponsor_type=SponsorAccount.SponsorType.INDIVIDUAL,
-            ).exists():
-                raise serializers.ValidationError(
-                    {
-                        "sponsor_type": (
-                            "You already have an individual sponsor account."
-                        )
-                    }
-                )
+        existing_account = SponsorAccount.objects.filter(
+            owner=user,
+            sponsor_type=sponsor_type,
+        ).exists()
 
+        if existing_account:
+            account_type = sponsor_type.lower()
+            article = (
+                "an" if sponsor_type == SponsorAccount.SponsorType.INDIVIDUAL else "a"
+            )
+
+            raise serializers.ValidationError(
+                {
+                    "sponsor_type": (
+                        f"You already have {article} {account_type} " "sponsor account."
+                    )
+                }
+            )
+
+        if sponsor_type == SponsorAccount.SponsorType.INDIVIDUAL:
             if not name:
                 name = user.full_name
 
