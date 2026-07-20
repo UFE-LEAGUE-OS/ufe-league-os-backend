@@ -8,7 +8,6 @@ from .models import (
     UnionPlayer,
     UnionPlayerNumberSequence,
     UnionPlayerRegistration,
-    UnionPlayerTransfer,
 )
 from .union_governance import log_union_audit_event
 
@@ -125,72 +124,14 @@ def approve_player_registration(*, registration_id, reviewer, workspace, reason)
     return registration
 
 
-@transaction.atomic
 def approve_player_transfer(*, transfer_id, reviewer, workspace, reason):
-    """Atomically close the source registration and create a successor record."""
+    """Fail closed so callers cannot bypass maintained transfer decisions."""
 
-    transfer = (
-        UnionPlayerTransfer.objects.select_for_update()
-        .select_related("workspace", "player", "source_registration")
-        .get(pk=transfer_id)
+    raise ValidationError(
+        {
+            "transfer": (
+                "Legacy transfer approval is disabled. Use the maintained "
+                "Union transfer decision service."
+            )
+        }
     )
-    if transfer.workspace_id != workspace.id:
-        raise ValidationError({"transfer": "Transfer is outside this workspace."})
-    if transfer.status == UnionPlayerTransfer.Status.APPROVED:
-        successor = UnionPlayerRegistration.objects.filter(
-            predecessor=transfer.source_registration,
-            club=transfer.destination_club,
-            effective_from=transfer.effective_on,
-        ).first()
-        return transfer, successor
-    if transfer.status != UnionPlayerTransfer.Status.UNDER_UNION_REVIEW:
-        raise ValidationError(
-            {"status": "Only transfers under Union review can be approved."}
-        )
-    if transfer.source_registration.status != UnionPlayerRegistration.Status.ACTIVE:
-        raise ValidationError(
-            {"source_registration": "Source registration is no longer active."}
-        )
-    if not reason.strip():
-        raise ValidationError({"reason": "An approval reason is required."})
-
-    source = transfer.source_registration
-    source.status = UnionPlayerRegistration.Status.TRANSFERRED
-    source.effective_to = transfer.effective_on
-    source.save(update_fields=["status", "effective_to", "updated_at"])
-    successor = UnionPlayerRegistration.objects.create(
-        workspace=workspace,
-        player=transfer.player,
-        club=transfer.destination_club,
-        team=transfer.destination_team,
-        status=UnionPlayerRegistration.Status.ACTIVE,
-        effective_from=transfer.effective_on,
-        approved_by=reviewer,
-        approved_at=timezone.now(),
-        predecessor=source,
-        notes=f"Approved transfer {transfer.id}: {reason.strip()}",
-    )
-    transfer.status = UnionPlayerTransfer.Status.APPROVED
-    transfer.reviewed_by = reviewer
-    transfer.reviewed_at = timezone.now()
-    transfer.decision_reason = reason.strip()
-    transfer.save(
-        update_fields=[
-            "status",
-            "reviewed_by",
-            "reviewed_at",
-            "decision_reason",
-            "updated_at",
-        ]
-    )
-    log_union_audit_event(
-        workspace=workspace,
-        actor=reviewer,
-        action="union_player_transfer.approved",
-        target=transfer,
-        metadata={
-            "source_registration": source.id,
-            "successor_registration": successor.id,
-        },
-    )
-    return transfer, successor

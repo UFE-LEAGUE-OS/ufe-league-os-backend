@@ -69,9 +69,7 @@ class UnionPlayerWorkflowTests(TestCase):
         self.assertEqual(first.id, second.id)
         self.assertEqual(UnionPlayer.objects.count(), 1)
 
-    def test_approval_activates_one_club_registration_and_preserves_transfer_history(
-        self,
-    ):
+    def test_registration_approval_remains_available(self):
         player, _ = create_or_find_provisional_player(
             workspace=self.workspace,
             first_name="Musa",
@@ -92,6 +90,26 @@ class UnionPlayerWorkflowTests(TestCase):
             workspace=self.workspace,
             reason="Identity and eligibility verified.",
         )
+        self.assertEqual(active.status, UnionPlayerRegistration.Status.ACTIVE)
+        self.assertEqual(player.club_registration_history.count(), 1)
+
+    def test_legacy_transfer_approval_is_disabled(self):
+        player = UnionPlayer.objects.create(
+            union=self.union,
+            union_player_number="PU-P000001",
+            first_name="Maintained",
+            last_name="Transfer",
+            date_of_birth=date(2000, 1, 1),
+            nationality="Ugandan",
+            status=UnionPlayer.Status.APPROVED,
+        )
+        active = UnionPlayerRegistration.objects.create(
+            workspace=self.workspace,
+            player=player,
+            club=self.source_club,
+            effective_from=date(2026, 1, 1),
+            status=UnionPlayerRegistration.Status.ACTIVE,
+        )
         transfer = UnionPlayerTransfer.objects.create(
             workspace=self.workspace,
             player=player,
@@ -101,49 +119,46 @@ class UnionPlayerWorkflowTests(TestCase):
             initiated_by=self.reviewer,
             status=UnionPlayerTransfer.Status.UNDER_UNION_REVIEW,
         )
-        _, successor = approve_player_transfer(
-            transfer_id=transfer.id,
-            reviewer=self.reviewer,
-            workspace=self.workspace,
-            reason="All transfer conditions are met.",
-        )
+        with self.assertRaisesMessage(
+            ValidationError,
+            (
+                "Legacy transfer approval is disabled. Use the maintained "
+                "Union transfer decision service."
+            ),
+        ):
+            approve_player_transfer(
+                transfer_id=transfer.id,
+                reviewer=self.reviewer,
+                workspace=self.workspace,
+                reason="Attempt to bypass maintained review.",
+            )
         active.refresh_from_db()
-        self.assertEqual(active.status, UnionPlayerRegistration.Status.TRANSFERRED)
-        self.assertEqual(successor.status, UnionPlayerRegistration.Status.ACTIVE)
-        self.assertEqual(successor.club, self.destination_club)
+        self.assertEqual(active.status, UnionPlayerRegistration.Status.ACTIVE)
         self.assertEqual(
-            UnionPlayerRegistration.objects.filter(player=player).count(), 2
+            UnionPlayerRegistration.objects.filter(player=player).count(), 1
         )
-
-    def test_transfer_fails_closed_when_source_is_not_active(self):
-        player = UnionPlayer.objects.create(
-            union=self.union,
-            union_player_number="PU-P000001",
-            first_name="Closed",
-            last_name="Source",
-            date_of_birth=date(2000, 1, 1),
-            nationality="Ugandan",
-            status=UnionPlayer.Status.APPROVED,
-        )
-        source = UnionPlayerRegistration.objects.create(
+        inactive_source = UnionPlayerRegistration.objects.create(
             workspace=self.workspace,
             player=player,
             club=self.source_club,
             effective_from=date(2026, 1, 1),
             status=UnionPlayerRegistration.Status.SUSPENDED,
         )
-        transfer = UnionPlayerTransfer.objects.create(
+        inactive_transfer = UnionPlayerTransfer.objects.create(
             workspace=self.workspace,
             player=player,
-            source_registration=source,
+            source_registration=inactive_source,
             destination_club=self.destination_club,
             effective_on=date(2026, 7, 1),
             initiated_by=self.reviewer,
             status=UnionPlayerTransfer.Status.UNDER_UNION_REVIEW,
         )
-        with self.assertRaises(ValidationError):
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Legacy transfer approval is disabled.",
+        ):
             approve_player_transfer(
-                transfer_id=transfer.id,
+                transfer_id=inactive_transfer.id,
                 reviewer=self.reviewer,
                 workspace=self.workspace,
                 reason="Attempting an invalid transfer.",

@@ -1642,6 +1642,16 @@ class UnionPlayerRegistration(models.Model):
 class UnionPlayerTransfer(models.Model):
     """A Union-reviewed transfer that atomically preserves Club registration history."""
 
+    class SourceClubResponseStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        ACKNOWLEDGED = "ACKNOWLEDGED", "Acknowledged"
+        OBJECTED = "OBJECTED", "Objected"
+
+    class PlayerConsentStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        CONSENTED = "CONSENTED", "Consented"
+        DECLINED = "DECLINED", "Declined"
+
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
         SUBMITTED = "SUBMITTED", "Submitted"
@@ -1656,6 +1666,7 @@ class UnionPlayerTransfer(models.Model):
         APPROVED = "APPROVED", "Approved"
         REJECTED = "REJECTED", "Rejected"
         CANCELLED = "CANCELLED", "Cancelled"
+        LOAN_ACTIVE = "LOAN_ACTIVE", "Loan active"
         COMPLETED = "COMPLETED", "Completed"
         EXPIRED = "EXPIRED", "Expired"
 
@@ -1671,6 +1682,20 @@ class UnionPlayerTransfer(models.Model):
         UnionPlayerRegistration,
         on_delete=models.PROTECT,
         related_name="outgoing_transfers",
+    )
+    destination_registration = models.OneToOneField(
+        UnionPlayerRegistration,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="completed_transfer",
+    )
+    return_registration = models.OneToOneField(
+        UnionPlayerRegistration,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="completed_loan_return",
     )
     destination_club = models.ForeignKey(
         "accounts.Club",
@@ -1694,6 +1719,13 @@ class UnionPlayerTransfer(models.Model):
     status = models.CharField(
         max_length=40, choices=Status.choices, default=Status.DRAFT
     )
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    last_resubmitted_at = models.DateTimeField(null=True, blank=True)
+    submission_revision = models.PositiveIntegerField(default=0)
+    automatic_validation = models.JSONField(default=dict, blank=True)
+    activation_plan = models.JSONField(default=dict, blank=True)
+    return_plan = models.JSONField(default=dict, blank=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
     effective_on = models.DateField()
     transfer_type = models.CharField(max_length=30, default="PERMANENT")
     loan_end_on = models.DateField(null=True, blank=True)
@@ -1702,10 +1734,34 @@ class UnionPlayerTransfer(models.Model):
         on_delete=models.PROTECT,
         related_name="initiated_union_player_transfers",
     )
+    source_club_response_status = models.CharField(
+        max_length=30,
+        choices=SourceClubResponseStatus.choices,
+        default=SourceClubResponseStatus.PENDING,
+    )
     source_club_response_at = models.DateTimeField(null=True, blank=True)
     source_club_response = models.TextField(blank=True)
+    source_club_responded_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="source_club_transfer_responses",
+    )
+    player_consent_status = models.CharField(
+        max_length=30,
+        choices=PlayerConsentStatus.choices,
+        default=PlayerConsentStatus.PENDING,
+    )
     player_consented_at = models.DateTimeField(null=True, blank=True)
     player_consent_method = models.CharField(max_length=80, blank=True)
+    player_consent_recorded_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="recorded_player_transfer_consents",
+    )
     documents = models.JSONField(default=list, blank=True)
     fee_status = models.CharField(max_length=40, blank=True)
     reviewed_by = models.ForeignKey(
@@ -1718,6 +1774,21 @@ class UnionPlayerTransfer(models.Model):
     reviewed_at = models.DateTimeField(null=True, blank=True)
     decision_reason = models.TextField(blank=True)
     change_request_reason = models.TextField(blank=True)
+    cancelled_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="cancelled_union_player_transfers",
+    )
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancellation_reason = models.TextField(blank=True)
+    source_registration_original_effective_to = models.DateField(
+        null=True,
+        blank=True,
+    )
+    returned_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1760,6 +1831,20 @@ class UnionPlayerCompetitionEligibility(models.Model):
         blank=True,
         on_delete=models.SET_NULL,
         related_name="competition_eligibility_history",
+    )
+    source_transfer = models.ForeignKey(
+        UnionPlayerTransfer,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="destination_competition_eligibilities",
+    )
+    source_loan_return = models.ForeignKey(
+        UnionPlayerTransfer,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="return_competition_eligibilities",
     )
     club = models.ForeignKey(
         "accounts.Club",
@@ -1816,6 +1901,16 @@ class UnionPlayerCompetitionEligibility(models.Model):
                 fields=["source_submission", "competition_edition"],
                 condition=models.Q(source_submission__isnull=False),
                 name="unique_submission_competition_edition",
+            ),
+            models.UniqueConstraint(
+                fields=["source_transfer", "competition_edition"],
+                condition=models.Q(source_transfer__isnull=False),
+                name="unique_transfer_competition_edition",
+            ),
+            models.UniqueConstraint(
+                fields=["source_loan_return", "competition_edition"],
+                condition=models.Q(source_loan_return__isnull=False),
+                name="unique_loan_return_competition_edition",
             ),
         ]
         indexes = [
