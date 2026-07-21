@@ -72,6 +72,204 @@ class Competition(models.Model):
         return f"{self.name} ({self.season})"
 
 
+class CompetitionIdentity(models.Model):
+    """The permanent identity shared by every historical season edition."""
+
+    class CompetitionType(models.TextChoices):
+        LEAGUE = "LEAGUE", "League"
+        KNOCKOUT = "KNOCKOUT", "Knockout"
+        GROUP_AND_KNOCKOUT = "GROUP_AND_KNOCKOUT", "Group and knockout"
+        TOURNAMENT = "TOURNAMENT", "Tournament"
+        SERIES = "SERIES", "Short-format series"
+        COMMUNITY = "COMMUNITY", "Community competition"
+
+    union = models.ForeignKey(
+        Union,
+        on_delete=models.PROTECT,
+        related_name="competition_identities",
+    )
+    primary_league = models.ForeignKey(
+        League,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="competition_identities",
+    )
+    name = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=200)
+    sport = models.CharField(max_length=80, blank=True)
+    competition_type = models.CharField(
+        max_length=30,
+        choices=CompetitionType.choices,
+        default=CompetitionType.LEAGUE,
+    )
+    description = models.TextField(blank=True)
+    branding = models.JSONField(default=dict, blank=True)
+    default_format = models.JSONField(default=dict, blank=True)
+    default_eligibility_rules = models.JSONField(default=dict, blank=True)
+    tier = models.PositiveSmallIntegerField(null=True, blank=True)
+    higher_competition = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="lower_competitions",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["union__name", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["union", "slug"],
+                name="unique_union_competition_identity_slug",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["union", "is_active"]),
+            models.Index(fields=["primary_league", "is_active"]),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.primary_league_id and self.primary_league.union_id != self.union_id:
+            raise ValidationError(
+                {"primary_league": "League must belong to the Union."}
+            )
+        if (
+            self.higher_competition_id
+            and self.higher_competition.union_id != self.union_id
+        ):
+            raise ValidationError(
+                {"higher_competition": "Competition must belong to the Union."}
+            )
+        if self.higher_competition_id == self.id:
+            raise ValidationError(
+                {"higher_competition": "A competition cannot be its own parent."}
+            )
+        ancestor = self.higher_competition
+        seen = {self.id}
+        while ancestor is not None:
+            if ancestor.id in seen:
+                raise ValidationError(
+                    {
+                        "higher_competition": "Competition hierarchy cannot contain a cycle."
+                    }
+                )
+            seen.add(ancestor.id)
+            ancestor = ancestor.higher_competition
+
+    def __str__(self):
+        return self.name
+
+
+class CompetitionEdition(models.Model):
+    """A season-specific edition backed by a legacy-compatible Competition row."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        REGISTRATION_OPEN = "REGISTRATION_OPEN", "Registration open"
+        REGISTRATION_CLOSED = "REGISTRATION_CLOSED", "Registration closed"
+        ENTRIES_UNDER_REVIEW = "ENTRIES_UNDER_REVIEW", "Entries under review"
+        SCHEDULING = "SCHEDULING", "Scheduling"
+        READY_FOR_PUBLICATION = "READY_FOR_PUBLICATION", "Ready for publication"
+        PUBLISHED = "PUBLISHED", "Published"
+        ACTIVE = "ACTIVE", "Active"
+        COMPLETED = "COMPLETED", "Completed"
+        ARCHIVED = "ARCHIVED", "Archived"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    identity = models.ForeignKey(
+        CompetitionIdentity,
+        on_delete=models.PROTECT,
+        related_name="editions",
+    )
+    competition = models.OneToOneField(
+        Competition,
+        on_delete=models.PROTECT,
+        related_name="competition_edition",
+    )
+    season = models.ForeignKey(
+        "Season",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="competition_editions",
+    )
+    status = models.CharField(
+        max_length=30,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+    registration_opens_at = models.DateTimeField(null=True, blank=True)
+    registration_closes_at = models.DateTimeField(null=True, blank=True)
+    entry_fee = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    currency = models.CharField(max_length=3, default="UGX")
+    rules = models.JSONField(default=dict, blank=True)
+    structure = models.JSONField(default=dict, blank=True)
+    eligibility_rules = models.JSONField(default=dict, blank=True)
+    copied_from = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="copied_editions",
+    )
+    published_at = models.DateTimeField(null=True, blank=True)
+    published_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="published_competition_editions",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-season__start_date", "-created_at", "identity__name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["identity", "season"],
+                condition=models.Q(season__isnull=False),
+                name="unique_identity_competition_edition_season",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["identity", "status"]),
+            models.Index(fields=["season", "status"]),
+        ]
+
+    def clean(self):
+        super().clean()
+        if (
+            self.competition_id
+            and self.competition.league.union_id != self.identity.union_id
+        ):
+            raise ValidationError(
+                {"competition": "Competition must belong to the identity Union."}
+            )
+        if self.season_id and self.season.league.union_id != self.identity.union_id:
+            raise ValidationError(
+                {"season": "Season must belong to the identity Union."}
+            )
+        if (
+            self.registration_opens_at
+            and self.registration_closes_at
+            and self.registration_closes_at < self.registration_opens_at
+        ):
+            raise ValidationError(
+                {"registration_closes_at": "Registration cannot close before it opens."}
+            )
+
+    def __str__(self):
+        return f"{self.identity.name} - {self.competition.season}"
+
+
 class LeagueAdminScope(models.Model):
     """Scopes league/competition administrators to the records they may manage."""
 
@@ -258,14 +456,29 @@ UNION_WORKSPACE_ROLE_PERMISSIONS = {
     "OWNER": {
         "union.dashboard.view",
         "union.teams.manage",
+        "union.competitions.view",
         "union.competitions.manage",
+        "union.competitions.publish",
+        "union.clubs.view",
         "union.clubs.manage",
+        "union.registrations.view",
+        "union.registrations.manage",
         "union.players.approve",
+        "union.players.view",
+        "union.transfers.view",
+        "union.transfers.approve",
         "union.referees.manage",
+        "union.statistics.view",
+        "union.statistics.manage",
         "union.finance.view",
+        "union.finance.manage",
         "union.reports.view",
         "union.communications.manage",
+        "union.sponsors.view",
+        "union.sponsors.manage",
         "union.users.manage",
+        "union.audit.view",
+        "union.approvals.manage",
         "union.official.appointments.view",
         "union.official.reports.manage",
         "union.official.availability.manage",
@@ -275,13 +488,28 @@ UNION_WORKSPACE_ROLE_PERMISSIONS = {
     "UNION_ADMIN": {
         "union.dashboard.view",
         "union.teams.manage",
+        "union.competitions.view",
         "union.competitions.manage",
+        "union.competitions.publish",
+        "union.clubs.view",
         "union.clubs.manage",
+        "union.registrations.view",
+        "union.registrations.manage",
         "union.players.approve",
+        "union.players.view",
+        "union.transfers.view",
+        "union.transfers.approve",
         "union.referees.manage",
+        "union.statistics.view",
+        "union.statistics.manage",
+        "union.finance.view",
         "union.reports.view",
         "union.communications.manage",
+        "union.sponsors.view",
+        "union.sponsors.manage",
         "union.users.manage",
+        "union.audit.view",
+        "union.approvals.manage",
         "union.official.appointments.view",
         "union.official.reports.manage",
         "union.official.availability.manage",
@@ -291,18 +519,34 @@ UNION_WORKSPACE_ROLE_PERMISSIONS = {
     "COMPETITIONS_MANAGER": {
         "union.dashboard.view",
         "union.teams.manage",
+        "union.competitions.view",
         "union.competitions.manage",
+        "union.competitions.publish",
+        "union.clubs.view",
+        "union.registrations.view",
+        "union.registrations.manage",
+        "union.players.view",
+        "union.transfers.view",
+        "union.statistics.view",
+        "union.statistics.manage",
         "union.reports.view",
     },
     "REGISTRAR": {
         "union.dashboard.view",
+        "union.clubs.view",
         "union.players.approve",
+        "union.players.view",
+        "union.registrations.view",
+        "union.registrations.manage",
+        "union.transfers.view",
+        "union.transfers.approve",
         "union.clubs.manage",
         "union.reports.view",
     },
     "REFEREE_MANAGER": {
         "union.dashboard.view",
         "union.referees.manage",
+        "union.statistics.view",
         "union.reports.view",
         "union.official.appointments.view",
         "union.official.reports.manage",
@@ -320,11 +564,39 @@ UNION_WORKSPACE_ROLE_PERMISSIONS = {
     "FINANCE_OFFICER": {
         "union.dashboard.view",
         "union.finance.view",
+        "union.finance.manage",
         "union.reports.view",
     },
     "COMMUNICATIONS_OFFICER": {
         "union.dashboard.view",
         "union.communications.manage",
+        "union.reports.view",
+    },
+    "SPONSORSHIP_OFFICER": {
+        "union.dashboard.view",
+        "union.sponsors.view",
+        "union.sponsors.manage",
+        "union.reports.view",
+    },
+    "NATIONAL_TEAM_MANAGER": {
+        "union.dashboard.view",
+        "union.teams.manage",
+        "union.players.view",
+        "union.registrations.view",
+        "union.reports.view",
+    },
+    "TECHNICAL_ADMINISTRATOR": {
+        "union.dashboard.view",
+        "union.competitions.view",
+        "union.competitions.manage",
+        "union.clubs.view",
+        "union.players.view",
+        "union.statistics.view",
+        "union.statistics.manage",
+        "union.reports.view",
+    },
+    "CUSTOM_USER": {
+        "union.dashboard.view",
     },
     "TICKETING_OFFICER": {
         "union.dashboard.view",
@@ -334,6 +606,13 @@ UNION_WORKSPACE_ROLE_PERMISSIONS = {
     },
     "VIEWER": {
         "union.dashboard.view",
+        "union.competitions.view",
+        "union.clubs.view",
+        "union.registrations.view",
+        "union.players.view",
+        "union.transfers.view",
+        "union.statistics.view",
+        "union.sponsors.view",
         "union.reports.view",
     },
 }
@@ -400,6 +679,10 @@ class UnionWorkspaceMembership(models.Model):
         MATCH_OFFICIAL = "MATCH_OFFICIAL", "Match Official"
         FINANCE_OFFICER = "FINANCE_OFFICER", "Finance Officer"
         COMMUNICATIONS_OFFICER = "COMMUNICATIONS_OFFICER", "Communications Officer"
+        SPONSORSHIP_OFFICER = "SPONSORSHIP_OFFICER", "Sponsorship Officer"
+        NATIONAL_TEAM_MANAGER = "NATIONAL_TEAM_MANAGER", "National Team Manager"
+        TECHNICAL_ADMINISTRATOR = "TECHNICAL_ADMINISTRATOR", "Technical Administrator"
+        CUSTOM_USER = "CUSTOM_USER", "Custom User"
         TICKETING_OFFICER = "TICKETING_OFFICER", "Ticketing Officer"
         VIEWER = "VIEWER", "Viewer"
 
@@ -415,6 +698,14 @@ class UnionWorkspaceMembership(models.Model):
     )
     role = models.CharField(max_length=40, choices=Role.choices, default=Role.VIEWER)
     extra_permissions = models.JSONField(default=list, blank=True)
+    scope_restrictions = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Optional resource scope restrictions, keyed by resource type. "
+            "An empty object grants the workspace-wide role template."
+        ),
+    )
     is_active = models.BooleanField(default=True)
     invited_by = models.ForeignKey(
         "accounts.User",
@@ -796,6 +1087,14 @@ class NationalTeamMember(models.Model):
         on_delete=models.SET_NULL,
         related_name="national_team_memberships",
     )
+    player = models.ForeignKey(
+        "UnionPlayer",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="national_team_assignments",
+        help_text="Required for player selections from the approved Union player pool.",
+    )
     club = models.ForeignKey(
         "accounts.Club",
         null=True,
@@ -945,3 +1244,676 @@ class UnionRegistrationApplication(models.Model):
 
     def __str__(self):
         return f"{self.applicant_name} - {self.get_application_type_display()}"
+
+
+class UnionApproval(models.Model):
+    """A workspace-scoped, reviewable decision for a sensitive Union action."""
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    workspace = models.ForeignKey(
+        UnionWorkspace,
+        on_delete=models.PROTECT,
+        related_name="approvals",
+    )
+    subject_type = models.CharField(max_length=80)
+    subject_id = models.PositiveBigIntegerField()
+    action = models.CharField(max_length=100)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    requested_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="union_approvals_requested",
+    )
+    reviewed_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="union_approvals_reviewed",
+    )
+    reason = models.TextField(blank=True)
+    decision_reason = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(
+                fields=["workspace", "status", "created_at"],
+                name="dash_approval_ws_status_idx",
+            ),
+            models.Index(
+                fields=["workspace", "subject_type", "subject_id"],
+                name="dash_approval_subject_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.workspace.acronym}: {self.action} ({self.status})"
+
+
+class UnionAuditEvent(models.Model):
+    """Append-only audit event for a material Union workspace action."""
+
+    workspace = models.ForeignKey(
+        UnionWorkspace,
+        on_delete=models.PROTECT,
+        related_name="audit_events",
+    )
+    actor = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="union_audit_events",
+    )
+    action = models.CharField(max_length=120)
+    target_type = models.CharField(max_length=80, blank=True)
+    target_id = models.PositiveBigIntegerField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(
+                fields=["workspace", "created_at"],
+                name="dash_audit_ws_created_idx",
+            ),
+            models.Index(
+                fields=["workspace", "action"],
+                name="dash_audit_ws_action_idx",
+            ),
+            models.Index(
+                fields=["target_type", "target_id"],
+                name="dash_audit_target_idx",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Union audit events are immutable.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Union audit events cannot be deleted.")
+
+    def __str__(self):
+        return f"{self.workspace.acronym}: {self.action}"
+
+
+class UnionReviewComment(models.Model):
+    """A workspace-scoped review comment attached to an operational record."""
+
+    workspace = models.ForeignKey(
+        UnionWorkspace,
+        on_delete=models.PROTECT,
+        related_name="review_comments",
+    )
+    subject_type = models.CharField(max_length=80)
+    subject_id = models.PositiveBigIntegerField()
+    author = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="union_review_comments",
+    )
+    body = models.TextField()
+    is_internal = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        indexes = [
+            models.Index(
+                fields=["workspace", "subject_type", "subject_id"],
+                name="dash_comment_subject_idx",
+            ),
+        ]
+
+
+class UnionDocumentReference(models.Model):
+    """A reference to a document held by a workspace-owned operational record."""
+
+    workspace = models.ForeignKey(
+        UnionWorkspace,
+        on_delete=models.PROTECT,
+        related_name="document_references",
+    )
+    subject_type = models.CharField(max_length=80)
+    subject_id = models.PositiveBigIntegerField()
+    document_type = models.CharField(max_length=80)
+    title = models.CharField(max_length=200)
+    file_url = models.URLField(max_length=1000)
+    uploaded_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="uploaded_union_documents",
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(
+                fields=["workspace", "subject_type", "subject_id"],
+                name="dash_document_subject_idx",
+            ),
+        ]
+
+
+class ClubAffiliation(models.Model):
+    """A Union's affiliation and compliance record for a Club."""
+
+    class Status(models.TextChoices):
+        APPLICATION_SUBMITTED = "APPLICATION_SUBMITTED", "Application submitted"
+        UNDER_REVIEW = "UNDER_REVIEW", "Under review"
+        CHANGES_REQUESTED = "CHANGES_REQUESTED", "Changes requested"
+        PROVISIONAL = "PROVISIONAL", "Provisional"
+        ACTIVE = "ACTIVE", "Active"
+        RENEWAL_DUE = "RENEWAL_DUE", "Renewal due"
+        SUSPENDED = "SUSPENDED", "Suspended"
+        EXPIRED = "EXPIRED", "Expired"
+        REJECTED = "REJECTED", "Rejected"
+
+    workspace = models.ForeignKey(
+        UnionWorkspace,
+        on_delete=models.PROTECT,
+        related_name="club_affiliations",
+    )
+    club = models.ForeignKey(
+        "accounts.Club",
+        on_delete=models.PROTECT,
+        related_name="union_affiliations",
+    )
+    status = models.CharField(
+        max_length=30, choices=Status.choices, default=Status.APPLICATION_SUBMITTED
+    )
+    expires_on = models.DateField(null=True, blank=True)
+    compliance_status = models.CharField(max_length=50, default="PENDING")
+    compliance_notes = models.TextField(blank=True)
+    liaison = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="club_affiliations_as_liaison",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["club__name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "club"],
+                name="unique_workspace_club_affiliation",
+            )
+        ]
+        indexes = [models.Index(fields=["workspace", "status"])]
+
+
+class UnionPlayer(models.Model):
+    """One permanent player identity within a Union, independent of Club or season."""
+
+    class Status(models.TextChoices):
+        PROVISIONAL = "PROVISIONAL", "Provisional"
+        PENDING_VERIFICATION = "PENDING_VERIFICATION", "Pending verification"
+        APPROVED = "APPROVED", "Approved"
+        SUSPENDED = "SUSPENDED", "Suspended"
+        REJECTED = "REJECTED", "Rejected"
+        ARCHIVED = "ARCHIVED", "Archived"
+
+    union = models.ForeignKey(Union, on_delete=models.PROTECT, related_name="players")
+    user = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="union_player_identities",
+    )
+    union_player_number = models.CharField(max_length=80)
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100)
+    date_of_birth = models.DateField()
+    nationality = models.CharField(max_length=100)
+    identity_reference = models.CharField(max_length=160, blank=True)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PROVISIONAL
+    )
+    identity_verified_at = models.DateTimeField(null=True, blank=True)
+    identity_verified_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="verified_union_players",
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["last_name", "first_name", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["union", "union_player_number"],
+                name="unique_union_player_number",
+            ),
+            models.UniqueConstraint(
+                fields=["union", "identity_reference"],
+                condition=~models.Q(identity_reference=""),
+                name="unique_union_player_identity_reference",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["union", "status"]),
+            models.Index(fields=["union", "last_name", "first_name"]),
+        ]
+
+    @property
+    def full_name(self):
+        return f"{self.first_name} {self.last_name}".strip()
+
+
+class UnionPlayerNumberSequence(models.Model):
+    """Locked per-Union allocator for permanent player numbers."""
+
+    union = models.OneToOneField(
+        Union,
+        on_delete=models.PROTECT,
+        related_name="player_number_sequence",
+    )
+    next_value = models.PositiveBigIntegerField(default=1)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class UnionPlayerRegistration(models.Model):
+    """Immutable-period Club registration history for a permanent Union player."""
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        CHANGES_REQUESTED = "CHANGES_REQUESTED", "Changes requested"
+        APPROVED = "APPROVED", "Approved"
+        ACTIVE = "ACTIVE", "Active"
+        TRANSFERRED = "TRANSFERRED", "Transferred"
+        EXPIRED = "EXPIRED", "Expired"
+        SUSPENDED = "SUSPENDED", "Suspended"
+        REJECTED = "REJECTED", "Rejected"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    workspace = models.ForeignKey(
+        UnionWorkspace,
+        on_delete=models.PROTECT,
+        related_name="player_registrations",
+    )
+    player = models.ForeignKey(
+        UnionPlayer,
+        on_delete=models.PROTECT,
+        related_name="club_registration_history",
+    )
+    club = models.ForeignKey(
+        "accounts.Club",
+        on_delete=models.PROTECT,
+        related_name="union_player_registration_history",
+    )
+    team = models.ForeignKey(
+        "teams.Team",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="union_player_registrations",
+    )
+    season = models.ForeignKey(
+        Season,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="union_player_registrations",
+    )
+    source_registration = models.ForeignKey(
+        "teams.PlayerRegistration",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="union_registration_history",
+    )
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING
+    )
+    registration_type = models.CharField(max_length=40, default="FIRST_REGISTRATION")
+    effective_from = models.DateField()
+    effective_to = models.DateField(null=True, blank=True)
+    approved_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="approved_union_player_registrations",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    decision_reason = models.TextField(blank=True)
+    change_request_reason = models.TextField(blank=True)
+    predecessor = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="successor_registrations",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-effective_from", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "player"],
+                condition=models.Q(status="ACTIVE"),
+                name="unique_active_workspace_player_registration",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["workspace", "club", "status"]),
+            models.Index(fields=["player", "status"]),
+        ]
+
+
+class UnionPlayerTransfer(models.Model):
+    """A Union-reviewed transfer that atomically preserves Club registration history."""
+
+    class SourceClubResponseStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        ACKNOWLEDGED = "ACKNOWLEDGED", "Acknowledged"
+        OBJECTED = "OBJECTED", "Objected"
+
+    class PlayerConsentStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        CONSENTED = "CONSENTED", "Consented"
+        DECLINED = "DECLINED", "Declined"
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        SUBMITTED = "SUBMITTED", "Submitted"
+        PLAYER_CONSENT_REQUIRED = "PLAYER_CONSENT_REQUIRED", "Player consent required"
+        SOURCE_CLUB_RESPONSE_REQUIRED = (
+            "SOURCE_CLUB_RESPONSE_REQUIRED",
+            "Source Club response required",
+        )
+        UNDER_AUTOMATIC_REVIEW = "UNDER_AUTOMATIC_REVIEW", "Under automatic review"
+        UNDER_UNION_REVIEW = "UNDER_UNION_REVIEW", "Under Union review"
+        CHANGES_REQUESTED = "CHANGES_REQUESTED", "Changes requested"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        CANCELLED = "CANCELLED", "Cancelled"
+        LOAN_ACTIVE = "LOAN_ACTIVE", "Loan active"
+        COMPLETED = "COMPLETED", "Completed"
+        EXPIRED = "EXPIRED", "Expired"
+
+    workspace = models.ForeignKey(
+        UnionWorkspace,
+        on_delete=models.PROTECT,
+        related_name="player_transfers",
+    )
+    player = models.ForeignKey(
+        UnionPlayer, on_delete=models.PROTECT, related_name="transfers"
+    )
+    source_registration = models.ForeignKey(
+        UnionPlayerRegistration,
+        on_delete=models.PROTECT,
+        related_name="outgoing_transfers",
+    )
+    destination_registration = models.OneToOneField(
+        UnionPlayerRegistration,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="completed_transfer",
+    )
+    return_registration = models.OneToOneField(
+        UnionPlayerRegistration,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="completed_loan_return",
+    )
+    destination_club = models.ForeignKey(
+        "accounts.Club",
+        on_delete=models.PROTECT,
+        related_name="incoming_union_player_transfers",
+    )
+    destination_team = models.ForeignKey(
+        "teams.Team",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="incoming_union_player_transfers",
+    )
+    legacy_transfer = models.OneToOneField(
+        "teams.PlayerTransfer",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="union_transfer_workflow",
+    )
+    status = models.CharField(
+        max_length=40, choices=Status.choices, default=Status.DRAFT
+    )
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    last_resubmitted_at = models.DateTimeField(null=True, blank=True)
+    submission_revision = models.PositiveIntegerField(default=0)
+    automatic_validation = models.JSONField(default=dict, blank=True)
+    activation_plan = models.JSONField(default=dict, blank=True)
+    return_plan = models.JSONField(default=dict, blank=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
+    effective_on = models.DateField()
+    transfer_type = models.CharField(max_length=30, default="PERMANENT")
+    loan_end_on = models.DateField(null=True, blank=True)
+    initiated_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.PROTECT,
+        related_name="initiated_union_player_transfers",
+    )
+    source_club_response_status = models.CharField(
+        max_length=30,
+        choices=SourceClubResponseStatus.choices,
+        default=SourceClubResponseStatus.PENDING,
+    )
+    source_club_response_at = models.DateTimeField(null=True, blank=True)
+    source_club_response = models.TextField(blank=True)
+    source_club_responded_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="source_club_transfer_responses",
+    )
+    player_consent_status = models.CharField(
+        max_length=30,
+        choices=PlayerConsentStatus.choices,
+        default=PlayerConsentStatus.PENDING,
+    )
+    player_consented_at = models.DateTimeField(null=True, blank=True)
+    player_consent_method = models.CharField(max_length=80, blank=True)
+    player_consent_recorded_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="recorded_player_transfer_consents",
+    )
+    documents = models.JSONField(default=list, blank=True)
+    fee_status = models.CharField(max_length=40, blank=True)
+    reviewed_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reviewed_union_player_transfers",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    decision_reason = models.TextField(blank=True)
+    change_request_reason = models.TextField(blank=True)
+    cancelled_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="cancelled_union_player_transfers",
+    )
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancellation_reason = models.TextField(blank=True)
+    source_registration_original_effective_to = models.DateField(
+        null=True,
+        blank=True,
+    )
+    returned_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["workspace", "status"]),
+            models.Index(fields=["player", "status"]),
+        ]
+
+
+class UnionPlayerCompetitionEligibility(models.Model):
+    """Competition-specific eligibility, separate from Club registration history."""
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        ELIGIBLE = "ELIGIBLE", "Eligible"
+        INELIGIBLE = "INELIGIBLE", "Ineligible"
+        SUSPENDED = "SUSPENDED", "Suspended"
+        EXPIRED = "EXPIRED", "Expired"
+        REJECTED = "REJECTED", "Rejected"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    workspace = models.ForeignKey(
+        UnionWorkspace,
+        on_delete=models.PROTECT,
+        related_name="competition_eligibilities",
+    )
+    player = models.ForeignKey(
+        UnionPlayer, on_delete=models.PROTECT, related_name="competition_eligibilities"
+    )
+    registration = models.ForeignKey(
+        UnionPlayerRegistration,
+        on_delete=models.PROTECT,
+        related_name="competition_eligibilities",
+    )
+    source_submission = models.ForeignKey(
+        "teams.PlayerRegistration",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="competition_eligibility_history",
+    )
+    source_transfer = models.ForeignKey(
+        UnionPlayerTransfer,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="destination_competition_eligibilities",
+    )
+    source_loan_return = models.ForeignKey(
+        UnionPlayerTransfer,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="return_competition_eligibilities",
+    )
+    club = models.ForeignKey(
+        "accounts.Club",
+        on_delete=models.PROTECT,
+        related_name="union_competition_eligibilities",
+    )
+    team = models.ForeignKey(
+        "teams.Team",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="union_competition_eligibilities",
+    )
+    competition_identity = models.ForeignKey(
+        CompetitionIdentity,
+        on_delete=models.PROTECT,
+        related_name="player_eligibilities",
+    )
+    competition_edition = models.ForeignKey(
+        CompetitionEdition,
+        on_delete=models.PROTECT,
+        related_name="player_eligibilities",
+    )
+    season = models.ForeignKey(
+        Season, on_delete=models.PROTECT, related_name="player_eligibilities"
+    )
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING
+    )
+    eligible_from = models.DateField(null=True, blank=True)
+    eligible_until = models.DateField(null=True, blank=True)
+    warnings = models.JSONField(default=list, blank=True)
+    restriction_reason = models.TextField(blank=True)
+    reviewed_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reviewed_competition_eligibilities",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    decision_reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["player", "competition_edition"],
+                condition=models.Q(status="ELIGIBLE"),
+                name="unique_eligible_player_edition",
+            ),
+            models.UniqueConstraint(
+                fields=["source_submission", "competition_edition"],
+                condition=models.Q(source_submission__isnull=False),
+                name="unique_submission_competition_edition",
+            ),
+            models.UniqueConstraint(
+                fields=["source_transfer", "competition_edition"],
+                condition=models.Q(source_transfer__isnull=False),
+                name="unique_transfer_competition_edition",
+            ),
+            models.UniqueConstraint(
+                fields=["source_loan_return", "competition_edition"],
+                condition=models.Q(source_loan_return__isnull=False),
+                name="unique_loan_return_competition_edition",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["workspace", "status"]),
+            models.Index(fields=["competition_edition", "status"]),
+        ]

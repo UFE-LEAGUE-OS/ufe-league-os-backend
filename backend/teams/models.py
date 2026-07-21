@@ -129,6 +129,28 @@ class PlayerRegistration(models.Model):
         YOUTH = "YOUTH", "Youth"
         LOAN = "LOAN", "Loan Player"
 
+    class SubmissionStatus(models.TextChoices):
+        LEGACY = "LEGACY", "Legacy roster record"
+        DRAFT = "DRAFT", "Draft"
+        SUBMITTED = "SUBMITTED", "Submitted"
+        UNDER_AUTOMATIC_REVIEW = "UNDER_AUTOMATIC_REVIEW", "Under automatic review"
+        UNDER_UNION_REVIEW = "UNDER_UNION_REVIEW", "Under Union review"
+        CHANGES_REQUESTED = "CHANGES_REQUESTED", "Changes requested"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        WITHDRAWN = "WITHDRAWN", "Withdrawn"
+        EXPIRED = "EXPIRED", "Expired"
+
+    class RegistrationType(models.TextChoices):
+        FIRST_REGISTRATION = "FIRST_REGISTRATION", "First registration"
+        SEASON_RENEWAL = "SEASON_RENEWAL", "Season renewal"
+        COMPETITION_REGISTRATION = (
+            "COMPETITION_REGISTRATION",
+            "Competition registration",
+        )
+        DUAL_REGISTRATION = "DUAL_REGISTRATION", "Dual registration"
+        FREE_AGENT_REGISTRATION = "FREE_AGENT_REGISTRATION", "Free agent registration"
+
     user = models.ForeignKey(
         User,
         null=True,
@@ -191,6 +213,67 @@ class PlayerRegistration(models.Model):
     is_captain = models.BooleanField(default=False)
     is_vice_captain = models.BooleanField(default=False)
     metadata = models.JSONField(default=dict, blank=True)
+    submission_status = models.CharField(
+        max_length=30,
+        choices=SubmissionStatus.choices,
+        default=SubmissionStatus.LEGACY,
+        help_text="Submission workflow state; legacy roster status remains in status.",
+    )
+    registration_type = models.CharField(
+        max_length=40,
+        choices=RegistrationType.choices,
+        default=RegistrationType.FIRST_REGISTRATION,
+    )
+    union_workspace = models.ForeignKey(
+        "dashboards.UnionWorkspace",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="club_player_submissions",
+    )
+    union_player = models.ForeignKey(
+        "dashboards.UnionPlayer",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="club_submissions",
+    )
+    season_record = models.ForeignKey(
+        "dashboards.Season",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="club_player_submissions",
+    )
+    requested_competition_editions = models.ManyToManyField(
+        "dashboards.CompetitionEdition",
+        blank=True,
+        related_name="requested_player_submissions",
+    )
+    submitted_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="submitted_player_registrations",
+    )
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    last_resubmitted_at = models.DateTimeField(null=True, blank=True)
+    assigned_reviewer = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_player_registration_submissions",
+    )
+    change_request_reason = models.TextField(blank=True)
+    union_decision_reason = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    supporting_documents = models.JSONField(default=list, blank=True)
+    club_notes = models.TextField(blank=True)
+    automatic_validation = models.JSONField(default=dict, blank=True)
+    submission_revision = models.PositiveIntegerField(default=0)
+    withdrawal_reason = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

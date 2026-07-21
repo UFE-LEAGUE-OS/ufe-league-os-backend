@@ -60,6 +60,8 @@ urlpatterns = [
     path("api/platform-admin/", include("platform_admin.urls")),
     path("api/rbac/", include("rbac.urls")),
     path("api/analytics/", include("analytics.urls")),
+    path("api/club/", include("club_operations.urls")),
+    path("api/finances/", include("finances.urls")),
 ]
 
 if settings.DEBUG and not getattr(settings, "USE_S3_MEDIA", False):

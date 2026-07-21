@@ -2,7 +2,12 @@ from django.urls import path
 from . import (
     admin_workspace_views,
     official_appointment_views,
+    union_competition_views,
+    union_governance_views,
     union_management_views,
+    union_player_eligibility_views,
+    union_player_review_views,
+    union_player_transfer_views,
     views,
 )
 
@@ -85,6 +90,31 @@ urlpatterns = [
         name="union-admin-transfer-owner",
     ),
     path(
+        "union-admin/approvals/",
+        union_governance_views.union_admin_approvals_view,
+        name="union-admin-approvals",
+    ),
+    path(
+        "union-admin/approvals/<int:approval_id>/",
+        union_governance_views.union_admin_approval_detail_view,
+        name="union-admin-approval-detail",
+    ),
+    path(
+        "union-admin/audit-events/",
+        union_governance_views.union_admin_audit_events_view,
+        name="union-admin-audit-events",
+    ),
+    path(
+        "union-admin/review-comments/",
+        union_governance_views.union_admin_review_comments_view,
+        name="union-admin-review-comments",
+    ),
+    path(
+        "union-admin/documents/",
+        union_governance_views.union_admin_document_references_view,
+        name="union-admin-document-references",
+    ),
+    path(
         "union-admin/clubs/",
         union_management_views.union_admin_clubs_view,
         name="union-admin-clubs",
@@ -108,6 +138,21 @@ urlpatterns = [
         "union-admin/competitions/",
         union_management_views.union_admin_competitions_view,
         name="union-admin-competitions-manage",
+    ),
+    path(
+        "union-admin/competition-identities/",
+        union_competition_views.union_admin_competition_identities_view,
+        name="union-admin-competition-identities",
+    ),
+    path(
+        "union-admin/competition-identities/<int:identity_id>/editions/",
+        union_competition_views.union_admin_competition_editions_view,
+        name="union-admin-competition-editions",
+    ),
+    path(
+        "union-admin/competition-editions/<int:edition_id>/transition/",
+        union_competition_views.union_admin_competition_edition_transition_view,
+        name="union-admin-competition-edition-transition",
     ),
     path(
         "union-admin/league-clubs/bulk-add/",
@@ -158,6 +203,129 @@ urlpatterns = [
         "union-admin/registration-applications/<int:application_id>/",
         union_management_views.union_admin_registration_application_detail_view,
         name="union-admin-registration-application-detail",
+    ),
+    path(
+        "union-admin/player-registration-submissions/",
+        union_player_review_views.union_player_registration_submissions_view,
+        name="union-player-registration-submissions",
+    ),
+    path(
+        "union-admin/player-registration-submissions/<int:submission_id>/",
+        union_player_review_views.union_player_registration_submission_detail_view,
+        name="union-player-registration-submission-detail",
+    ),
+    path(
+        "union-admin/player-registration-submissions/"
+        "<int:submission_id>/assign-reviewer/",
+        union_player_review_views.union_player_registration_assign_reviewer_view,
+        name="union-player-registration-assign-reviewer",
+    ),
+    path(
+        "union-admin/player-registration-submissions/"
+        "<int:submission_id>/start-review/",
+        union_player_review_views.union_player_registration_start_review_view,
+        name="union-player-registration-start-review",
+    ),
+    path(
+        "union-admin/player-registration-submissions/"
+        "<int:submission_id>/request-changes/",
+        union_player_review_views.union_player_registration_request_changes_view,
+        name="union-player-registration-request-changes",
+    ),
+    path(
+        "union-admin/player-registration-submissions/<int:submission_id>/approve/",
+        union_player_review_views.union_player_registration_approve_view,
+        name="union-player-registration-approve",
+    ),
+    path(
+        "union-admin/player-registration-submissions/<int:submission_id>/reject/",
+        union_player_review_views.union_player_registration_reject_view,
+        name="union-player-registration-reject",
+    ),
+    path(
+        "union-admin/player-registrations/",
+        union_player_review_views.union_authoritative_player_registrations_view,
+        name="union-authoritative-player-registrations",
+    ),
+    path(
+        "union-admin/player-registrations/<int:registration_id>/",
+        union_player_review_views.union_authoritative_player_registration_detail_view,
+        name="union-authoritative-player-registration-detail",
+    ),
+    path(
+        "union-admin/player-eligibilities/",
+        union_player_eligibility_views.union_player_eligibilities_view,
+        name="union-player-eligibilities",
+    ),
+    path(
+        "union-admin/player-eligibilities/<int:eligibility_id>/",
+        union_player_eligibility_views.union_player_eligibility_detail_view,
+        name="union-player-eligibility-detail",
+    ),
+    path(
+        "union-admin/player-eligibilities/<int:eligibility_id>/approve/",
+        union_player_eligibility_views.union_player_eligibility_approve_view,
+        name="union-player-eligibility-approve",
+    ),
+    path(
+        "union-admin/player-eligibilities/<int:eligibility_id>/reject/",
+        union_player_eligibility_views.union_player_eligibility_reject_view,
+        name="union-player-eligibility-reject",
+    ),
+    path(
+        "union-admin/player-eligibilities/<int:eligibility_id>/suspend/",
+        union_player_eligibility_views.union_player_eligibility_suspend_view,
+        name="union-player-eligibility-suspend",
+    ),
+    path(
+        "union-admin/player-eligibilities/<int:eligibility_id>/reinstate/",
+        union_player_eligibility_views.union_player_eligibility_reinstate_view,
+        name="union-player-eligibility-reinstate",
+    ),
+    path(
+        "union-admin/player-eligibilities/<int:eligibility_id>/expire/",
+        union_player_eligibility_views.union_player_eligibility_expire_view,
+        name="union-player-eligibility-expire",
+    ),
+    path(
+        "union-admin/player-eligibilities/<int:eligibility_id>/cancel/",
+        union_player_eligibility_views.union_player_eligibility_cancel_view,
+        name="union-player-eligibility-cancel",
+    ),
+    path(
+        "union-admin/player-transfers/",
+        union_player_transfer_views.union_player_transfers_view,
+        name="union-player-transfers",
+    ),
+    path(
+        "union-admin/player-transfers/<int:transfer_id>/",
+        union_player_transfer_views.union_player_transfer_detail_view,
+        name="union-player-transfer-detail",
+    ),
+    path(
+        "union-admin/player-transfers/<int:transfer_id>/record-offline-consent/",
+        union_player_transfer_views.union_player_transfer_offline_consent_view,
+        name="union-player-transfer-offline-consent",
+    ),
+    path(
+        "union-admin/player-transfers/<int:transfer_id>/record-offline-decline/",
+        union_player_transfer_views.union_player_transfer_offline_decline_view,
+        name="union-player-transfer-offline-decline",
+    ),
+    path(
+        "union-admin/player-transfers/<int:transfer_id>/request-changes/",
+        union_player_transfer_views.union_player_transfer_request_changes_view,
+        name="union-player-transfer-request-changes",
+    ),
+    path(
+        "union-admin/player-transfers/<int:transfer_id>/reject/",
+        union_player_transfer_views.union_player_transfer_reject_view,
+        name="union-player-transfer-reject",
+    ),
+    path(
+        "union-admin/player-transfers/<int:transfer_id>/approve/",
+        union_player_transfer_views.union_player_transfer_approve_view,
+        name="union-player-transfer-approve",
     ),
     path(
         "union-admin/official-readiness/",

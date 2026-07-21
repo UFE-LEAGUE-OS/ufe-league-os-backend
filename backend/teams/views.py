@@ -1,4 +1,6 @@
+from django.core.exceptions import ValidationError
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -9,7 +11,6 @@ from accounts.rbac import get_user_clubs, get_user_union_workspaces
 
 from .models import (
     PlayerRegistration,
-    PlayerTransfer,
     Squad,
     SquadMember,
     SquadSubmission,
@@ -17,10 +18,17 @@ from .models import (
     Team,
 )
 from .serializers import (
-    PlayerRegistrationSerializer,
+    ClubPlayerRegistrySearchQuerySerializer,
+    ClubPlayerRegistrySearchSerializer,
+    ClubPlayerRegistrationDecisionSerializer,
+    ClubPlayerRegistrationDraftCreateSerializer,
+    ClubPlayerRegistrationDraftUpdateSerializer,
+    ClubPlayerRegistrationSubmissionDetailSerializer,
+    ClubPlayerRegistrationSubmissionListSerializer,
+    ClubPlayerRegistrationWithdrawSerializer,
+    LegacyPlayerRegistrationReadSerializer,
+    LegacyPlayerRegistrationUpdateSerializer,
     PlayerRegistrationSummarySerializer,
-    PlayerTransferSerializer,
-    PlayerTransferSummarySerializer,
     SquadMemberSerializer,
     SquadSerializer,
     SquadSubmissionSerializer,
@@ -28,6 +36,14 @@ from .serializers import (
     StaffMemberSerializer,
     StaffMemberSummarySerializer,
     TeamSerializer,
+)
+from .player_submission_services import (
+    create_player_registration_draft,
+    resubmit_player_registration,
+    search_union_players_for_club,
+    submit_player_registration,
+    update_player_registration_draft,
+    withdraw_player_registration,
 )
 
 # ---------------------------------------------------------------------------
@@ -274,7 +290,7 @@ def squad_member_detail_view(request, squad_pk, pk):
 def player_registration_list_create_view(request):
     """
     GET: List player registrations for clubs the user manages.
-    POST: Register a new player.
+    POST: Compatibility entry point that creates a submission draft.
     """
     user_clubs = get_user_clubs(request.user)
 
@@ -285,65 +301,270 @@ def player_registration_list_create_view(request):
         serializer = PlayerRegistrationSummarySerializer(queryset, many=True)
         return Response(serializer.data)
 
-    # POST
-    serializer = PlayerRegistrationSerializer(data=request.data)
-    if serializer.is_valid():
-        club = serializer.validated_data["club"]
-        if club not in user_clubs:
-            return Response(
-                {
-                    "detail": "You do not have permission to register players for this club."
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        player = serializer.save()
-        return Response(
-            PlayerRegistrationSerializer(player).data, status=status.HTTP_201_CREATED
+    serializer = ClubPlayerRegistrationDraftCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        draft = create_player_registration_draft(
+            actor=request.user,
+            validated_data=serializer.validated_data,
+            audit_metadata={"source_route": "legacy_players_post"},
         )
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    except ValidationError as exc:
+        return _django_validation_error_response(exc)
+    return Response(
+        {
+            "workflow": "PLAYER_REGISTRATION_SUBMISSION",
+            "deprecated_direct_creation": True,
+            "submission": ClubPlayerRegistrationSubmissionDetailSerializer(draft).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
 
 
-@api_view(["GET", "PUT", "PATCH", "DELETE"])
+@api_view(["GET", "PATCH"])
 @permission_classes([IsClubAdmin])
 def player_registration_detail_view(request, pk):
     """
-    GET: Retrieve a player registration.
-    PUT/PATCH: Update a player registration.
-    DELETE: Delete a player registration.
+    GET: Safely retrieve a legacy roster row or submission.
+    PATCH: Maintain a legacy row or route submission updates through services.
     """
+    player = get_object_or_404(
+        PlayerRegistration.objects.filter(club__in=get_user_clubs(request.user))
+        .select_related(
+            "club",
+            "team",
+            "season_record",
+            "union_player",
+        )
+        .prefetch_related("requested_competition_editions"),
+        pk=pk,
+    )
+
+    if request.method == "GET":
+        if player.submission_status == PlayerRegistration.SubmissionStatus.LEGACY:
+            return Response(LegacyPlayerRegistrationReadSerializer(player).data)
+        return Response(ClubPlayerRegistrationSubmissionDetailSerializer(player).data)
+
+    if player.submission_status == PlayerRegistration.SubmissionStatus.LEGACY:
+        serializer = LegacyPlayerRegistrationUpdateSerializer(
+            player,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        updated = serializer.save()
+        return Response(LegacyPlayerRegistrationReadSerializer(updated).data)
+
+    serializer = ClubPlayerRegistrationDraftUpdateSerializer(
+        player,
+        data=request.data,
+        partial=True,
+    )
+    serializer.is_valid(raise_exception=True)
     try:
-        player = PlayerRegistration.objects.get(pk=pk)
+        updated = update_player_registration_draft(
+            submission_id=pk,
+            actor=request.user,
+            updates=serializer.validated_data,
+        )
     except PlayerRegistration.DoesNotExist:
         return Response(
             {"detail": "Player registration not found."},
             status=status.HTTP_404_NOT_FOUND,
         )
+    except ValidationError as exc:
+        return _django_validation_error_response(exc)
+    return Response(ClubPlayerRegistrationSubmissionDetailSerializer(updated).data)
 
-    user_clubs = get_user_clubs(request.user)
-    if player.club not in user_clubs:
-        return Response(
-            {
-                "detail": "You do not have permission to manage this player registration."
-            },
-            status=status.HTTP_403_FORBIDDEN,
+
+@api_view(["GET"])
+@permission_classes([IsClubAdmin])
+def player_registry_search_view(request):
+    query_serializer = ClubPlayerRegistrySearchQuerySerializer(
+        data=request.query_params
+    )
+    query_serializer.is_valid(raise_exception=True)
+    search_input = query_serializer.validated_data
+    try:
+        results = search_union_players_for_club(
+            actor=request.user,
+            club=search_input["club"],
+            query=search_input.get("q", ""),
+            date_of_birth=search_input.get("date_of_birth"),
+            union_workspace_id=search_input.get("union_workspace_id"),
+            limit=search_input.get("limit", 20),
         )
+    except ValidationError as exc:
+        return _django_validation_error_response(exc)
+    return Response(ClubPlayerRegistrySearchSerializer(results, many=True).data)
 
+
+@api_view(["GET", "POST"])
+@permission_classes([IsClubAdmin])
+def player_registration_submission_list_create_view(request):
+    clubs = get_user_clubs(request.user)
     if request.method == "GET":
-        serializer = PlayerRegistrationSerializer(player)
-        return Response(serializer.data)
-
-    if request.method in ("PUT", "PATCH"):
-        partial = request.method == "PATCH"
-        serializer = PlayerRegistrationSerializer(
-            player, data=request.data, partial=partial
+        rows = (
+            PlayerRegistration.objects.filter(club__in=clubs)
+            .exclude(submission_status=PlayerRegistration.SubmissionStatus.LEGACY)
+            .select_related("club", "team", "season_record")
+            .order_by("-created_at", "-pk")
         )
-        if serializer.is_valid():
-            updated = serializer.save()
-            return Response(PlayerRegistrationSerializer(updated).data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        filter_fields = {
+            "club": "club_id",
+            "team": "team_id",
+            "season": "season_record_id",
+            "submission_status": "submission_status",
+            "registration_type": "registration_type",
+        }
+        for query_parameter, model_field in filter_fields.items():
+            value = request.query_params.get(query_parameter)
+            if value:
+                rows = rows.filter(**{model_field: value})
+        search = request.query_params.get("search", "").strip()
+        if search:
+            rows = rows.filter(
+                Q(registration_number__icontains=search)
+                | Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
+            )
+        return Response(
+            ClubPlayerRegistrationSubmissionListSerializer(rows, many=True).data
+        )
 
-    player.delete()
-    return Response(status=status.HTTP_204_NO_CONTENT)
+    serializer = ClubPlayerRegistrationDraftCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        draft = create_player_registration_draft(
+            actor=request.user,
+            validated_data=serializer.validated_data,
+        )
+    except ValidationError as exc:
+        return _django_validation_error_response(exc)
+    return Response(
+        ClubPlayerRegistrationSubmissionDetailSerializer(draft).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+def _club_submission_or_404(user, pk):
+    return get_object_or_404(
+        PlayerRegistration.objects.filter(club__in=get_user_clubs(user))
+        .exclude(submission_status=PlayerRegistration.SubmissionStatus.LEGACY)
+        .select_related(
+            "club",
+            "team",
+            "season_record",
+            "union_player",
+            "union_workspace",
+        )
+        .prefetch_related("requested_competition_editions"),
+        pk=pk,
+    )
+
+
+def _django_validation_error_response(exc):
+    try:
+        data = exc.message_dict
+    except AttributeError:
+        data = {"detail": exc.messages}
+    automatic_validation = getattr(exc, "automatic_validation", None)
+    if automatic_validation is not None:
+        data["automatic_validation"] = automatic_validation
+    return Response(data, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _submission_not_found_response():
+    return Response(
+        {"detail": "Player registration submission not found."},
+        status=status.HTTP_404_NOT_FOUND,
+    )
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsClubAdmin])
+def player_registration_submission_detail_view(request, pk):
+    submission = _club_submission_or_404(request.user, pk)
+    if request.method == "GET":
+        return Response(
+            ClubPlayerRegistrationSubmissionDetailSerializer(submission).data
+        )
+
+    serializer = ClubPlayerRegistrationDraftUpdateSerializer(
+        submission,
+        data=request.data,
+        partial=True,
+    )
+    serializer.is_valid(raise_exception=True)
+    try:
+        submission = update_player_registration_draft(
+            submission_id=pk,
+            actor=request.user,
+            updates=serializer.validated_data,
+        )
+    except PlayerRegistration.DoesNotExist:
+        return _submission_not_found_response()
+    except ValidationError as exc:
+        return _django_validation_error_response(exc)
+    return Response(ClubPlayerRegistrationSubmissionDetailSerializer(submission).data)
+
+
+@api_view(["POST"])
+@permission_classes([IsClubAdmin])
+def player_registration_submission_submit_view(request, pk):
+    _club_submission_or_404(request.user, pk)
+    try:
+        submission = submit_player_registration(
+            submission_id=pk,
+            actor=request.user,
+        )
+    except PlayerRegistration.DoesNotExist:
+        return _submission_not_found_response()
+    except ValidationError as exc:
+        return _django_validation_error_response(exc)
+    return Response(ClubPlayerRegistrationSubmissionDetailSerializer(submission).data)
+
+
+@api_view(["POST"])
+@permission_classes([IsClubAdmin])
+def player_registration_submission_resubmit_view(request, pk):
+    _club_submission_or_404(request.user, pk)
+    try:
+        submission = resubmit_player_registration(
+            submission_id=pk,
+            actor=request.user,
+        )
+    except PlayerRegistration.DoesNotExist:
+        return _submission_not_found_response()
+    except ValidationError as exc:
+        return _django_validation_error_response(exc)
+    return Response(ClubPlayerRegistrationSubmissionDetailSerializer(submission).data)
+
+
+@api_view(["POST"])
+@permission_classes([IsClubAdmin])
+def player_registration_submission_withdraw_view(request, pk):
+    _club_submission_or_404(request.user, pk)
+    serializer = ClubPlayerRegistrationWithdrawSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        submission = withdraw_player_registration(
+            submission_id=pk,
+            actor=request.user,
+            withdrawal_reason=serializer.validated_data["withdrawal_reason"],
+        )
+    except PlayerRegistration.DoesNotExist:
+        return _submission_not_found_response()
+    except ValidationError as exc:
+        return _django_validation_error_response(exc)
+    return Response(ClubPlayerRegistrationSubmissionDetailSerializer(submission).data)
+
+
+@api_view(["GET"])
+@permission_classes([IsClubAdmin])
+def player_registration_submission_decision_view(request, pk):
+    submission = _club_submission_or_404(request.user, pk)
+    return Response(ClubPlayerRegistrationDecisionSerializer(submission).data)
 
 
 # ---------------------------------------------------------------------------
@@ -418,95 +639,6 @@ def staff_member_detail_view(request, pk):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     staff.delete()
-    return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-# ---------------------------------------------------------------------------
-# PLAYER TRANSFERS
-# ---------------------------------------------------------------------------
-
-
-@api_view(["GET", "POST"])
-@permission_classes([IsClubAdmin])
-def player_transfer_list_create_view(request):
-    """
-    GET: List transfers involving clubs the user manages.
-    POST: Initiate a player transfer.
-    """
-    user_clubs = get_user_clubs(request.user)
-
-    if request.method == "GET":
-        queryset = PlayerTransfer.objects.filter(
-            Q(from_club__in=user_clubs) | Q(to_club__in=user_clubs)
-        ).select_related("player", "from_club", "to_club", "requested_by")
-        serializer = PlayerTransferSummarySerializer(queryset, many=True)
-        return Response(serializer.data)
-
-    # POST
-    serializer = PlayerTransferSerializer(data=request.data)
-    if serializer.is_valid():
-        from_club = serializer.validated_data["from_club"]
-        to_club = serializer.validated_data["to_club"]
-        if from_club not in user_clubs and to_club not in user_clubs:
-            return Response(
-                {
-                    "detail": "You do not have permission to initiate transfers for these clubs."
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        # Auto-generate transfer number
-        import uuid
-
-        transfer_number = f"TRF-{uuid.uuid4().hex[:8].upper()}"
-        transfer = serializer.save(
-            requested_by=request.user,
-            transfer_number=transfer_number,
-        )
-        return Response(
-            PlayerTransferSerializer(transfer).data, status=status.HTTP_201_CREATED
-        )
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-@api_view(["GET", "PUT", "PATCH", "DELETE"])
-@permission_classes([IsClubAdmin])
-def player_transfer_detail_view(request, pk):
-    """
-    GET: Retrieve a transfer.
-    PUT/PATCH: Update a transfer.
-    DELETE: Cancel a transfer.
-    """
-    try:
-        transfer = PlayerTransfer.objects.get(pk=pk)
-    except PlayerTransfer.DoesNotExist:
-        return Response(
-            {"detail": "Transfer not found."}, status=status.HTTP_404_NOT_FOUND
-        )
-
-    user_clubs = get_user_clubs(request.user)
-    if transfer.from_club not in user_clubs and transfer.to_club not in user_clubs:
-        return Response(
-            {"detail": "You do not have permission to manage this transfer."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-
-    if request.method == "GET":
-        serializer = PlayerTransferSerializer(transfer)
-        return Response(serializer.data)
-
-    if request.method in ("PUT", "PATCH"):
-        partial = request.method == "PATCH"
-        serializer = PlayerTransferSerializer(
-            transfer, data=request.data, partial=partial
-        )
-        if serializer.is_valid():
-            updated = serializer.save()
-            return Response(PlayerTransferSerializer(updated).data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    if transfer.status in (PlayerTransfer.TransferStatus.PENDING,):
-        transfer.status = PlayerTransfer.TransferStatus.CANCELLED
-        transfer.save(update_fields=["status"])
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 

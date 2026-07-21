@@ -657,39 +657,74 @@ class Command(BaseCommand):
                 break
 
         for index, ticket_type in enumerate(demo_ticket_types, start=1):
-            reference = f"DEMO-TICKET-ORDER-{index:03d}"
-            order = TicketOrder.objects.filter(payment_reference=reference).first()
-            if order is None:
-                order = TicketOrder(payment_reference=reference, buyer=self.main_user)
-            order.total_amount = ticket_type.price
-            order.currency = "UGX"
-            order.status = TicketOrder.Status.PAID
-            order.provider = TicketOrder.PaymentProvider.MANUAL
-            order.provider_status = "confirmed-demo"
-            order.paid_at = timezone.now() - timedelta(days=index)
-            order.save()
+            self.upsert_demo_ticket_order(
+                reference=f"DEMO-TICKET-ORDER-{index:03d}",
+                ticket_type=ticket_type,
+                index=index,
+            )
 
-            TicketOrderItem.objects.update_or_create(
-                order=order,
-                ticket_type=ticket_type,
-                defaults={
-                    "quantity": 1,
-                    "unit_price": ticket_type.price,
-                    "total_price": ticket_type.price,
-                },
+    def upsert_demo_ticket_order(self, *, reference, ticket_type, index):
+        order = TicketOrder.objects.filter(payment_reference=reference).first()
+
+        if order is None:
+            order = TicketOrder(
+                payment_reference=reference,
             )
-            ticket, _ = Ticket.objects.get_or_create(
+
+        order.buyer = self.main_user
+        order.total_amount = ticket_type.price
+        order.currency = "UGX"
+        order.status = TicketOrder.Status.PAID
+        order.provider = TicketOrder.PaymentProvider.MANUAL
+        order.provider_status = "confirmed-demo"
+        order.paid_at = timezone.now() - timedelta(days=index)
+        order.save()
+
+        TicketOrder.objects.filter(
+            payment_reference=reference,
+        ).exclude(
+            pk=order.pk,
+        ).delete()
+
+        order_item, _ = TicketOrderItem.objects.update_or_create(
+            order=order,
+            ticket_type=ticket_type,
+            defaults={
+                "quantity": 1,
+                "unit_price": ticket_type.price,
+                "total_price": ticket_type.price,
+            },
+        )
+
+        order.items.exclude(
+            pk=order_item.pk,
+        ).delete()
+
+        ticket = order.tickets.order_by("id").first()
+
+        if ticket is None:
+            ticket = Ticket(
                 order=order,
-                ticket_type=ticket_type,
-                match=ticket_type.match,
-                owner=self.main_user,
-                defaults={"status": Ticket.Status.ACTIVE},
             )
-            if index == 3:
-                ticket.status = Ticket.Status.USED
-                ticket.used_at = timezone.now() - timedelta(hours=5)
-                ticket.checked_in_by = self.ticketing_officer
-                ticket.save()
+
+        ticket.ticket_type = ticket_type
+        ticket.match = ticket_type.match
+        ticket.owner = self.main_user
+
+        if index == 3:
+            ticket.status = Ticket.Status.USED
+            ticket.used_at = timezone.now() - timedelta(hours=5)
+            ticket.checked_in_by = self.ticketing_officer
+        else:
+            ticket.status = Ticket.Status.ACTIVE
+            ticket.used_at = None
+            ticket.checked_in_by = None
+
+        ticket.save()
+
+        order.tickets.exclude(
+            pk=ticket.pk,
+        ).delete()
 
     def ensure_fantasy(self):
         self.fantasy_competitions = {}

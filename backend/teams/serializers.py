@@ -1,9 +1,10 @@
 from rest_framework import serializers
 
+from accounts.models import Club
+from dashboards.models import CompetitionEdition
 
 from .models import (
     PlayerRegistration,
-    PlayerTransfer,
     Squad,
     SquadMember,
     SquadSubmission,
@@ -120,7 +121,7 @@ class SquadMemberSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at"]
 
 
-class PlayerRegistrationSerializer(serializers.ModelSerializer):
+class LegacyPlayerRegistrationReadSerializer(serializers.ModelSerializer):
     club_name = serializers.CharField(source="club.name", read_only=True)
     team_name = serializers.CharField(source="team.name", read_only=True)
     full_name = serializers.CharField(read_only=True)
@@ -129,7 +130,6 @@ class PlayerRegistrationSerializer(serializers.ModelSerializer):
         model = PlayerRegistration
         fields = [
             "id",
-            "user",
             "club",
             "club_name",
             "team",
@@ -156,18 +156,307 @@ class PlayerRegistrationSerializer(serializers.ModelSerializer):
             "is_captain",
             "is_vice_captain",
             "metadata",
+            "submission_status",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = fields
+
+
+class RejectUnexpectedSubmissionFieldsMixin:
+    """Fail closed when a Club submits fields outside an explicit contract."""
 
     def validate(self, attrs):
-        if attrs.get("expiry_date") and attrs.get("registered_date"):
-            if attrs["expiry_date"] < attrs["registered_date"]:
-                raise serializers.ValidationError(
-                    "Expiry date must be after registered date."
-                )
+        unexpected_fields = set(self.initial_data) - set(self.fields)
+        if unexpected_fields:
+            raise serializers.ValidationError(
+                {
+                    field: "This field is not permitted."
+                    for field in sorted(unexpected_fields)
+                }
+            )
+
+        registered_date = attrs.get(
+            "registered_date", getattr(self.instance, "registered_date", None)
+        )
+        expiry_date = attrs.get(
+            "expiry_date", getattr(self.instance, "expiry_date", None)
+        )
+        if registered_date and expiry_date and expiry_date < registered_date:
+            raise serializers.ValidationError(
+                {"expiry_date": "Expiry date must be after registered date."}
+            )
         return attrs
+
+
+class LegacyPlayerRegistrationUpdateSerializer(
+    RejectUnexpectedSubmissionFieldsMixin, serializers.ModelSerializer
+):
+    class Meta:
+        model = PlayerRegistration
+        fields = [
+            "team",
+            "first_name",
+            "last_name",
+            "date_of_birth",
+            "nationality",
+            "position",
+            "secondary_positions",
+            "player_type",
+            "jersey_number",
+            "height_cm",
+            "weight_kg",
+            "preferred_foot",
+            "registered_date",
+            "expiry_date",
+            "transfer_window",
+            "previous_club",
+            "contract_until",
+            "is_captain",
+            "is_vice_captain",
+            "metadata",
+        ]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        team = attrs.get("team")
+        if team is not None and team.club_id != self.instance.club_id:
+            raise serializers.ValidationError(
+                {"team": "Team must belong to the player registration Club."}
+            )
+        return attrs
+
+
+class ClubPlayerRegistrationDraftCreateSerializer(
+    RejectUnexpectedSubmissionFieldsMixin, serializers.ModelSerializer
+):
+    identity_reference = serializers.CharField(
+        write_only=True, required=False, allow_blank=True
+    )
+    existing_union_player_id = serializers.IntegerField(write_only=True, required=False)
+    union_workspace_id = serializers.IntegerField(write_only=True, required=False)
+    requested_competition_editions = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=CompetitionEdition.objects.all(),
+        required=False,
+    )
+
+    class Meta:
+        model = PlayerRegistration
+        fields = [
+            "club",
+            "team",
+            "registration_number",
+            "first_name",
+            "last_name",
+            "date_of_birth",
+            "nationality",
+            "position",
+            "secondary_positions",
+            "player_type",
+            "jersey_number",
+            "height_cm",
+            "weight_kg",
+            "preferred_foot",
+            "registered_date",
+            "expiry_date",
+            "transfer_window",
+            "previous_club",
+            "contract_until",
+            "is_captain",
+            "is_vice_captain",
+            "registration_type",
+            "season_record",
+            "requested_competition_editions",
+            "supporting_documents",
+            "club_notes",
+            "identity_reference",
+            "existing_union_player_id",
+            "union_workspace_id",
+        ]
+
+
+class ClubPlayerRegistrationDraftUpdateSerializer(
+    RejectUnexpectedSubmissionFieldsMixin, serializers.ModelSerializer
+):
+    requested_competition_editions = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=CompetitionEdition.objects.all(),
+        required=False,
+    )
+
+    class Meta:
+        model = PlayerRegistration
+        fields = [
+            "team",
+            "registration_number",
+            "first_name",
+            "last_name",
+            "date_of_birth",
+            "nationality",
+            "position",
+            "secondary_positions",
+            "player_type",
+            "jersey_number",
+            "height_cm",
+            "weight_kg",
+            "preferred_foot",
+            "registered_date",
+            "expiry_date",
+            "transfer_window",
+            "previous_club",
+            "contract_until",
+            "is_captain",
+            "is_vice_captain",
+            "registration_type",
+            "season_record",
+            "requested_competition_editions",
+            "supporting_documents",
+            "club_notes",
+        ]
+
+
+class ClubPlayerRegistrationSubmissionListSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(read_only=True)
+    club_name = serializers.CharField(source="club.name", read_only=True)
+    team_name = serializers.CharField(source="team.name", read_only=True)
+
+    class Meta:
+        model = PlayerRegistration
+        fields = [
+            "id",
+            "registration_number",
+            "full_name",
+            "club",
+            "club_name",
+            "team",
+            "team_name",
+            "registration_type",
+            "season_record",
+            "submission_status",
+            "submission_revision",
+            "submitted_at",
+            "last_resubmitted_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class ClubPlayerRegistrationSubmissionDetailSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(read_only=True)
+    club_name = serializers.CharField(source="club.name", read_only=True)
+    team_name = serializers.CharField(source="team.name", read_only=True)
+    union_player_number = serializers.CharField(
+        source="union_player.union_player_number",
+        read_only=True,
+        allow_null=True,
+    )
+    requested_competition_editions = serializers.PrimaryKeyRelatedField(
+        many=True, read_only=True
+    )
+
+    class Meta:
+        model = PlayerRegistration
+        fields = [
+            "id",
+            "club",
+            "club_name",
+            "team",
+            "team_name",
+            "registration_number",
+            "first_name",
+            "last_name",
+            "full_name",
+            "date_of_birth",
+            "nationality",
+            "position",
+            "secondary_positions",
+            "player_type",
+            "jersey_number",
+            "height_cm",
+            "weight_kg",
+            "preferred_foot",
+            "registered_date",
+            "expiry_date",
+            "transfer_window",
+            "previous_club",
+            "contract_until",
+            "is_captain",
+            "is_vice_captain",
+            "registration_type",
+            "season_record",
+            "union_player",
+            "union_player_number",
+            "requested_competition_editions",
+            "supporting_documents",
+            "club_notes",
+            "submission_status",
+            "submission_revision",
+            "submitted_at",
+            "last_resubmitted_at",
+            "withdrawal_reason",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class ClubPlayerRegistrationWithdrawSerializer(serializers.Serializer):
+    withdrawal_reason = serializers.CharField(trim_whitespace=True, allow_blank=False)
+
+
+class ClubPlayerRegistrationDecisionSerializer(serializers.ModelSerializer):
+    requested_competition_editions = serializers.PrimaryKeyRelatedField(
+        many=True, read_only=True
+    )
+
+    class Meta:
+        model = PlayerRegistration
+        fields = [
+            "id",
+            "submission_status",
+            "change_request_reason",
+            "union_decision_reason",
+            "reviewed_at",
+            "submission_revision",
+            "automatic_validation",
+            "requested_competition_editions",
+        ]
+        read_only_fields = fields
+
+
+class ClubPlayerRegistrySearchQuerySerializer(serializers.Serializer):
+    club = serializers.PrimaryKeyRelatedField(queryset=Club.objects.all())
+    q = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        trim_whitespace=True,
+    )
+    date_of_birth = serializers.DateField(required=False)
+    union_workspace_id = serializers.IntegerField(required=False, min_value=1)
+    limit = serializers.IntegerField(required=False, min_value=1, max_value=50)
+
+    def validate(self, attrs):
+        if not attrs.get("q", "").strip() and attrs.get("date_of_birth") is None:
+            raise serializers.ValidationError(
+                {"q": "Enter a player name, player number, or date of birth."}
+            )
+        return attrs
+
+
+class ClubPlayerRegistrySearchSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    union_player_number = serializers.CharField(read_only=True)
+    first_name = serializers.CharField(read_only=True)
+    last_name = serializers.CharField(read_only=True)
+    full_name = serializers.CharField(read_only=True)
+    date_of_birth = serializers.DateField(read_only=True)
+    nationality = serializers.CharField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    can_be_selected = serializers.BooleanField(read_only=True)
+    selection_warning = serializers.CharField(read_only=True, allow_null=True)
+    current_club_summary = serializers.DictField(read_only=True, allow_null=True)
 
 
 class PlayerRegistrationSummarySerializer(serializers.ModelSerializer):
@@ -186,6 +475,7 @@ class PlayerRegistrationSummarySerializer(serializers.ModelSerializer):
             "position",
             "player_type",
             "status",
+            "submission_status",
             "jersey_number",
         ]
 
@@ -243,71 +533,6 @@ class StaffMemberSummarySerializer(serializers.ModelSerializer):
             "role",
             "employment_type",
             "is_active",
-        ]
-
-
-class PlayerTransferSerializer(serializers.ModelSerializer):
-    player_name = serializers.CharField(source="player.full_name", read_only=True)
-    player_registration_number = serializers.CharField(
-        source="player.registration_number", read_only=True
-    )
-    from_club_name = serializers.CharField(source="from_club.name", read_only=True)
-    to_club_name = serializers.CharField(source="to_club.name", read_only=True)
-
-    class Meta:
-        model = PlayerTransfer
-        fields = [
-            "id",
-            "transfer_number",
-            "player",
-            "player_name",
-            "player_registration_number",
-            "from_club",
-            "from_club_name",
-            "to_club",
-            "to_club_name",
-            "transfer_type",
-            "transfer_fee",
-            "currency",
-            "transfer_date",
-            "contract_until",
-            "status",
-            "requested_by",
-            "approved_by",
-            "approved_at",
-            "rejection_reason",
-            "documents",
-            "notes",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = [
-            "id",
-            "transfer_number",
-            "created_at",
-            "updated_at",
-            "requested_by",
-        ]
-
-
-class PlayerTransferSummarySerializer(serializers.ModelSerializer):
-    player_name = serializers.CharField(source="player.full_name", read_only=True)
-    from_club_name = serializers.CharField(source="from_club.name", read_only=True)
-    to_club_name = serializers.CharField(source="to_club.name", read_only=True)
-
-    class Meta:
-        model = PlayerTransfer
-        fields = [
-            "id",
-            "transfer_number",
-            "player_name",
-            "from_club_name",
-            "to_club_name",
-            "transfer_type",
-            "transfer_fee",
-            "currency",
-            "transfer_date",
-            "status",
         ]
 
 
