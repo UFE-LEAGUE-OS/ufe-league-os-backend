@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "channels",
     "storages",
+    "django_filters",
     # Local apps
     "accounts",
     "dashboards",
@@ -78,6 +79,7 @@ INSTALLED_APPS = [
     "club_operations",
     "rbac.apps.RbacConfig",
     "analytics.apps.AnalyticsConfig",
+    "finances",
 ]
 
 MIDDLEWARE = [

@@ -34,6 +34,8 @@ INSTALLED_APPS = [
     "club_operations",
     "rbac.apps.RbacConfig",
     "analytics.apps.AnalyticsConfig",
+    "django_filters",
+    "finances",
 ]
 
 MIDDLEWARE = [
