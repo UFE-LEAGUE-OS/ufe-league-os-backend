@@ -1,7 +1,13 @@
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
-from .models import Announcement, ClubDocument, ComplianceChecklist, CommunicationLog
+from .models import (
+    Announcement,
+    ClubDocument,
+    ComplianceChecklist,
+    CommunicationLog,
+    SponsorCampaign,
+)
 
 User = get_user_model()
 
@@ -139,3 +145,41 @@ def mark_expired_documents():
         status=ClubDocument.Status.ACTIVE,
         is_deleted=False,
     ).update(status=ClubDocument.Status.EXPIRED)
+
+
+def archive_campaign(campaign):
+    if campaign.status == SponsorCampaign.CampaignStatus.ARCHIVED:
+        raise ValueError("Campaign is already archived.")
+    campaign.status = SponsorCampaign.CampaignStatus.ARCHIVED
+    campaign.save(update_fields=["status", "updated_at"])
+
+
+def log_club_operation_action(
+    club,
+    actor,
+    action,
+    target_object=None,
+    description="",
+    metadata=None,
+    ip_address=None,
+):
+    from .models import ClubOperationAuditLog
+
+    content_type = ""
+    target_id = None
+    if target_object:
+        target_id = target_object.pk
+        content_type = (
+            f"{target_object._meta.app_label}.{target_object._meta.model_name}"
+        )
+
+    ClubOperationAuditLog.objects.create(
+        club=club,
+        user=actor,
+        action=action,
+        target_object_id=target_id,
+        target_content_type=content_type,
+        description=description,
+        metadata=metadata or {},
+        ip_address=ip_address,
+    )
