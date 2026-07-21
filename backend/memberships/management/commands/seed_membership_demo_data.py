@@ -13,7 +13,6 @@ class Command(BaseCommand):
         fan, _ = User.objects.get_or_create(
             email="fan-demo@example.com",
             defaults={
-                "username": "fan-demo",
                 "first_name": "Demo",
                 "last_name": "Fan",
                 "role": User.Role.FAN,
@@ -24,10 +23,18 @@ class Command(BaseCommand):
         fan.is_email_verified = True
         fan.save()
 
-        club, _ = Club.objects.get_or_create(
-            slug="kobs",
-            defaults={"name": "KCB KOBS"},
+        club = (
+            Club.objects.filter(slug="kobs").first()
+            or Club.objects.filter(name__iexact="KCB KOBS").first()
         )
+
+        if club is None:
+            club = Club.objects.create(
+                name="KCB KOBS",
+                slug="kobs",
+                short_name="KOBS",
+                sport=Club.Sport.RUGBY,
+            )
 
         plans = [
             ("Bronze Member", MembershipPlan.Tier.BASIC, Decimal("50000.00")),

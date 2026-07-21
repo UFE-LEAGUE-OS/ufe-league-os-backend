@@ -35,7 +35,7 @@ WORKSPACE_DATA = {
             }
         ],
         "clubs": [
-            ("KCB KOBS", "kcb-kobs", "KOBS"),
+            ("KCB KOBS", "kobs", "KOBS"),
             ("Platinum Credit Heathens", "heathens-rfc", "Heathens"),
             ("Black Pirates", "black-pirates", "Pirates"),
             ("Impis RFC", "impis-rfc", "Impis"),
