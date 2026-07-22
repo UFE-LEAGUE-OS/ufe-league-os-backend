@@ -153,30 +153,6 @@ DASHBOARD_CONTENT = {
             "Review union activity",
         ],
     },
-    User.Role.SUPER_ADMIN: {
-        "title": "Super Admin Dashboard",
-        "description": "Monitor the full League OS platform, users, roles, tenants, and audit activity.",
-        "summary_cards": [
-            {"label": "Users", "value": 0},
-            {"label": "Organizations", "value": 0},
-            {"label": "Roles", "value": 0},
-            {"label": "Audit Events", "value": 0},
-        ],
-        "modules": [
-            "Users",
-            "Roles",
-            "Organizations",
-            "Platform Settings",
-            "Audit Logs",
-            "System Health",
-        ],
-        "quick_actions": [
-            "Review users",
-            "Monitor system health",
-            "View audit activity",
-            "Manage platform settings",
-        ],
-    },
     User.Role.REFEREE: {
         "title": "Match Official Dashboard",
         "description": "Manage match appointments, assigned responsibilities, reports, and availability.",
@@ -345,6 +321,48 @@ def my_dashboard_view(request):
             else:
                 dashboard_role = User.Role.UNION_ADMIN
 
+    # Build dashboard content - use dynamic stats for Super Admin
+    dashboard_content = None
+    if dashboard_role == User.Role.SUPER_ADMIN:
+        from accounts.models import AuditLog
+
+        # Fetch real platform statistics from the database
+        total_users = User.objects.count()
+        total_unions = Union.objects.count()
+        total_leagues = League.objects.count()
+        total_clubs = Club.objects.count()
+        total_audit_events = AuditLog.objects.count()
+
+        dashboard_content = {
+            "title": "Super Admin Dashboard",
+            "description": "Monitor the full League OS platform, users, roles, tenants, and audit activity.",
+            "summary_cards": [
+                {"label": "Users", "value": total_users},
+                {
+                    "label": "Organizations",
+                    "value": total_unions + total_leagues + total_clubs,
+                },
+                {"label": "Roles", "value": total_users},  # Users with roles
+                {"label": "Audit Events", "value": total_audit_events},
+            ],
+            "modules": [
+                "Users",
+                "Roles",
+                "Organizations",
+                "Platform Settings",
+                "Audit Logs",
+                "System Health",
+            ],
+            "quick_actions": [
+                "Review users",
+                "Monitor system health",
+                "View audit activity",
+                "Manage platform settings",
+            ],
+        }
+    else:
+        dashboard_content = DASHBOARD_CONTENT.get(dashboard_role)
+
     return Response(
         {
             "message": (
@@ -362,7 +380,7 @@ def my_dashboard_view(request):
                 default_dashboard["backend_route"] if default_dashboard else None
             ),
             "available_dashboards": available_dashboards,
-            "dashboard": DASHBOARD_CONTENT.get(dashboard_role),
+            "dashboard": dashboard_content,
             "user": user_data,
         },
         status=status.HTTP_200_OK,
@@ -580,7 +598,70 @@ def union_admin_dashboard_view(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticatedAudit])
 def super_admin_dashboard_view(request):
-    return build_dashboard_response(request, User.Role.SUPER_ADMIN)
+    """Return Super Admin dashboard with actual platform statistics."""
+    from accounts.models import AuditLog
+
+    # Fetch real platform statistics from the database
+    total_users = User.objects.count()
+    total_unions = Union.objects.count()
+    total_leagues = League.objects.count()
+    total_clubs = Club.objects.count()
+    total_audit_events = AuditLog.objects.count()
+
+    # Build dynamic dashboard content with real data
+    dashboard_content = {
+        "title": "Super Admin Dashboard",
+        "description": "Monitor the full League OS platform, users, roles, tenants, and audit activity.",
+        "summary_cards": [
+            {"label": "Users", "value": total_users},
+            {
+                "label": "Organizations",
+                "value": total_unions + total_leagues + total_clubs,
+            },
+            {"label": "Roles", "value": total_users},  # Users with roles
+            {"label": "Audit Events", "value": total_audit_events},
+        ],
+        "modules": [
+            "Users",
+            "Roles",
+            "Organizations",
+            "Platform Settings",
+            "Audit Logs",
+            "System Health",
+        ],
+        "quick_actions": [
+            "Review users",
+            "Monitor system health",
+            "View audit activity",
+            "Manage platform settings",
+        ],
+    }
+
+    user = request.user
+    presentation = _dashboard_presentation(request)
+    user_data, _dashboard_access, available_dashboards = presentation
+
+    if not _matching_dashboard_entries(available_dashboards, User.Role.SUPER_ADMIN):
+        return _dashboard_access_denied(request, User.Role.SUPER_ADMIN)
+
+    frontend_dashboard_route, backend_dashboard_route = select_dashboard_route_for_role(
+        available_dashboards, User.Role.SUPER_ADMIN
+    )
+
+    return Response(
+        {
+            "message": f"{dashboard_content['title']} loaded successfully.",
+            "role": user.role,
+            "role_display": user.get_role_display(),
+            "dashboard_role": User.Role.SUPER_ADMIN,
+            "frontend_dashboard_route": frontend_dashboard_route,
+            "backend_dashboard_route": backend_dashboard_route,
+            "available_dashboards": available_dashboards,
+            "dashboard": dashboard_content,
+            "user": user_data,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(["GET"])
@@ -1332,191 +1413,6 @@ def _validate_workspace_role(role):
     return True
 
 
-NATIONAL_TEAM_ROWS = {
-    "URU": [
-        {
-            "team": "Uganda Rugby Cranes",
-            "category": "Senior Men",
-            "players": 32,
-            "staff": 8,
-            "status": "Active",
-        },
-        {
-            "team": "Lady Rugby Cranes",
-            "category": "Senior Women",
-            "players": 30,
-            "staff": 7,
-            "status": "Active",
-        },
-        {
-            "team": "Uganda Rugby 7s",
-            "category": "Sevens",
-            "players": 18,
-            "staff": 5,
-            "status": "Camp",
-        },
-        {
-            "team": "Uganda U20 Rugby",
-            "category": "Age Grade",
-            "players": 36,
-            "staff": 6,
-            "status": "Selection",
-        },
-    ],
-    "FUFA": [
-        {
-            "team": "Uganda Cranes",
-            "category": "Senior Men",
-            "players": 28,
-            "staff": 10,
-            "status": "Active",
-        },
-        {
-            "team": "Crested Cranes",
-            "category": "Senior Women",
-            "players": 26,
-            "staff": 8,
-            "status": "Active",
-        },
-        {
-            "team": "Uganda U20 Football",
-            "category": "Age Grade",
-            "players": 30,
-            "staff": 7,
-            "status": "Camp",
-        },
-        {
-            "team": "Uganda U17 Football",
-            "category": "Age Grade",
-            "players": 30,
-            "staff": 6,
-            "status": "Selection",
-        },
-    ],
-    "FUBA": [
-        {
-            "team": "Uganda Silverbacks",
-            "category": "Senior Men",
-            "players": 18,
-            "staff": 7,
-            "status": "Active",
-        },
-        {
-            "team": "Uganda Gazelles",
-            "category": "Senior Women",
-            "players": 18,
-            "staff": 7,
-            "status": "Active",
-        },
-        {
-            "team": "Uganda U18 Basketball",
-            "category": "Age Grade",
-            "players": 20,
-            "staff": 5,
-            "status": "Camp",
-        },
-        {
-            "team": "Uganda 3x3 Basketball",
-            "category": "3x3",
-            "players": 12,
-            "staff": 4,
-            "status": "Selection",
-        },
-    ],
-    "BUDO": [
-        {
-            "team": "Budo League Select",
-            "category": "Community Select",
-            "players": 24,
-            "staff": 5,
-            "status": "Active",
-        },
-        {
-            "team": "Budo Veterans",
-            "category": "Veterans",
-            "players": 22,
-            "staff": 4,
-            "status": "Active",
-        },
-    ],
-    "SMACK": [
-        {
-            "team": "SMACK League Select",
-            "category": "Community Select",
-            "players": 24,
-            "staff": 5,
-            "status": "Active",
-        },
-        {
-            "team": "SMACK Veterans",
-            "category": "Veterans",
-            "players": 22,
-            "staff": 4,
-            "status": "Active",
-        },
-    ],
-}
-
-
-PLAYER_POSITIONS_BY_SPORT = {
-    "RUGBY": [
-        {
-            "group": "Forwards",
-            "positions": [
-                "Loosehead Prop",
-                "Hooker",
-                "Tighthead Prop",
-                "Lock",
-                "Flanker",
-                "Number Eight",
-            ],
-        },
-        {
-            "group": "Backs",
-            "positions": [
-                "Scrum-half",
-                "Fly-half",
-                "Centre",
-                "Wing",
-                "Fullback",
-            ],
-        },
-    ],
-    "FOOTBALL": [
-        {
-            "group": "Goalkeeping",
-            "positions": ["Goalkeeper"],
-        },
-        {
-            "group": "Defence",
-            "positions": ["Right Back", "Centre Back", "Left Back"],
-        },
-        {
-            "group": "Midfield",
-            "positions": [
-                "Defensive Midfielder",
-                "Central Midfielder",
-                "Attacking Midfielder",
-            ],
-        },
-        {
-            "group": "Attack",
-            "positions": ["Winger", "Striker"],
-        },
-    ],
-    "BASKETBALL": [
-        {
-            "group": "Backcourt",
-            "positions": ["Point Guard", "Shooting Guard"],
-        },
-        {
-            "group": "Frontcourt",
-            "positions": ["Small Forward", "Power Forward", "Center"],
-        },
-    ],
-}
-
-
 def _workspace_sport_value(workspace):
     return (workspace.sport or "").strip().upper().replace(" ", "_") or "OTHER"
 
@@ -1687,52 +1583,7 @@ def _club_admin_label(club):
 
 
 def _workspace_referees(workspace, competitions):
-    sport = (workspace.sport or "").lower()
-
-    if "football" in sport:
-        role_1 = "Centre Referee"
-        role_2 = "Assistant Referee"
-        grade = "FUFA Grade 1"
-    elif "basketball" in sport:
-        role_1 = "Crew Chief"
-        role_2 = "Table Official"
-        grade = "FIBA Level"
-    else:
-        role_1 = "Centre Referee"
-        role_2 = "Assistant Referee"
-        grade = "Level 2"
-
-    competition_names = (
-        ", ".join([competition.name for competition in competitions[:3]])
-        or "Competition pool"
-    )
-
-    return [
-        {
-            "name": f"{workspace.acronym} Lead Official",
-            "role": role_1,
-            "grade": grade,
-            "status": "Available",
-            "competitions": competition_names,
-            "nextMatch": "Assigned from fixture list",
-        },
-        {
-            "name": f"{workspace.acronym} Assistant Official",
-            "role": role_2,
-            "grade": grade,
-            "status": "Available",
-            "competitions": competition_names,
-            "nextMatch": "Pending assignment",
-        },
-        {
-            "name": f"{workspace.acronym} Match Commissioner",
-            "role": "Match Commissioner",
-            "grade": "Assessor",
-            "status": "Review",
-            "competitions": competition_names,
-            "nextMatch": "Pending assignment",
-        },
-    ]
+    return []
 
 
 @api_view(["GET"])
@@ -1845,9 +1696,9 @@ def union_admin_operations_dashboard_view(request):
                 if hasattr(club, "get_sport_display")
                 else sport_value.title()
             ),
-            "teams": 2 + (index % 3),
-            "players": 24 + ((index + 1) * 5),
-            "compliance": "Ready" if index % 3 != 2 else "Review",
+            "teams": 0,
+            "players": 0,
+            "compliance": "Unknown",
             "admin": _club_admin_label(club),
         }
         for index, club in enumerate(clubs_qs[:20])
@@ -1892,17 +1743,7 @@ def union_admin_operations_dashboard_view(request):
             for match in matches_qs[:8]
         ]
 
-    registration_rows = [
-        {
-            "applicant": f"{club.short_name or club.name} Player {index + 1}",
-            "club": club.name,
-            "type": "New player" if index % 2 == 0 else "Transfer",
-            "submitted": "Today" if index == 0 else f"{index + 1} days ago",
-            "status": "Needs review" if index % 2 == 0 else "Documents missing",
-            "reviewer": "Registrar",
-        }
-        for index, club in enumerate(clubs_qs[:5])
-    ]
+    registration_rows = []
 
     return Response(
         {
@@ -1925,10 +1766,7 @@ def union_admin_operations_dashboard_view(request):
             "national_teams": (
                 []
                 if membership.role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL
-                else NATIONAL_TEAM_ROWS.get(
-                    workspace.acronym.upper(),
-                    [],
-                )
+                else []
             ),
             "registrations": (
                 []
@@ -1961,10 +1799,7 @@ def union_admin_operations_dashboard_view(request):
             "player_positions": (
                 []
                 if membership.role == UnionWorkspaceMembership.Role.MATCH_OFFICIAL
-                else PLAYER_POSITIONS_BY_SPORT.get(
-                    sport_value,
-                    [],
-                )
+                else []
             ),
         }
     )

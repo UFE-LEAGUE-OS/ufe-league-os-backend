@@ -118,6 +118,25 @@ LEAGUE_PERMISSIONS = {
             "union.reports.view",
         }
     ),
+    "FIXTURES_MANAGER": sorted(
+        {
+            "dashboard.league_admin",
+            "dashboard.me",
+            "union.competitions.manage",
+            "union.reports.view",
+        }
+    ),
+    "REGISTRAR": sorted(
+        {
+            "dashboard.league_admin",
+            "dashboard.me",
+            "union.registrations.view",
+            "union.registrations.manage",
+            "union.players.view",
+            "union.players.approve",
+            "union.reports.view",
+        }
+    ),
 }
 
 

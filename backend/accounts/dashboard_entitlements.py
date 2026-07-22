@@ -97,6 +97,21 @@ LEAGUE_SCOPE_ROLE_PERMISSIONS = {
         "dashboard.me",
         "union.reports.view",
     },
+    "FIXTURES_MANAGER": {
+        "dashboard.league_admin",
+        "dashboard.me",
+        "union.competitions.manage",
+        "union.reports.view",
+    },
+    "REGISTRAR": {
+        "dashboard.league_admin",
+        "dashboard.me",
+        "union.registrations.view",
+        "union.registrations.manage",
+        "union.players.view",
+        "union.players.approve",
+        "union.reports.view",
+    },
 }
 
 
