@@ -61,7 +61,20 @@ def _competition_slug(league, identity, season):
 
 @transaction.atomic
 def create_competition_edition(
-    *, workspace, identity, season, actor, copied_from=None, copy_fields=()
+    *,
+    workspace,
+    identity,
+    season,
+    actor,
+    copied_from=None,
+    copy_fields=(),
+    registration_opens_at=None,
+    registration_closes_at=None,
+    entry_fee=None,
+    currency="UGX",
+    rules=None,
+    structure=None,
+    eligibility_rules=None,
 ):
     """Create a new edition without mutating any prior season or its records."""
 
@@ -119,14 +132,25 @@ def create_competition_edition(
         competition=competition,
         season=season,
         copied_from=source,
-        rules=source.rules if source and "rules" in copy_fields else {},
-        structure=source.structure if source and "structure" in copy_fields else {},
+        registration_opens_at=registration_opens_at,
+        registration_closes_at=registration_closes_at,
+        entry_fee=entry_fee,
+        currency=currency,
+        rules=(
+            source.rules if source and "rules" in copy_fields else (rules or {})
+        ),
+        structure=(
+            source.structure
+            if source and "structure" in copy_fields
+            else (structure or identity.default_format)
+        ),
         eligibility_rules=(
             source.eligibility_rules
             if source and "eligibility_rules" in copy_fields
-            else {}
+            else (eligibility_rules or identity.default_eligibility_rules)
         ),
     )
+    edition.full_clean()
 
     if source and "clubs" in copy_fields:
         memberships = LeagueClubMembership.objects.filter(
