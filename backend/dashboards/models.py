@@ -26,7 +26,7 @@ class League(models.Model):
     """Represents a league within a union (e.g., Uganda Premier League)."""
 
     union = models.ForeignKey(Union, on_delete=models.CASCADE, related_name="leagues")
-    name = models.CharField(max_length=200, unique=True)
+    name = models.CharField(max_length=200)
     slug = models.SlugField(max_length=200, unique=True)
     logo = models.ImageField(upload_to="leagues/logos/", blank=True, null=True)
     description = models.TextField(blank=True)
@@ -37,6 +37,12 @@ class League(models.Model):
 
     class Meta:
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["union", "name"],
+                name="unique_union_league_name",
+            )
+        ]
 
     def __str__(self):
         return self.name
