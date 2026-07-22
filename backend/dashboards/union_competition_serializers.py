@@ -28,13 +28,23 @@ class CompetitionFormatSerializer(serializers.Serializer):
         "PLAYOFF",
     )
 
-    version = serializers.IntegerField(default=VERSION, min_value=VERSION, max_value=VERSION)
+    version = serializers.IntegerField(
+        default=VERSION, min_value=VERSION, max_value=VERSION
+    )
     format = serializers.ChoiceField(choices=FORMAT_CHOICES)
     number_of_legs = serializers.IntegerField(required=False, min_value=1, max_value=4)
-    number_of_rounds = serializers.IntegerField(required=False, min_value=1, max_value=100)
-    number_of_groups = serializers.IntegerField(required=False, min_value=2, max_value=32)
-    clubs_per_group = serializers.IntegerField(required=False, min_value=2, max_value=64)
-    advancing_per_group = serializers.IntegerField(required=False, min_value=1, max_value=32)
+    number_of_rounds = serializers.IntegerField(
+        required=False, min_value=1, max_value=100
+    )
+    number_of_groups = serializers.IntegerField(
+        required=False, min_value=2, max_value=32
+    )
+    clubs_per_group = serializers.IntegerField(
+        required=False, min_value=2, max_value=64
+    )
+    advancing_per_group = serializers.IntegerField(
+        required=False, min_value=1, max_value=32
+    )
     playoff_qualification_positions = serializers.ListField(
         child=serializers.IntegerField(min_value=1), required=False, allow_empty=True
     )
@@ -67,7 +77,10 @@ class CompetitionFormatSerializer(serializers.Serializer):
             unknown = set(data) - set(self.fields)
             if unknown:
                 raise serializers.ValidationError(
-                    {key: "This format option is not supported." for key in sorted(unknown)}
+                    {
+                        key: "This format option is not supported."
+                        for key in sorted(unknown)
+                    }
                 )
         return super().to_internal_value(data)
 
@@ -82,18 +95,25 @@ class CompetitionFormatSerializer(serializers.Serializer):
             )
         if attrs.get("number_relegated", 0) and not attrs.get("relegation_enabled"):
             raise serializers.ValidationError(
-                {"number_relegated": "Enable relegation before setting relegated clubs."}
+                {
+                    "number_relegated": "Enable relegation before setting relegated clubs."
+                }
             )
         if attrs["format"] == "GROUPS_AND_KNOCKOUT":
             required = ("number_of_groups", "clubs_per_group", "advancing_per_group")
             missing = [field for field in required if field not in attrs]
             if missing:
                 raise serializers.ValidationError(
-                    {field: "This field is required for a group format." for field in missing}
+                    {
+                        field: "This field is required for a group format."
+                        for field in missing
+                    }
                 )
             if attrs["advancing_per_group"] >= attrs["clubs_per_group"]:
                 raise serializers.ValidationError(
-                    {"advancing_per_group": "Fewer clubs must advance than enter each group."}
+                    {
+                        "advancing_per_group": "Fewer clubs must advance than enter each group."
+                    }
                 )
         return attrs
 

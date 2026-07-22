@@ -177,9 +177,7 @@ class CompetitionEditionTests(APITestCase):
                 },
             },
             "first_edition": {"season": self.new_season.id, "currency": "UGX"},
-            "administrators": [
-                {"user": self.owner.id, "role": "COMPETITION_ADMIN"}
-            ],
+            "administrators": [{"user": self.owner.id, "role": "COMPETITION_ADMIN"}],
         }
         payload.update(overrides)
         return payload
@@ -222,7 +220,9 @@ class CompetitionEditionTests(APITestCase):
             "/api/dashboards/union-admin/competition-create/", payload, format="json"
         )
         self.assertEqual(response.status_code, 400)
-        self.assertFalse(CompetitionIdentity.objects.filter(name="Championship").exists())
+        self.assertFalse(
+            CompetitionIdentity.objects.filter(name="Championship").exists()
+        )
 
     def test_cross_workspace_administrator_is_rejected(self):
         other_union = Union.objects.create(name="Other Union", slug="other-union")
@@ -255,7 +255,9 @@ class CompetitionEditionTests(APITestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("administrators", response.data)
-        self.assertFalse(CompetitionIdentity.objects.filter(name="Championship").exists())
+        self.assertFalse(
+            CompetitionIdentity.objects.filter(name="Championship").exists()
+        )
         self.assertFalse(LeagueAdminScope.objects.filter(user=outsider).exists())
 
     def test_inactive_user_cannot_be_assigned(self):
@@ -275,7 +277,10 @@ class CompetitionEditionTests(APITestCase):
             "/api/dashboards/union-admin/competition-create/",
             self._creation_payload(
                 administrators=[
-                    {"user": inactive.id, "role": LeagueAdminScope.Role.FIXTURES_MANAGER}
+                    {
+                        "user": inactive.id,
+                        "role": LeagueAdminScope.Role.FIXTURES_MANAGER,
+                    }
                 ]
             ),
             format="json",
@@ -283,7 +288,9 @@ class CompetitionEditionTests(APITestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("administrators", response.data)
-        self.assertFalse(CompetitionIdentity.objects.filter(name="Championship").exists())
+        self.assertFalse(
+            CompetitionIdentity.objects.filter(name="Championship").exists()
+        )
         self.assertFalse(LeagueAdminScope.objects.filter(user=inactive).exists())
 
     def test_administrator_role_is_limited_to_model_choices(self):
@@ -298,7 +305,9 @@ class CompetitionEditionTests(APITestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("administrators", response.data)
-        self.assertFalse(CompetitionIdentity.objects.filter(name="Championship").exists())
+        self.assertFalse(
+            CompetitionIdentity.objects.filter(name="Championship").exists()
+        )
 
     def test_role_choices_preserve_existing_values_and_add_maintained_roles(self):
         self.assertEqual(
@@ -323,4 +332,6 @@ class CompetitionEditionTests(APITestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("identity", response.data)
-        self.assertFalse(CompetitionIdentity.objects.filter(name="Championship").exists())
+        self.assertFalse(
+            CompetitionIdentity.objects.filter(name="Championship").exists()
+        )

@@ -248,7 +248,9 @@ def union_admin_competition_eligible_administrators_view(request):
     if error:
         return error
     workspace = membership.workspace
-    if not _has_workspace_permission(request.user, workspace, "union.competitions.manage"):
+    if not _has_workspace_permission(
+        request.user, workspace, "union.competitions.manage"
+    ):
         return _denied()
     memberships = UnionWorkspaceMembership.objects.filter(
         workspace=workspace, is_active=True, user__is_active=True
@@ -278,10 +280,14 @@ def union_admin_competition_eligible_administrators_view(request):
 
 
 def _competition_for_workspace(membership, competition_id):
-    return CompetitionEdition.objects.filter(
-        competition_id=competition_id,
-        identity__union=membership.workspace.related_union,
-    ).select_related("competition__league", "identity").first()
+    return (
+        CompetitionEdition.objects.filter(
+            competition_id=competition_id,
+            identity__union=membership.workspace.related_union,
+        )
+        .select_related("competition__league", "identity")
+        .first()
+    )
 
 
 @api_view(["GET", "POST"])
@@ -291,50 +297,100 @@ def union_admin_competition_administrators_view(request, competition_id):
     if error:
         return error
     edition = _competition_for_workspace(membership, competition_id)
-    if edition is None or not scope_allows(membership, "competition_edition", edition.id):
-        return Response({"detail": "Competition not found."}, status=status.HTTP_404_NOT_FOUND)
+    if edition is None or not scope_allows(
+        membership, "competition_edition", edition.id
+    ):
+        return Response(
+            {"detail": "Competition not found."}, status=status.HTTP_404_NOT_FOUND
+        )
     if request.method == "GET":
-        if not _has_workspace_permission(request.user, membership.workspace, "union.competitions.view"):
+        if not _has_workspace_permission(
+            request.user, membership.workspace, "union.competitions.view"
+        ):
             return _denied()
         scopes = LeagueAdminScope.objects.filter(
             competition=edition.competition, is_active=True
         ).select_related("user")
-        return Response({"count": scopes.count(), "results": CompetitionAdministratorSerializer(scopes, many=True).data})
-    if not _has_workspace_permission(request.user, membership.workspace, "union.competitions.manage"):
+        return Response(
+            {
+                "count": scopes.count(),
+                "results": CompetitionAdministratorSerializer(scopes, many=True).data,
+            }
+        )
+    if not _has_workspace_permission(
+        request.user, membership.workspace, "union.competitions.manage"
+    ):
         return _denied()
     serializer = CompetitionAdministratorWriteSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    candidate = UnionWorkspaceMembership.objects.filter(
-        workspace=membership.workspace,
-        user_id=serializer.validated_data["user"],
-        is_active=True,
-        user__is_active=True,
-    ).select_related("user").first()
+    candidate = (
+        UnionWorkspaceMembership.objects.filter(
+            workspace=membership.workspace,
+            user_id=serializer.validated_data["user"],
+            is_active=True,
+            user__is_active=True,
+        )
+        .select_related("user")
+        .first()
+    )
     if candidate is None:
-        return Response({"user": "Select an active user in this workspace."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"user": "Select an active user in this workspace."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     scope, _ = LeagueAdminScope.objects.update_or_create(
         user=candidate.user,
         competition=edition.competition,
-        defaults={"league": edition.competition.league, "role": serializer.validated_data["role"], "is_active": True, "created_by": request.user},
+        defaults={
+            "league": edition.competition.league,
+            "role": serializer.validated_data["role"],
+            "is_active": True,
+            "created_by": request.user,
+        },
     )
-    log_union_audit_event(workspace=membership.workspace, actor=request.user, action="competition_administrator.assigned", target=scope, metadata={"competition_id": competition_id, "role": scope.role})
-    return Response(CompetitionAdministratorSerializer(scope).data, status=status.HTTP_201_CREATED)
+    log_union_audit_event(
+        workspace=membership.workspace,
+        actor=request.user,
+        action="competition_administrator.assigned",
+        target=scope,
+        metadata={"competition_id": competition_id, "role": scope.role},
+    )
+    return Response(
+        CompetitionAdministratorSerializer(scope).data, status=status.HTTP_201_CREATED
+    )
 
 
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticatedAudit])
-def union_admin_competition_administrator_detail_view(request, competition_id, scope_id):
+def union_admin_competition_administrator_detail_view(
+    request, competition_id, scope_id
+):
     membership, error = _resolve_membership(request)
     if error:
         return error
-    if not _has_workspace_permission(request.user, membership.workspace, "union.competitions.manage"):
+    if not _has_workspace_permission(
+        request.user, membership.workspace, "union.competitions.manage"
+    ):
         return _denied()
-    scope = LeagueAdminScope.objects.filter(pk=scope_id, competition_id=competition_id, competition__league__union=membership.workspace.related_union, is_active=True).first()
+    scope = LeagueAdminScope.objects.filter(
+        pk=scope_id,
+        competition_id=competition_id,
+        competition__league__union=membership.workspace.related_union,
+        is_active=True,
+    ).first()
     if scope is None:
-        return Response({"detail": "Assignment not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {"detail": "Assignment not found."}, status=status.HTTP_404_NOT_FOUND
+        )
     scope.is_active = False
     scope.save(update_fields=["is_active", "updated_at"])
-    log_union_audit_event(workspace=membership.workspace, actor=request.user, action="competition_administrator.removed", target=scope, metadata={"competition_id": competition_id})
+    log_union_audit_event(
+        workspace=membership.workspace,
+        actor=request.user,
+        action="competition_administrator.removed",
+        target=scope,
+        metadata={"competition_id": competition_id},
+    )
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -345,21 +401,47 @@ def union_admin_competition_create_view(request):
     if error:
         return error
     workspace = membership.workspace
-    if not _has_workspace_permission(request.user, workspace, "union.competitions.manage"):
+    if not _has_workspace_permission(
+        request.user, workspace, "union.competitions.manage"
+    ):
         return _denied()
     serializer = CompetitionCreationSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     identity_data = serializer.validated_data["identity"]
     league = identity_data.get("primary_league")
     if league not in _workspace_leagues(workspace):
-        return Response({"identity": {"primary_league": "League is outside this workspace."}}, status=status.HTTP_400_BAD_REQUEST)
-    season = Season.objects.filter(pk=serializer.validated_data["first_edition"]["season"], league__union=workspace.related_union).first()
+        return Response(
+            {"identity": {"primary_league": "League is outside this workspace."}},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    season = Season.objects.filter(
+        pk=serializer.validated_data["first_edition"]["season"],
+        league__union=workspace.related_union,
+    ).first()
     if season is None:
-        return Response({"first_edition": {"season": "A workspace season is required."}}, status=status.HTTP_400_BAD_REQUEST)
-    user_ids = [item["user"] for item in serializer.validated_data.get("administrators", [])]
-    candidates = {item.user_id: item for item in UnionWorkspaceMembership.objects.filter(workspace=workspace, user_id__in=user_ids, is_active=True, user__is_active=True).select_related("user")}
+        return Response(
+            {"first_edition": {"season": "A workspace season is required."}},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    user_ids = [
+        item["user"] for item in serializer.validated_data.get("administrators", [])
+    ]
+    candidates = {
+        item.user_id: item
+        for item in UnionWorkspaceMembership.objects.filter(
+            workspace=workspace,
+            user_id__in=user_ids,
+            is_active=True,
+            user__is_active=True,
+        ).select_related("user")
+    }
     if len(candidates) != len(user_ids):
-        return Response({"administrators": "Every administrator must be an active user in this workspace."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {
+                "administrators": "Every administrator must be an active user in this workspace."
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     with transaction.atomic():
         identity = CompetitionIdentity.objects.create(
             union=workspace.related_union,
@@ -367,9 +449,51 @@ def union_admin_competition_create_view(request):
             **identity_data,
         )
         first = serializer.validated_data["first_edition"]
-        edition = create_competition_edition(workspace=workspace, identity=identity, season=season, actor=request.user, registration_opens_at=first.get("registration_opens_at"), registration_closes_at=first.get("registration_closes_at"), entry_fee=first.get("entry_fee"), currency=first.get("currency", "UGX"), rules=first.get("rules"), eligibility_rules=first.get("eligibility_rules"), structure=identity.default_format)
-        scopes = [LeagueAdminScope.objects.create(user=candidates[item["user"]].user, league=edition.competition.league, competition=edition.competition, role=item["role"], created_by=request.user) for item in serializer.validated_data.get("administrators", [])]
+        edition = create_competition_edition(
+            workspace=workspace,
+            identity=identity,
+            season=season,
+            actor=request.user,
+            registration_opens_at=first.get("registration_opens_at"),
+            registration_closes_at=first.get("registration_closes_at"),
+            entry_fee=first.get("entry_fee"),
+            currency=first.get("currency", "UGX"),
+            rules=first.get("rules"),
+            eligibility_rules=first.get("eligibility_rules"),
+            structure=identity.default_format,
+        )
+        scopes = [
+            LeagueAdminScope.objects.create(
+                user=candidates[item["user"]].user,
+                league=edition.competition.league,
+                competition=edition.competition,
+                role=item["role"],
+                created_by=request.user,
+            )
+            for item in serializer.validated_data.get("administrators", [])
+        ]
         for scope in scopes:
-            log_union_audit_event(workspace=workspace, actor=request.user, action="competition_administrator.assigned", target=scope, metadata={"competition_id": edition.competition_id, "role": scope.role})
-        log_union_audit_event(workspace=workspace, actor=request.user, action="competition_identity.created", target=identity, metadata={"edition_id": edition.id})
-    return Response({"identity": CompetitionIdentitySerializer(identity).data, "edition": CompetitionEditionSerializer(edition).data, "administrators": CompetitionAdministratorSerializer(scopes, many=True).data}, status=status.HTTP_201_CREATED)
+            log_union_audit_event(
+                workspace=workspace,
+                actor=request.user,
+                action="competition_administrator.assigned",
+                target=scope,
+                metadata={"competition_id": edition.competition_id, "role": scope.role},
+            )
+        log_union_audit_event(
+            workspace=workspace,
+            actor=request.user,
+            action="competition_identity.created",
+            target=identity,
+            metadata={"edition_id": edition.id},
+        )
+    return Response(
+        {
+            "identity": CompetitionIdentitySerializer(identity).data,
+            "edition": CompetitionEditionSerializer(edition).data,
+            "administrators": CompetitionAdministratorSerializer(
+                scopes, many=True
+            ).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
