@@ -253,6 +253,13 @@ class Club(models.Model):
     banner = models.ImageField(upload_to="clubs/banners/", blank=True, null=True)
     primary_color = models.CharField(max_length=20, blank=True)
     secondary_color = models.CharField(max_length=20, blank=True)
+    description = models.TextField(blank=True)
+    contact_email = models.EmailField(blank=True)
+    phone_number = models.CharField(max_length=30, blank=True)
+    website = models.URLField(blank=True)
+    address = models.CharField(max_length=300, blank=True)
+    founded_year = models.PositiveIntegerField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
     admin = models.ForeignKey(
         User,
         null=True,
@@ -261,6 +268,7 @@ class Club(models.Model):
         related_name="administered_clubs",
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["name"]

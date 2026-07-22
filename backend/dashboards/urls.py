@@ -3,7 +3,9 @@ from . import (
     admin_workspace_views,
     official_appointment_views,
     union_competition_views,
+    union_club_views,
     union_governance_views,
+    union_league_views,
     union_management_views,
     union_player_eligibility_views,
     union_player_review_views,
@@ -116,18 +118,48 @@ urlpatterns = [
     ),
     path(
         "union-admin/clubs/",
-        union_management_views.union_admin_clubs_view,
+        union_club_views.union_admin_clubs_view,
         name="union-admin-clubs",
     ),
     path(
         "union-admin/clubs/<int:club_id>/",
-        union_management_views.union_admin_club_detail_view,
+        union_club_views.union_admin_club_detail_view,
         name="union-admin-club-detail",
     ),
     path(
+        "union-admin/clubs/<int:club_id>/administrators/",
+        union_club_views.union_admin_club_administrators_view,
+        name="union-admin-club-administrators",
+    ),
+    path(
+        "union-admin/clubs/<int:club_id>/administrators/<int:scope_id>/",
+        union_club_views.union_admin_club_administrator_detail_view,
+        name="union-admin-club-administrator-detail",
+    ),
+    path(
+        "union-admin/governance-options/",
+        union_league_views.union_admin_governance_options_view,
+        name="union-admin-governance-options",
+    ),
+    path(
         "union-admin/leagues/",
-        union_management_views.union_admin_leagues_view,
+        union_league_views.union_admin_leagues_view,
         name="union-admin-leagues",
+    ),
+    path(
+        "union-admin/leagues/<int:league_id>/",
+        union_league_views.union_admin_league_detail_view,
+        name="union-admin-league-detail",
+    ),
+    path(
+        "union-admin/leagues/<int:league_id>/administrators/",
+        union_league_views.union_admin_league_administrators_view,
+        name="union-admin-league-administrators",
+    ),
+    path(
+        "union-admin/leagues/<int:league_id>/administrators/<int:scope_id>/",
+        union_league_views.union_admin_league_administrator_detail_view,
+        name="union-admin-league-administrator-detail",
     ),
     path(
         "union-admin/seasons/",
