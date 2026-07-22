@@ -9,6 +9,7 @@ from django.http import JsonResponse
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
+from accounts import finance_audit_views
 from config.views import api_landing_view, landing_page_view
 
 
@@ -40,6 +41,51 @@ urlpatterns = [
     path("api/memberships/", include("memberships.urls")),
     path("api/ticketing/", include("ticketing.urls")),
     path("api/fantasy/", include("fantasy.urls")),
+    path(
+        "api/clubs/<int:club_id>/finance/overview/",
+        finance_audit_views.finance_overview_view,
+        name="club-finance-overview",
+    ),
+    path(
+        "api/clubs/<int:club_id>/finance/membership-payments/",
+        finance_audit_views.membership_payments_overview_view,
+        name="club-finance-membership-payments",
+    ),
+    path(
+        "api/clubs/<int:club_id>/finance/membership-payments/export/",
+        finance_audit_views.membership_payments_export_view,
+        name="club-finance-membership-payments-export",
+    ),
+    path(
+        "api/clubs/<int:club_id>/finance/ticketing-payments/",
+        finance_audit_views.ticketing_payments_overview_view,
+        name="club-finance-ticketing-payments",
+    ),
+    path(
+        "api/clubs/<int:club_id>/finance/ticketing-payments/export/",
+        finance_audit_views.ticketing_payments_export_view,
+        name="club-finance-ticketing-payments-export",
+    ),
+    path(
+        "api/clubs/<int:club_id>/finance/income-expense/",
+        finance_audit_views.income_expense_view,
+        name="club-finance-income-expense",
+    ),
+    path(
+        "api/clubs/<int:club_id>/finance/invoices/",
+        finance_audit_views.invoices_view,
+        name="club-finance-invoices",
+    ),
+    path(
+        "api/clubs/<int:club_id>/finance/invoices/<str:invoice_id>/send-receipt/",
+        finance_audit_views.send_invoice_receipt_view,
+        name="club-finance-send-receipt",
+    ),
+    path(
+        "api/clubs/<int:club_id>/finance/audit-trail/",
+        finance_audit_views.audit_trail_view,
+        name="club-finance-audit-trail",
+    ),
 ]
 
 if settings.DEBUG:
