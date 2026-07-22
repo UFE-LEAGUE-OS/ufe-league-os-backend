@@ -466,7 +466,7 @@ class IncomingNotificationMigrationBranchCompatibilityTests(TransactionTestCase)
         "accounts",
         "0016_paymenthistory_description_paymenthistory_metadata_and_more",
     )
-    migrate_to = ("accounts", "0022_merge_notification_migration_branches")
+    migrate_to = ("accounts", "0023_club_governance_profile_fields")
     canonical_event_types = NotificationContractMigrationTests.canonical_event_types
     incoming_migration_names = (
         "0017_notification_action_url_notification_event_type_and_more",
