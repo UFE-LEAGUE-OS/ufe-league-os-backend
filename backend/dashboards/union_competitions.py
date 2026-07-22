@@ -136,9 +136,7 @@ def create_competition_edition(
         registration_closes_at=registration_closes_at,
         entry_fee=entry_fee,
         currency=currency,
-        rules=(
-            source.rules if source and "rules" in copy_fields else (rules or {})
-        ),
+        rules=(source.rules if source and "rules" in copy_fields else (rules or {})),
         structure=(
             source.structure
             if source and "structure" in copy_fields
