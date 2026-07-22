@@ -1,3 +1,4 @@
+import warnings
 from pathlib import Path
 from datetime import timedelta
 
@@ -17,11 +18,24 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "drf_spectacular",
     "channels",
     "accounts",
     "dashboards",
     "governance.apps.GovernanceConfig",
+    "teams",
     "sponsorships",
+    "ticketing",
+    "memberships",
+    "fantasy",
+    "engagements",
+    "monitoring.apps.MonitoringConfig",
+    "platform_admin",
+    "club_operations",
+    "rbac.apps.RbacConfig",
+    "analytics.apps.AnalyticsConfig",
+    "django_filters",
+    "finances",
 ]
 
 MIDDLEWARE = [
@@ -68,7 +82,34 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "/static/"
+
+USE_S3_MEDIA = False
 MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "test_media"
+
+PRIVATE_MEDIA_URL = "/private-media/"
+PRIVATE_MEDIA_ROOT = BASE_DIR / "test_private_media"
+PRIVATE_MEDIA_URL_EXPIRY = 900
+
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {
+            "location": MEDIA_ROOT,
+            "base_url": MEDIA_URL,
+        },
+    },
+    "private": {
+        "BACKEND": "config.storage_backends.LocalPrivateMediaStorage",
+        "OPTIONS": {
+            "location": PRIVATE_MEDIA_ROOT,
+            "base_url": PRIVATE_MEDIA_URL,
+        },
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -78,6 +119,8 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "URL_FORMAT_OVERRIDE": None,
 }
 
 SIMPLE_JWT = {
@@ -96,3 +139,8 @@ CHANNEL_LAYERS = {
         "BACKEND": "channels.layers.InMemoryChannelLayer",
     },
 }
+
+# Suppress DRF URL converter deprecation warning during tests
+warnings.filterwarnings(
+    "ignore", category=DeprecationWarning, module="rest_framework.urlpatterns"
+)

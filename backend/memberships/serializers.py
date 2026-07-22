@@ -33,8 +33,14 @@ class MembershipPlanSerializer(serializers.ModelSerializer):
 
 class MembershipSubscriptionSerializer(serializers.ModelSerializer):
     user_email = serializers.CharField(source="user.email", read_only=True)
+    user_first_name = serializers.CharField(source="user.first_name", read_only=True)
+    user_last_name = serializers.CharField(source="user.last_name", read_only=True)
+    user_phone = serializers.CharField(source="user.phone_number", read_only=True)
     plan_name = serializers.CharField(source="plan.name", read_only=True)
     club_name = serializers.CharField(source="club.name", read_only=True)
+    club_slug = serializers.CharField(source="club.slug", read_only=True)
+    club_logo_url = serializers.SerializerMethodField()
+    card = serializers.SerializerMethodField()
 
     class Meta:
         model = MembershipSubscription
@@ -42,16 +48,42 @@ class MembershipSubscriptionSerializer(serializers.ModelSerializer):
             "id",
             "user",
             "user_email",
+            "user_first_name",
+            "user_last_name",
+            "user_phone",
             "plan",
             "plan_name",
             "club",
             "club_name",
+            "club_slug",
+            "club_logo_url",
             "status",
             "starts_at",
             "ends_at",
             "created_at",
             "updated_at",
+            "card",
         ]
+
+    def get_club_logo_url(self, obj):
+        logo = getattr(obj.club, "logo", None)
+        if not logo:
+            return ""
+
+        try:
+            url = logo.url
+        except ValueError:
+            return ""
+
+        request = self.context.get("request")
+        return request.build_absolute_uri(url) if request else url
+
+    def get_card(self, obj):
+        card = getattr(obj, "membership_card", None)
+        if not card:
+            return None
+
+        return MembershipCardSerializer(card, context=self.context).data
 
 
 class MembershipPaymentSerializer(serializers.ModelSerializer):

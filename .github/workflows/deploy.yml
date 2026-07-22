@@ -1,0 +1,57 @@
+name: Deploy to DigitalOcean
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Choose status to check the server. Choose deploy to run the deployment script."
+        required: true
+        default: "status"
+        type: choice
+        options:
+          - status
+          - deploy
+
+concurrency:
+  group: league-os-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: DigitalOcean Deployment
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Prepare SSH key
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s' "${{ secrets.DROPLET_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/league_os_deploy_key
+          chmod 600 ~/.ssh/league_os_deploy_key
+          ssh-keyscan -H "${{ secrets.DROPLET_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Run remote command
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.task }}" = "deploy" ]; then
+            echo "Running deployment script on DigitalOcean..."
+            REMOTE_COMMAND='cd /opt/league-os && ./deploy.sh'
+          else
+            echo "Checking DigitalOcean deployment status..."
+            REMOTE_COMMAND='cd /opt/league-os && /usr/local/bin/league-os-compose ps && docker exec league_os_prod_db postgres --version && curl -fsS http://localhost/api/health/'
+          fi
+
+          ssh -i ~/.ssh/league_os_deploy_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }}" \
+            "$REMOTE_COMMAND"
+
+      - name: Public health check
+        shell: bash
+        run: |
+          curl -fsS "http://${{ secrets.DROPLET_HOST }}/api/health/"

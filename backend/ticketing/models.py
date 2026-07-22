@@ -113,6 +113,17 @@ class TicketType(models.Model):
             and self.quantity_sold >= self.quantity_available
         )
 
+    @property
+    def tickets_sold_count(self):
+        return self.tickets.filter(status=Ticket.Status.ACTIVE).count()
+
+    @property
+    def revenue_generated(self):
+        total = self.order_items.filter(
+            order__status=TicketOrder.Status.PAID
+        ).aggregate(total=models.Sum("total_price"))["total"]
+        return total or Decimal("0")
+
 
 class TicketOrder(models.Model):
     """

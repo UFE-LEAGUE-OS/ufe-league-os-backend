@@ -4,6 +4,15 @@ from rest_framework import serializers
 
 from dashboards.models import Match
 
+from .governance_models import (
+    FantasyScoringRule,
+    FantasyTransferRule,
+    FantasySquadRule,
+    FantasyPriceStructure,
+    FantasyEligibilityRule,
+    FantasyCompetitionMapping,
+    FantasyFeatureFlag,
+)
 from .models import (
     FantasyCompetition,
     FantasyGameweek,
@@ -715,3 +724,144 @@ class FantasyPlayerScoreAdminUpdateSerializer(serializers.Serializer):
         choices=FantasyPlayerGameweekScore.Status.choices,
         required=False,
     )
+
+
+# Fantasy Governance Serializers
+class FantasyScoringRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FantasyScoringRule
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "event_type",
+            "points",
+            "description",
+            "is_active",
+            "is_system_rule",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class FantasyTransferRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FantasyTransferRule
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "rule_type",
+            "value",
+            "description",
+            "is_active",
+            "effective_from",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class FantasySquadRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FantasySquadRule
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "rule_type",
+            "value",
+            "position",
+            "description",
+            "is_active",
+            "effective_from",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class FantasyPriceStructureSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FantasyPriceStructure
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "price_type",
+            "value",
+            "description",
+            "is_active",
+            "effective_from",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class FantasyEligibilityRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FantasyEligibilityRule
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "rule_type",
+            "value",
+            "description",
+            "is_active",
+            "effective_from",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class FantasyCompetitionMappingSerializer(serializers.ModelSerializer):
+    fantasy_competition_name = serializers.CharField(
+        source="fantasy_competition.name", read_only=True
+    )
+    sport_variant_name = serializers.CharField(
+        source="sport_variant.name", read_only=True
+    )
+    published_by_email = serializers.CharField(
+        source="published_by.email", read_only=True
+    )
+
+    class Meta:
+        model = FantasyCompetitionMapping
+        fields = [
+            "id",
+            "fantasy_competition",
+            "fantasy_competition_name",
+            "sport_variant",
+            "sport_variant_name",
+            "competition_format",
+            "is_active",
+            "published_at",
+            "published_by",
+            "published_by_email",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class FantasyFeatureFlagSerializer(serializers.ModelSerializer):
+    enabled_by_email = serializers.CharField(source="enabled_by.email", read_only=True)
+
+    class Meta:
+        model = FantasyFeatureFlag
+        fields = [
+            "id",
+            "feature_name",
+            "is_enabled",
+            "description",
+            "enabled_by",
+            "enabled_by_email",
+            "enabled_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]

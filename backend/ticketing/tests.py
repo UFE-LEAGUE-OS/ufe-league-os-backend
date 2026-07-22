@@ -8,9 +8,21 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from accounts.models import Club, User
-from dashboards.models import Competition, League, Match, Union
+from dashboards.models import (
+    Competition,
+    League,
+    Match,
+    Union,
+    UnionWorkspace,
+    UnionWorkspaceMembership,
+)
 
-from .models import Ticket, TicketOrder, TicketType, TicketValidationLog
+from .models import (
+    Ticket,
+    TicketOrder,
+    TicketType,
+    TicketValidationLog,
+)
 from .services.orders import (
     create_ticket_order,
     expire_stale_ticket_reservations,
@@ -55,6 +67,22 @@ class TicketingTestMixin:
             name="Uganda Rugby Union",
             slug="uganda-rugby-union",
             country="Uganda",
+        )
+
+        self.workspace = UnionWorkspace.objects.create(
+            related_union=self.union,
+            name="Uganda Rugby Union Workspace",
+            slug="uganda-rugby-union-workspace",
+            acronym="URU",
+            sport="Rugby",
+            status=UnionWorkspace.Status.ACTIVE,
+        )
+
+        UnionWorkspaceMembership.objects.create(
+            user=self.ticketing_officer,
+            workspace=self.workspace,
+            role=(UnionWorkspaceMembership.Role.TICKETING_OFFICER),
+            is_active=True,
         )
 
         self.league = League.objects.create(
@@ -541,6 +569,178 @@ class TicketingAPITests(TicketingTestMixin, APITestCase):
         self.assertEqual(ticket.status, Ticket.Status.USED)
         self.assertEqual(ticket.checked_in_by, self.ticketing_officer)
 
+    def test_ticket_validation_requires_match_id(self):
+        ticket = Ticket.objects.create(
+            order=self.order,
+            ticket_type=self.ticket_type,
+            match=self.match,
+            owner=self.user,
+        )
+
+        self.client.force_authenticate(user=self.ticketing_officer)
+
+        response = self.client.post(
+            "/api/ticketing/validate/",
+            {
+                "scanned_code": str(ticket.ticket_code),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("match_id", response.data)
+
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.status, Ticket.Status.ACTIVE)
+
+    def test_union_ticketing_officer_cannot_validate_other_union_match(
+        self,
+    ):
+        other_union = Union.objects.create(
+            name="Other Rugby Union",
+            slug="other-rugby-union",
+            country="Uganda",
+        )
+
+        other_league = League.objects.create(
+            union=other_union,
+            name="Other Rugby League",
+            slug="other-rugby-league",
+        )
+
+        other_competition = Competition.objects.create(
+            league=other_league,
+            name="Other Rugby League 2026",
+            slug="other-rugby-league-2026",
+            season="2026",
+        )
+
+        other_home = Club.objects.create(
+            name="Other Home Club",
+            slug="other-home-club",
+        )
+
+        other_away = Club.objects.create(
+            name="Other Away Club",
+            slug="other-away-club",
+        )
+
+        other_match = Match.objects.create(
+            competition=other_competition,
+            home_club=other_home,
+            away_club=other_away,
+            match_date=timezone.now() + timedelta(days=8),
+            venue="Other Stadium",
+            status=Match.Status.SCHEDULED,
+        )
+
+        other_ticket_type = TicketType.objects.create(
+            match=other_match,
+            name="Other Ordinary",
+            description="Other match access.",
+            price=Decimal("10000.00"),
+            currency="UGX",
+            quantity_available=100,
+            quantity_sold=0,
+            status=TicketType.Status.ACTIVE,
+            created_by=self.ticketing_officer,
+        )
+
+        ticket = Ticket.objects.create(
+            order=self.order,
+            ticket_type=other_ticket_type,
+            match=other_match,
+            owner=self.user,
+        )
+
+        self.client.force_authenticate(user=self.ticketing_officer)
+
+        response = self.client.post(
+            "/api/ticketing/validate/",
+            {
+                "scanned_code": str(ticket.ticket_code),
+                "match_id": other_match.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.status, Ticket.Status.ACTIVE)
+        self.assertFalse(
+            TicketValidationLog.objects.filter(
+                ticket=ticket,
+                scanned_by=self.ticketing_officer,
+            ).exists()
+        )
+
+    def test_club_ticketing_officer_cannot_validate_unrelated_club_match(
+        self,
+    ):
+        club_officer = User.objects.create_user(
+            email="club-ticketing@example.com",
+            password="StrongPass123!",
+            first_name="Club",
+            last_name="Officer",
+            role=User.Role.TICKETING_OFFICER,
+            club=self.home_club,
+        )
+
+        unrelated_home = Club.objects.create(
+            name="Unrelated Home Club",
+            slug="unrelated-home-club",
+        )
+
+        unrelated_away = Club.objects.create(
+            name="Unrelated Away Club",
+            slug="unrelated-away-club",
+        )
+
+        unrelated_match = Match.objects.create(
+            competition=self.competition,
+            home_club=unrelated_home,
+            away_club=unrelated_away,
+            match_date=timezone.now() + timedelta(days=9),
+            venue="Unrelated Stadium",
+            status=Match.Status.SCHEDULED,
+        )
+
+        unrelated_type = TicketType.objects.create(
+            match=unrelated_match,
+            name="Unrelated Ordinary",
+            description="Unrelated match access.",
+            price=Decimal("10000.00"),
+            currency="UGX",
+            quantity_available=100,
+            quantity_sold=0,
+            status=TicketType.Status.ACTIVE,
+            created_by=club_officer,
+        )
+
+        ticket = Ticket.objects.create(
+            order=self.order,
+            ticket_type=unrelated_type,
+            match=unrelated_match,
+            owner=self.user,
+        )
+
+        self.client.force_authenticate(user=club_officer)
+
+        response = self.client.post(
+            "/api/ticketing/validate/",
+            {
+                "scanned_code": str(ticket.ticket_code),
+                "match_id": unrelated_match.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.status, Ticket.Status.ACTIVE)
+
     def test_fan_cannot_validate_ticket(self):
         self.client.force_authenticate(user=self.user)
 
@@ -619,3 +819,158 @@ class TicketingAPITests(TicketingTestMixin, APITestCase):
         order.refresh_from_db()
         self.assertEqual(order.status, TicketOrder.Status.CANCELLED)
         self.assertIsNotNone(order.reservation_released_at)
+
+
+@override_settings(
+    FLUTTERWAVE_SECRET_KEY="FLWSECK_TEST-test-key",
+    FLUTTERWAVE_SECRET_HASH="test-webhook-secret",
+    FLUTTERWAVE_TICKET_REDIRECT_URL="http://localhost:8000/api/ticketing/flutterwave/verify/",
+    FLUTTERWAVE_TICKET_PAYMENT_TITLE="League OS Match Ticket Payment",
+    TICKET_RESERVATION_MINUTES=10,
+)
+class TicketingAdminAPITests(TicketingTestMixin, APITestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(user=self.super_admin)
+
+    def test_admin_list_ticket_types_returns_managed(self):
+        response = self.client.get("/api/ticketing/admin/ticket-types/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["name"], "Ordinary")
+
+    def test_admin_create_ticket_type(self):
+        response = self.client.post(
+            "/api/ticketing/admin/ticket-types/create/",
+            {
+                "match": self.match.id,
+                "name": "VIP",
+                "description": "VIP access.",
+                "price": "25000.00",
+                "currency": "UGX",
+                "quantity_available": 50,
+                "sale_start_at": None,
+                "sale_end_at": None,
+                "status": TicketType.Status.DRAFT,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["name"], "VIP")
+        self.assertEqual(response.data["price"], "25000.00")
+
+    def test_admin_update_ticket_type(self):
+        response = self.client.patch(
+            f"/api/ticketing/admin/ticket-types/{self.ticket_type.id}/update/",
+            {"price": "12000.00", "status": TicketType.Status.ACTIVE},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.ticket_type.refresh_from_db()
+        self.assertEqual(self.ticket_type.price, Decimal("12000.00"))
+        self.assertEqual(self.ticket_type.status, TicketType.Status.ACTIVE)
+
+    def test_admin_delete_ticket_type_with_orders_fails(self):
+        order = create_ticket_order(
+            buyer=self.user,
+            ticket_type=self.ticket_type,
+            quantity=1,
+        )
+        # create order item by paying order
+        order.status = TicketOrder.Status.PAID
+        order.save(update_fields=["status"])
+        response = self.client.delete(
+            f"/api/ticketing/admin/ticket-types/{self.ticket_type.id}/delete/"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Cannot delete", response.data["detail"])
+
+    def test_admin_update_inventory(self):
+        response = self.client.patch(
+            f"/api/ticketing/admin/ticket-types/{self.ticket_type.id}/inventory/",
+            {"quantity_available": 150},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.ticket_type.refresh_from_db()
+        self.assertEqual(self.ticket_type.quantity_available, 150)
+
+    def test_admin_inventory_below_sold_quantity_fails(self):
+        self.ticket_type.quantity_sold = 10
+        self.ticket_type.save(update_fields=["quantity_sold"])
+        response = self.client.patch(
+            f"/api/ticketing/admin/ticket-types/{self.ticket_type.id}/inventory/",
+            {"quantity_available": 5},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_admin_publish_ticket_type(self):
+        response = self.client.post(
+            f"/api/ticketing/admin/ticket-types/{self.ticket_type.id}/publish/",
+            {"action": "publish", "sale_start_at": None, "sale_end_at": None},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.ticket_type.refresh_from_db()
+        self.assertEqual(self.ticket_type.status, TicketType.Status.ACTIVE)
+
+    def test_admin_unpublish_ticket_type(self):
+        self.ticket_type.status = TicketType.Status.ACTIVE
+        self.ticket_type.save(update_fields=["status"])
+        response = self.client.post(
+            f"/api/ticketing/admin/ticket-types/{self.ticket_type.id}/publish/",
+            {"action": "unpublish"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.ticket_type.refresh_from_db()
+        self.assertEqual(self.ticket_type.status, TicketType.Status.DRAFT)
+
+    def test_admin_sell_out_and_reopen(self):
+        # sell out
+        response = self.client.post(
+            f"/api/ticketing/admin/ticket-types/{self.ticket_type.id}/publish/",
+            {"action": "sell_out"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.ticket_type.refresh_from_db()
+        self.assertEqual(self.ticket_type.status, TicketType.Status.SOLD_OUT)
+        # reopen
+        response = self.client.post(
+            f"/api/ticketing/admin/ticket-types/{self.ticket_type.id}/publish/",
+            {"action": "publish"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.ticket_type.refresh_from_db()
+        self.assertEqual(self.ticket_type.status, TicketType.Status.ACTIVE)
+
+    def test_admin_publish_match_sale(self):
+        response = self.client.post(
+            f"/api/ticketing/admin/matches/{self.match.id}/publish-sale/",
+            {"sale_start_at": None, "sale_end_at": None},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("updated_count", response.data)
+
+    def test_admin_sales_monitoring(self):
+        # create another ticket type and some orders for variety
+        TicketType.objects.create(
+            match=self.match,
+            name="VIP",
+            price=Decimal("25000.00"),
+            currency="UGX",
+            quantity_available=30,
+            quantity_sold=5,
+            status=TicketType.Status.ACTIVE,
+            created_by=self.super_admin,
+        )
+        # Paid order items generation is not automated here; monitoring aggregates existing data
+        response = self.client.get("/api/ticketing/admin/sales-monitoring/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("overview", response.data)
+        self.assertIn("matches", response.data)
+        self.assertIn("ticket_types", response.data)

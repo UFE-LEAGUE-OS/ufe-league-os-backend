@@ -54,7 +54,7 @@ class TestFollowModel:
             user=user, content_type=Follow.ContentType.CLUB, object_id=1
         )
         assert Follow.objects.count() == 1
-        assert str(Follow.objects.first()) == f"{user.email} follows CLUB#1"
+        assert str(Follow.objects.first()) == f"{user.email} follows CLUB:1"
 
     def test_unique_constraint(self, db):
         User = get_user_model()
@@ -120,7 +120,7 @@ class TestInterestPreferenceModel:
         user = create_user(User)
         pref = InterestPreference.objects.create(user=user)
         assert pref.interested_in_clubs is True
-        assert pref.profile_visibility == InterestPreference.PrivacyLevel.PUBLIC
+        assert pref.profile_visibility == InterestPreference.Visibility.PUBLIC
 
     def test_one_to_one_with_user(self, db):
         User = get_user_model()
@@ -162,12 +162,12 @@ class TestPaymentHistoryModel:
         user = create_user(User)
         payment = PaymentHistory.objects.create(
             user=user,
-            payment_type=PaymentHistory.PaymentType.DEPOSIT,
+            payment_type=PaymentHistory.PaymentType.LEGACY,
             amount=100.00,
             reference="TXN-001",
         )
         assert payment.status == PaymentHistory.PaymentStatus.PENDING
-        assert str(payment) == f"{user.email} - DEPOSIT - 100.00 UGX"
+        assert str(payment) == f"{user.email} payment TXN-001"
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +359,7 @@ class TestPaymentHistoryAPI:
         client, user = authenticated_client
         PaymentHistory.objects.create(
             user=user,
-            payment_type=PaymentHistory.PaymentType.DEPOSIT,
+            payment_type=PaymentHistory.PaymentType.LEGACY,
             amount=50000.00,
             reference="TXN-123",
             status=PaymentHistory.PaymentStatus.COMPLETED,
@@ -596,7 +596,7 @@ class TestWalletServices:
 
         PaymentHistory.objects.create(
             user=user,
-            payment_type=PaymentHistory.PaymentType.DEPOSIT,
+            payment_type=PaymentHistory.PaymentType.LEGACY,
             amount=100.00,
             reference="REF-1",
         )

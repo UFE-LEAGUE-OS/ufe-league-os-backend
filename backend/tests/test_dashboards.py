@@ -6,7 +6,7 @@ from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
 
 from dashboards.models import Union, League, Competition, Match, Standing
-from accounts.models import Club
+from accounts.models import Club, ClubAdminScope
 
 
 @pytest.fixture
@@ -70,6 +70,13 @@ class TestDashboardAuthentication:
         """Club admin users can access their dashboard."""
         User = user_model
         user = create_user(User, "admin@example.com", User.Role.CLUB_ADMIN)
+        club = Club.objects.create(name="Admin Club", slug="admin-club")
+        ClubAdminScope.objects.create(
+            user=user,
+            club=club,
+            role=ClubAdminScope.Role.CLUB_ADMIN,
+            is_active=True,
+        )
         client = APIClient()
         client.force_authenticate(user=user)
 
@@ -749,6 +756,7 @@ class TestMatchUpdateConsumer:
         )
         connected, _ = await communicator.connect()
         assert not connected  # Should reject connection
+        await communicator.wait(timeout=1)
 
     async def test_consumer_responds_to_ping(self, db):
         """Consumer responds to ping with pong."""

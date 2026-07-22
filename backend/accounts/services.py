@@ -2,11 +2,15 @@
 
 from datetime import timedelta
 from decimal import Decimal
+from email.mime.image import MIMEImage
 
 from django.conf import settings
-from django.core.mail import send_mail
-from django.utils import timezone
+from django.contrib.staticfiles import finders
+from django.core.mail import EmailMultiAlternatives
+from django.db import IntegrityError, transaction
 from django.db.models import Q
+from django.template.loader import render_to_string
+from django.utils import timezone
 
 from .models import (
     Notification,
@@ -177,37 +181,90 @@ def reset_password_with_otp(email, code, new_password):
 
 
 def _send_otp_email(user, code, purpose):
-    """Send an OTP email when email sending is enabled."""
+    """Send a branded multipart OTP email when sending is enabled."""
 
     if not getattr(settings, "SEND_OTP_EMAILS", False):
         return 0
 
     expiry_minutes = getattr(settings, "OTP_EXPIRY_MINUTES", 10)
+    first_name = user.first_name or "there"
 
     if purpose == EmailOTP.Purpose.PASSWORD_RESET:
         subject = "Reset your League OS password"
+        eyebrow = "Account security"
+        heading = "Reset your password"
         action_text = "password reset"
+        code_label = "Password reset code"
+        intro = (
+            "We received a request to reset your League OS password. "
+            "Enter the one-time code below to continue."
+        )
     else:
         subject = "Verify your League OS email address"
+        eyebrow = "Welcome to League OS"
+        heading = "Confirm your email to activate your account"
         action_text = "email verification"
+        code_label = "Verification code"
+        intro = (
+            "Enter the one-time code below to confirm your email address "
+            "and finish setting up your League OS account."
+        )
 
-    first_name = user.first_name or "there"
+    logo_path = finders.find("accounts/images/league-os-email-logo.png")
 
-    message = (
-        f"Hello {first_name},\n\n"
-        f"Your League OS {action_text} code is: {code}\n\n"
-        f"This code expires in {expiry_minutes} minutes.\n\n"
-        "If you did not request this code, please ignore this email.\n\n"
-        "League OS Team"
+    context = {
+        "subject": subject,
+        "first_name": first_name,
+        "recipient_email": user.email,
+        "code": code,
+        "expiry_minutes": expiry_minutes,
+        "eyebrow": eyebrow,
+        "heading": heading,
+        "intro": intro,
+        "action_text": action_text,
+        "code_label": code_label,
+        "current_year": timezone.now().year,
+        "has_logo": bool(logo_path),
+    }
+
+    text_body = render_to_string(
+        "accounts/emails/otp_email.txt",
+        context,
+    )
+    html_body = render_to_string(
+        "accounts/emails/otp_email.html",
+        context,
     )
 
-    return send_mail(
+    email = EmailMultiAlternatives(
         subject=subject,
-        message=message,
+        body=text_body,
         from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[user.email],
-        fail_silently=False,
+        to=[user.email],
     )
+    email.attach_alternative(html_body, "text/html")
+
+    if logo_path:
+        with open(logo_path, "rb") as logo_file:
+            inline_logo = MIMEImage(
+                logo_file.read(),
+                _subtype="png",
+            )
+
+        inline_logo.add_header(
+            "Content-ID",
+            "<league-os-logo>",
+        )
+        inline_logo.add_header(
+            "Content-Disposition",
+            "inline",
+            filename="league-os-logo.png",
+        )
+
+        email.mixed_subtype = "related"
+        email.attach(inline_logo)
+
+    return email.send(fail_silently=False)
 
 
 def _print_otp_to_console(user, code, purpose):
@@ -375,10 +432,17 @@ def get_or_create_notification_preferences(user):
     """Get or create all default notification preferences for a user."""
     defaults = []
     for event_type, _label in NotificationPreference.EventType.choices:
-        pref, _created = NotificationPreference.objects.get_or_create(
-            user=user, event_type=event_type
-        )
-        defaults.append(pref)
+        try:
+            with transaction.atomic():
+                pref, _created = NotificationPreference.objects.get_or_create(
+                    user=user, event_type=event_type
+                )
+        except IntegrityError:
+            pref = NotificationPreference.objects.filter(
+                user=user, event_type=event_type
+            ).first()
+        if pref is not None:
+            defaults.append(pref)
     return defaults
 
 
@@ -894,10 +958,14 @@ def user_allows_notification(user, event_type, channel="push"):
 
     For the frontend inbox, we treat push_enabled as the in-app notification toggle.
     """
-    pref, _created = NotificationPreference.objects.get_or_create(
-        user=user,
-        event_type=event_type,
-    )
+    try:
+        with transaction.atomic():
+            pref, _created = NotificationPreference.objects.get_or_create(
+                user=user,
+                event_type=event_type,
+            )
+    except IntegrityError:
+        pref = NotificationPreference.objects.get(user=user, event_type=event_type)
 
     if channel == "email":
         return pref.email_enabled

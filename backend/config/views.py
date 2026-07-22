@@ -1,3 +1,24 @@
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework import status
+from rest_framework.decorators import permission_classes
+from rest_framework.permissions import AllowAny
+
+from memberships.services.flutterwave_gateway import (
+    verify_and_confirm_membership_payment,
+)
+from sponsorships.flutterwave import FlutterwaveError
+from ticketing.services.flutterwave_gateway import (
+    extract_flutterwave_tx_ref,
+    flutterwave_webhook_signature_is_valid,
+    get_ticket_order_by_reference,
+    validate_ticket_flutterwave_transaction,
+    verify_flutterwave_transaction,
+)
+from ticketing.services.orders import (
+    confirm_ticket_order_payment,
+    mark_ticket_order_payment_failed,
+)
+
 from django.shortcuts import render
 from django.urls import reverse
 from rest_framework.decorators import api_view, renderer_classes
@@ -98,3 +119,125 @@ def api_landing_view(request):
     """Return a JSON discoverable landing page for the League OS API."""
 
     return Response(build_api_landing_payload(request))
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def global_flutterwave_webhook_view(request):
+    """
+    Global Flutterwave webhook endpoint.
+
+    Flutterwave allows one test webhook URL, so this endpoint routes payment
+    callbacks to the correct League OS payment flow using the tx_ref prefix.
+
+    Supported references:
+    - LOS-TICKET-...
+    - LOS-MEMBERSHIP-...
+    """
+
+    if not flutterwave_webhook_signature_is_valid(request):
+        return Response(
+            {"detail": "Invalid Flutterwave webhook signature."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    tx_ref = extract_flutterwave_tx_ref(request.data)
+
+    if not tx_ref:
+        return Response(
+            {"detail": "No transaction reference found in webhook payload."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if tx_ref.startswith("LOS-TICKET-"):
+        order = get_ticket_order_by_reference(tx_ref)
+
+        if order is None:
+            return Response(
+                {"detail": "Ticket order not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            flutterwave_response = verify_flutterwave_transaction(tx_ref)
+        except FlutterwaveError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        is_valid, error_message = validate_ticket_flutterwave_transaction(
+            order,
+            flutterwave_response,
+        )
+
+        if not is_valid:
+            status_value = flutterwave_response.get("data", {}).get("status", "failed")
+            mark_ticket_order_payment_failed(order, flutterwave_response, status_value)
+
+            return Response(
+                {
+                    "message": "Webhook received, but ticket payment was not confirmed.",
+                    "detail": error_message,
+                    "tx_ref": tx_ref,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        confirm_ticket_order_payment(
+            order,
+            provider_response=flutterwave_response,
+            provider_transaction_id=str(
+                flutterwave_response.get("data", {}).get("id")
+                or flutterwave_response.get("data", {}).get("flw_ref")
+                or ""
+            ),
+            provider_status=flutterwave_response.get("data", {}).get(
+                "status",
+                "successful",
+            ),
+        )
+
+        return Response(
+            {
+                "message": "Ticket payment webhook received and confirmed.",
+                "tx_ref": tx_ref,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if tx_ref.startswith("LOS-MEMBERSHIP-"):
+        try:
+            payment, error_message = verify_and_confirm_membership_payment(tx_ref)
+        except FlutterwaveError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        if payment is None:
+            return Response(
+                {"detail": "Membership payment not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if error_message:
+            return Response(
+                {
+                    "message": "Webhook received, but membership payment was not confirmed.",
+                    "detail": error_message,
+                    "tx_ref": tx_ref,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        return Response(
+            {
+                "message": "Membership payment webhook received and confirmed.",
+                "tx_ref": tx_ref,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    return Response(
+        {
+            "detail": "Unsupported Flutterwave transaction reference.",
+            "tx_ref": tx_ref,
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )

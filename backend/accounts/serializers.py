@@ -3,20 +3,32 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
-from .google_auth import verify_google_id_token, InvalidGoogleTokenError
+from .dashboard_entitlements import resolve_dashboard_access
 from .models import (
     Notification,
     Club,
-    Follow,
     NotificationPreference,
     InterestPreference,
     RoleApproval,
-    Wallet,
-    PaymentHistory,
     FeedItem,
+    Follow,
+    Venue,
+)
+from .google_auth import (
+    GoogleEmailNotVerifiedError,
+    InvalidGoogleTokenError,
+    verify_google_id_token,
 )
 
 User = get_user_model()
+
+MAX_AVATAR_SIZE_BYTES = 2 * 1024 * 1024
+ALLOWED_AVATAR_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+}
 
 
 def normalize_phone_number(phone_number):
@@ -39,10 +51,39 @@ def normalize_phone_number(phone_number):
     return value
 
 
+class UserSummarySerializer(serializers.ModelSerializer):
+    """Minimal serializer for user representation in related resources."""
+
+    full_name = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "full_name",
+            "role",
+            "avatar",
+        )
+        read_only_fields = (
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "full_name",
+            "role",
+            "avatar",
+        )
+
+
 class UserSerializer(serializers.ModelSerializer):
     """Serializer for returning safe user data to the frontend."""
 
     full_name = serializers.CharField(read_only=True)
+    username = serializers.CharField(source="public_handle", read_only=True)
+    favorite_sport = serializers.CharField(source="favourite_sport", read_only=True)
     role_display = serializers.CharField(source="get_role_display", read_only=True)
     avatar_url = serializers.SerializerMethodField()
     is_sponsor = serializers.BooleanField(read_only=True)
@@ -59,6 +100,13 @@ class UserSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "full_name",
+            "username",
+            "location",
+            "date_of_birth",
+            "gender",
+            "favourite_sport",
+            "favorite_sport",
+            "bio",
             "role",
             "role_display",
             "roles",
@@ -108,6 +156,130 @@ class UserSerializer(serializers.ModelSerializer):
             "id": obj.club.id,
             "name": obj.club.name,
         }
+
+
+def get_current_user_dashboard_access(user, context=None):
+    """Resolve dashboard access once for a current-user response context."""
+
+    context = context if context is not None else {}
+    cached_user_id = context.get("_dashboard_access_user_id")
+    if cached_user_id == user.pk and "_dashboard_access" in context:
+        return context["_dashboard_access"]
+
+    dashboard_access = resolve_dashboard_access(user)
+    context["_dashboard_access_user_id"] = user.pk
+    context["_dashboard_access"] = dashboard_access
+    return dashboard_access
+
+
+class CurrentUserSerializer(UserSerializer):
+    """Safe authenticated-current-user representation with dashboard access."""
+
+    dashboard_access = serializers.SerializerMethodField()
+
+    class Meta(UserSerializer.Meta):
+        fields = (*UserSerializer.Meta.fields, "dashboard_access")
+        read_only_fields = (*UserSerializer.Meta.read_only_fields, "dashboard_access")
+
+    def get_dashboard_access(self, obj):
+        return get_current_user_dashboard_access(obj, self.context)
+
+
+LEGACY_BACKEND_ROUTES = {
+    User.Role.FAN: "/api/dashboards/fan/",
+    User.Role.SPONSOR: "/api/dashboards/sponsor/",
+    User.Role.SUPER_ADMIN: "/api/dashboards/super-admin/",
+    User.Role.LEAGUE_ADMIN: "/api/dashboards/league-admin/",
+    User.Role.CLUB_ADMIN: "/api/dashboards/club-admin/",
+    User.Role.REFEREE: "/api/dashboards/union-admin/",
+    User.Role.UNION_ADMIN: "/api/dashboards/union-admin/",
+    User.Role.TICKETING_OFFICER: "/api/dashboards/ticketing-officer/",
+}
+
+
+def entitlement_legacy_role(entitlement):
+    """Translate an entitlement dashboard into a valid legacy role selector."""
+
+    dashboard = entitlement["dashboard"]
+    if dashboard == "UNION_WORKSPACE":
+        if entitlement["workspace_role"] == "MATCH_OFFICIAL":
+            return User.Role.REFEREE
+        if entitlement["workspace_role"] == "TICKETING_OFFICER":
+            return User.Role.TICKETING_OFFICER
+        return User.Role.UNION_ADMIN
+    return {
+        "FAN": User.Role.FAN,
+        "SPONSOR": User.Role.SPONSOR,
+        "SUPER_ADMIN": User.Role.SUPER_ADMIN,
+        "LEAGUE_ADMIN": User.Role.LEAGUE_ADMIN,
+        "CLUB_ADMIN": User.Role.CLUB_ADMIN,
+        "TICKETING_OFFICER": User.Role.TICKETING_OFFICER,
+    }.get(dashboard)
+
+
+def entitlement_role_display(entitlement, role):
+    """Return the real entitlement role label, independent of its selector."""
+
+    if entitlement["dashboard"] == "UNION_WORKSPACE":
+        from dashboards.models import UnionWorkspaceMembership
+
+        return dict(UnionWorkspaceMembership.Role.choices).get(
+            entitlement["workspace_role"],
+            entitlement["workspace_role"],
+        )
+    return dict(User.Role.choices).get(role, role)
+
+
+def present_dashboard_entitlement(entitlement):
+    """Build one legacy-compatible dashboard selector from an entitlement."""
+
+    role = entitlement_legacy_role(entitlement)
+    backend_route = (
+        "/api/dashboards/referee/"
+        if entitlement["dashboard"] == "UNION_WORKSPACE"
+        and entitlement.get("workspace_role") == "MATCH_OFFICIAL"
+        else (
+            "/api/dashboards/ticketing-officer/"
+            if entitlement["dashboard"] == "UNION_WORKSPACE"
+            and entitlement.get("workspace_role") == "TICKETING_OFFICER"
+            else (
+                "/api/dashboards/union-admin/"
+                if entitlement["dashboard"] == "UNION_WORKSPACE"
+                else LEGACY_BACKEND_ROUTES.get(role)
+            )
+        )
+    )
+    return {
+        "role": role,
+        "role_display": entitlement_role_display(entitlement, role),
+        "route": entitlement["route"],
+        "backend_route": backend_route,
+        "entitlement_id": entitlement["id"],
+    }
+
+
+def present_dashboard_access(dashboard_access):
+    """Present all entitlements and the default legacy compatibility entry."""
+
+    entries = [
+        present_dashboard_entitlement(item) for item in dashboard_access["entitlements"]
+    ]
+    default_id = dashboard_access["default_entitlement_id"]
+    default_entry = next(
+        (item for item in entries if item["entitlement_id"] == default_id),
+        None,
+    )
+    return default_entry, entries
+
+
+def select_dashboard_route_for_role(entries, role):
+    """Select a shared dashboard shell without selecting a workspace."""
+
+    matching_entries = [item for item in entries if item["role"] == role]
+    routes = {(item["route"], item["backend_route"]) for item in matching_entries}
+    if len(routes) != 1:
+        return None, None
+    return routes.pop()
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -170,8 +342,97 @@ class RegisterSerializer(serializers.Serializer):
         return user
 
 
+class GoogleAuthSerializer(serializers.Serializer):
+    id_token = serializers.CharField(required=False, write_only=True)
+    token = serializers.CharField(required=False, write_only=True)
+    invitation_token = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        raw_token = attrs.get("id_token") or attrs.get("token")
+        if not raw_token:
+            raise serializers.ValidationError(
+                {"id_token": "A Google ID token is required."}
+            )
+
+        try:
+            payload = verify_google_id_token(raw_token)
+        except (InvalidGoogleTokenError, GoogleEmailNotVerifiedError) as exc:
+            raise serializers.ValidationError({"id_token": str(exc)}) from exc
+
+        email = payload.get("email", "").strip().lower()
+        if not email:
+            raise serializers.ValidationError(
+                {"id_token": "Google account does not have an email address."}
+            )
+
+        attrs["email"] = email
+        attrs["first_name"] = payload.get("given_name", "").strip()
+        attrs["last_name"] = payload.get("family_name", "").strip()
+
+        if not attrs["first_name"] and not attrs["last_name"]:
+            name_parts = payload.get("name", "").strip().split(" ", 1)
+            attrs["first_name"] = name_parts[0] if name_parts else ""
+            attrs["last_name"] = name_parts[1] if len(name_parts) > 1 else ""
+
+        return attrs
+
+
 class BecomeSponsorSerializer(serializers.Serializer):
     sponsor_type = serializers.ChoiceField(choices=User.SponsorType.choices)
+
+
+class HierarchicalCreateUserSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    phone_number = serializers.CharField(
+        max_length=20, required=False, allow_blank=True
+    )
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+    role = serializers.ChoiceField(choices=User.Role.choices)
+    sponsor_type = serializers.ChoiceField(
+        choices=User.SponsorType.choices, required=False, allow_blank=True
+    )
+    club_id = serializers.IntegerField(required=False)
+
+    def validate_email(self, value):
+        email = value.strip().lower()
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError(
+                "A user with this email address already exists."
+            )
+        return email
+
+    def validate_phone_number(self, value):
+        if not value:
+            return value
+        phone_number = normalize_phone_number(value)
+        if User.objects.filter(phone_number=phone_number).exists():
+            raise serializers.ValidationError(
+                "A user with this phone number already exists."
+            )
+        return phone_number
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
+        try:
+            validate_password(attrs["password"])
+        except DjangoValidationError as e:
+            raise serializers.ValidationError({"password": list(e.messages)}) from e
+
+        admin_user = self.context.get("admin_user")
+        if admin_user:
+            from .rbac import can_admin_create_role
+
+            if not can_admin_create_role(admin_user, attrs["role"]):
+                raise serializers.ValidationError(
+                    {"role": "You cannot create a user with this role."}
+                )
+        return attrs
 
 
 class AdminCreateUserSerializer(serializers.Serializer):
@@ -225,279 +486,15 @@ class AdminCreateUserSerializer(serializers.Serializer):
         except DjangoValidationError as e:
             raise serializers.ValidationError({"password": list(e.messages)}) from e
 
-        if attrs["role"] == User.Role.SPONSOR and not attrs.get("sponsor_type"):
-            raise serializers.ValidationError(
-                {"sponsor_type": "Sponsor type is required for sponsors."}
-            )
-
-        return attrs
-
-    def validate_club_id(self, value):
-        if value is None:
-            return value
-
-        if not Club.objects.filter(pk=value).exists():
-            raise serializers.ValidationError("Club does not exist.")
-
-        return value
-
-
-class CreateClubOfficialSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    phone_number = serializers.CharField(
-        max_length=20, required=False, allow_blank=True
-    )
-    first_name = serializers.CharField(max_length=150)
-    last_name = serializers.CharField(max_length=150)
-    password = serializers.CharField(write_only=True)
-    confirm_password = serializers.CharField(write_only=True)
-    role = serializers.ChoiceField(
-        choices=[
-            (User.Role.REFEREE, User.Role.REFEREE.label),
-            (User.Role.TICKETING_OFFICER, User.Role.TICKETING_OFFICER.label),
-        ]
-    )
-
-    def validate_email(self, value):
-        email = value.strip().lower()
-
-        if User.objects.filter(email__iexact=email).exists():
-            raise serializers.ValidationError(
-                "A user with this email address already exists."
-            )
-
-        return email
-
-    def validate_phone_number(self, value):
-        if not value:
-            return value
-
-        phone_number = normalize_phone_number(value)
-
-        if User.objects.filter(phone_number=phone_number).exists():
-            raise serializers.ValidationError(
-                "A user with this phone number already exists."
-            )
-
-        return phone_number
-
-    def validate(self, attrs):
-        if attrs["password"] != attrs["confirm_password"]:
-            raise serializers.ValidationError(
-                {"confirm_password": "Passwords do not match."}
-            )
-
-        try:
-            validate_password(attrs["password"])
-        except DjangoValidationError as e:
-            raise serializers.ValidationError({"password": list(e.messages)}) from e
-
-        return attrs
-
-
-class HierarchicalCreateUserSerializer(serializers.Serializer):
-    """
-    Serializer for admin-level user creation that validates the target role
-    against the hierarchy defined in CREATABLE_ROLES.
-
-    SPONSOR and FAN are NOT creatable by any admin — they are
-    self-registration/self-upgrade roles only.
-    """
-
-    email = serializers.EmailField()
-    phone_number = serializers.CharField(
-        max_length=20, required=False, allow_blank=True
-    )
-    first_name = serializers.CharField(max_length=150)
-    last_name = serializers.CharField(max_length=150)
-    password = serializers.CharField(write_only=True)
-    confirm_password = serializers.CharField(write_only=True)
-    role = serializers.ChoiceField(choices=User.Role.choices)
-    club_id = serializers.IntegerField(required=False)
-
-    def validate_email(self, value):
-        email = value.strip().lower()
-
-        if User.objects.filter(email__iexact=email).exists():
-            raise serializers.ValidationError(
-                "A user with this email address already exists."
-            )
-
-        return email
-
-    def validate_phone_number(self, value):
-        if not value:
-            return value
-
-        phone_number = normalize_phone_number(value)
-
-        if User.objects.filter(phone_number=phone_number).exists():
-            raise serializers.ValidationError(
-                "A user with this phone number already exists."
-            )
-
-        return phone_number
-
-    def validate_role(self, value):
-        admin_user = self.context.get("admin_user")
-        if admin_user is None:
-            raise serializers.ValidationError("Admin context is required.")
-
-        from .rbac import can_admin_create_role
-
-        if not can_admin_create_role(admin_user, value):
-            raise serializers.ValidationError(
-                f"You are not authorized to create a user with the '{value}' role."
-            )
-
-        return value
-
-    def validate(self, attrs):
-        if attrs["password"] != attrs["confirm_password"]:
-            raise serializers.ValidationError(
-                {"confirm_password": "Passwords do not match."}
-            )
-
-        try:
-            validate_password(attrs["password"])
-        except DjangoValidationError as e:
-            raise serializers.ValidationError({"password": list(e.messages)}) from e
-
-        return attrs
-
-    def validate_club_id(self, value):
-        if value is None:
-            return value
-
-        if not Club.objects.filter(pk=value).exists():
-            raise serializers.ValidationError("Club does not exist.")
-
-        return value
-
-
-class LoginSerializer(serializers.Serializer):
-    """Serializer for login with email or phone number."""
-
-    identifier = serializers.CharField()
-    password = serializers.CharField(write_only=True)
-
-    def validate(self, attrs):
-        identifier = attrs.get("identifier", "").strip()
-        password = attrs.get("password", "")
-
-        if not identifier:
-            raise serializers.ValidationError(
-                {"identifier": "Email or phone number is required."}
-            )
-
-        if not password:
-            raise serializers.ValidationError({"password": "Password is required."})
-
-        user = self.get_user_by_identifier(identifier)
-
-        if user is None or not user.check_password(password):
-            raise serializers.ValidationError("Invalid login credentials.")
-
-        if not user.is_active:
-            raise serializers.ValidationError("This account is inactive.")
-
-        attrs["user"] = user
-
-        return attrs
-
-    def get_user_by_identifier(self, identifier):
-        if "@" in identifier:
-            return User.objects.filter(email__iexact=identifier.lower()).first()
-
-        phone_number = normalize_phone_number(identifier)
-
-        return User.objects.filter(phone_number=phone_number).first()
-
-
-class VerifyOTPSerializer(serializers.Serializer):
-    """Serializer for verifying an email OTP."""
-
-    email = serializers.EmailField()
-    code = serializers.CharField(max_length=6)
-    purpose = serializers.ChoiceField(
-        choices=["EMAIL_VERIFICATION"],
-        default="EMAIL_VERIFICATION",
-        required=False,
-    )
-
-    def validate_code(self, value):
-        code = value.strip()
-
-        if not code.isdigit():
-            raise serializers.ValidationError("OTP code must contain digits only.")
-
-        if len(code) != 6:
-            raise serializers.ValidationError("OTP code must be 6 digits long.")
-
-        return code
-
-
-class ResendOTPSerializer(serializers.Serializer):
-    """Serializer for requesting a new email verification OTP."""
-
-    email = serializers.EmailField()
-
-
-MAX_AVATAR_SIZE_BYTES = 2 * 1024 * 1024
-
-ALLOWED_AVATAR_CONTENT_TYPES = {
-    "image/jpeg",
-    "image/png",
-    "image/webp",
-    "image/gif",
-}
-
-
-class PasswordResetRequestSerializer(serializers.Serializer):
-    """Serializer for requesting a password reset OTP."""
-
-    email = serializers.EmailField()
-
-
-class PasswordResetConfirmSerializer(serializers.Serializer):
-    """Serializer for confirming password reset using OTP."""
-
-    email = serializers.EmailField()
-    code = serializers.CharField(max_length=6)
-    password = serializers.CharField(write_only=True)
-    confirm_password = serializers.CharField(write_only=True)
-
-    def validate_code(self, value):
-        code = value.strip()
-
-        if not code.isdigit():
-            raise serializers.ValidationError("OTP code must contain digits only.")
-
-        if len(code) != 6:
-            raise serializers.ValidationError("OTP code must be 6 digits long.")
-
-        return code
-
-    def validate(self, attrs):
-        if attrs["password"] != attrs["confirm_password"]:
-            raise serializers.ValidationError(
-                {"confirm_password": "Passwords do not match."}
-            )
-
-        try:
-            validate_password(attrs["password"])
-        except DjangoValidationError as e:
-            raise serializers.ValidationError({"password": list(e.messages)}) from e
-
         return attrs
 
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating the authenticated user's profile."""
 
-    avatar = serializers.ImageField(
+    favorite_sport = serializers.CharField(
+        source="favourite_sport",
         required=False,
-        allow_null=True,
     )
 
     class Meta:
@@ -506,21 +503,26 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "phone_number",
+            "location",
+            "date_of_birth",
+            "gender",
+            "favourite_sport",
+            "favorite_sport",
+            "bio",
             "avatar",
         )
 
     def validate_phone_number(self, value):
-        if value in ("", None):
-            return None
+        if not value:
+            return value
 
         phone_number = normalize_phone_number(value)
 
-        existing_user = User.objects.filter(phone_number=phone_number)
-
-        if self.instance:
-            existing_user = existing_user.exclude(pk=self.instance.pk)
-
-        if existing_user.exists():
+        if (
+            User.objects.filter(phone_number=phone_number)
+            .exclude(pk=self.instance.pk)
+            .exists()
+        ):
             raise serializers.ValidationError(
                 "A user with this phone number already exists."
             )
@@ -530,272 +532,200 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
     def validate_avatar(self, value):
         if value is None:
             return value
-
         if value.size > MAX_AVATAR_SIZE_BYTES:
             raise serializers.ValidationError("Avatar file size must not exceed 2MB.")
-
-        content_type = getattr(value, "content_type", "")
-
-        if content_type not in ALLOWED_AVATAR_CONTENT_TYPES:
+        if getattr(value, "content_type", "") not in ALLOWED_AVATAR_CONTENT_TYPES:
             raise serializers.ValidationError(
                 "Avatar must be a JPEG, PNG, WEBP, or GIF image."
             )
-
         return value
 
     def update(self, instance, validated_data):
-        first_name = validated_data.get("first_name")
-        last_name = validated_data.get("last_name")
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
 
-        if first_name is not None:
-            instance.first_name = first_name.strip()
-
-        if last_name is not None:
-            instance.last_name = last_name.strip()
-
-        if "phone_number" in validated_data:
-            instance.phone_number = validated_data["phone_number"]
-
-        if "avatar" in validated_data:
-            instance.avatar = validated_data["avatar"]
-
-        instance.save()
-
+        instance.save(update_fields=list(validated_data.keys()))
         return instance
 
 
-# ---------------------------------------------------------------------------
-# Follow / Unfollow Serializers
-# ---------------------------------------------------------------------------
+class ClubSerializer(serializers.ModelSerializer):
+    """Read serializer for club profile/branding."""
 
-
-class FollowActionSerializer(serializers.Serializer):
-    """Serializer for creating or deleting a follow relationship."""
-
-    content_type = serializers.ChoiceField(
-        choices=["CLUB", "LEAGUE", "UNION", "COMPETITION"]
-    )
-    object_id = serializers.IntegerField()
-
-
-class FollowResponseSerializer(serializers.ModelSerializer):
-    """Serializer for follow response data."""
-
-    object_name = serializers.SerializerMethodField()
+    logo_url = serializers.SerializerMethodField()
+    banner_url = serializers.SerializerMethodField()
 
     class Meta:
-        model = Follow
-        fields = ["id", "content_type", "object_id", "object_name", "created_at"]
-
-    def get_object_name(self, obj):
-        followed = obj.followed_object
-        if followed:
-            return str(followed)
-        return f"{obj.content_type}#{obj.object_id}"
-
-
-class FollowListSerializer(serializers.Serializer):
-    """Serializer for listing a user's follows grouped by content type."""
-
-    club_count = serializers.IntegerField(read_only=True)
-    league_count = serializers.IntegerField(read_only=True)
-    union_count = serializers.IntegerField(read_only=True)
-    competition_count = serializers.IntegerField(read_only=True)
-    clubs = FollowResponseSerializer(many=True, read_only=True)
-    leagues = FollowResponseSerializer(many=True, read_only=True)
-    unions = FollowResponseSerializer(many=True, read_only=True)
-    competitions = FollowResponseSerializer(many=True, read_only=True)
-
-
-# ---------------------------------------------------------------------------
-# Notification Preference Serializers
-# ---------------------------------------------------------------------------
-
-
-class NotificationPreferenceSerializer(serializers.ModelSerializer):
-    """Serializer for notification preferences."""
-
-    event_label = serializers.CharField(source="get_event_type_display", read_only=True)
-
-    class Meta:
-        model = NotificationPreference
-        fields = [
+        model = Club
+        fields = (
             "id",
-            "user",
-            "event_type",
-            "event_label",
-            "email_enabled",
-            "push_enabled",
-            "sms_enabled",
+            "name",
+            "slug",
+            "short_name",
+            "sport",
+            "logo",
+            "logo_url",
+            "banner",
+            "banner_url",
+            "primary_color",
+            "secondary_color",
+        )
+
+    def get_logo_url(self, obj):
+        request = self.context.get("request")
+        if not obj.logo:
+            return None
+        if request:
+            return request.build_absolute_uri(obj.logo.url)
+        return obj.logo.url
+
+    def get_banner_url(self, obj):
+        request = self.context.get("request")
+        if not obj.banner:
+            return None
+        if request:
+            return request.build_absolute_uri(obj.banner.url)
+        return obj.banner.url
+
+
+class LoginSerializer(serializers.Serializer):
+    identifier = serializers.CharField()
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        identifier = attrs.get("identifier", "").strip()
+        password = attrs.get("password", "")
+
+        user = self.get_user_by_identifier(identifier)
+        if user is None or not user.check_password(password):
+            raise serializers.ValidationError("Invalid login credentials.")
+
+        if not user.is_active:
+            raise serializers.ValidationError("This account is inactive.")
+
+        attrs["user"] = user
+        return attrs
+
+    @staticmethod
+    def get_user_by_identifier(identifier):
+        if "@" in identifier:
+            return User.objects.filter(email__iexact=identifier).first()
+
+        phone_number = normalize_phone_number(identifier)
+        user = User.objects.filter(phone_number=phone_number).first()
+        if user:
+            return user
+
+        return User.objects.filter(public_handle__iexact=identifier).first()
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    code = serializers.CharField(max_length=6)
+    password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate_code(self, value):
+        code = value.strip()
+        if not code.isdigit():
+            raise serializers.ValidationError("OTP code must contain digits only.")
+        if len(code) != 6:
+            raise serializers.ValidationError("OTP code must be 6 digits long.")
+        return code
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
+        try:
+            validate_password(attrs["password"])
+        except DjangoValidationError as e:
+            raise serializers.ValidationError({"password": list(e.messages)}) from e
+        return attrs
+
+
+class VerifyOTPSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    code = serializers.CharField(max_length=6)
+
+
+class ResendOTPSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class SwitchWorkspaceSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(choices=User.Role.choices)
+
+    def validate_role(self, value):
+        user = self.context.get("user")
+        if not user:
+            raise serializers.ValidationError("User context is required.")
+
+        dashboard_access = get_current_user_dashboard_access(user, self.context)
+        matching_entitlements = self._matching_entitlements(
+            value, dashboard_access["entitlements"]
+        )
+        if not matching_entitlements:
+            raise serializers.ValidationError(
+                f"You do not have access to the '{value}' workspace."
+            )
+
+        self.context["_matching_entitlements"] = matching_entitlements
+        return value
+
+    @staticmethod
+    def _matching_entitlements(role, entitlements):
+        return [item for item in entitlements if entitlement_legacy_role(item) == role]
+
+
+class RoleApprovalListSerializer(serializers.ModelSerializer):
+    target_user_email = serializers.EmailField(
+        source="target_user.email", read_only=True
+    )
+    requested_by_email = serializers.EmailField(
+        source="requested_by.email", read_only=True
+    )
+    reviewed_by_email = serializers.EmailField(
+        source="reviewed_by.email", read_only=True, default=None
+    )
+
+    class Meta:
+        model = RoleApproval
+        fields = (
+            "id",
+            "target_user",
+            "target_user_email",
+            "requested_role",
+            "requested_by",
+            "requested_by_email",
+            "reviewed_by",
+            "reviewed_by_email",
+            "status",
+            "reason",
+            "rejection_reason",
             "created_at",
             "updated_at",
-        ]
-        read_only_fields = ["id", "user", "event_label", "created_at", "updated_at"]
-
-
-class NotificationSerializer(serializers.ModelSerializer):
-    event_label = serializers.CharField(
-        source="get_event_type_display",
-        read_only=True,
-    )
-    category_label = serializers.CharField(
-        source="get_category_display",
-        read_only=True,
-    )
-    priority_label = serializers.CharField(
-        source="get_priority_display",
-        read_only=True,
-    )
-
-    class Meta:
-        model = Notification
-        fields = [
-            "id",
-            "event_type",
-            "event_label",
-            "category",
-            "category_label",
-            "priority",
-            "priority_label",
-            "title",
-            "message",
-            "action_url",
-            "metadata",
-            "is_read",
-            "read_at",
-            "created_at",
-        ]
+        )
         read_only_fields = fields
 
 
-class BulkNotificationPreferenceSerializer(serializers.Serializer):
-    """Serializer for updating multiple notification preferences at once."""
+class RoleApprovalReviewSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=["approve", "reject"])
+    rejection_reason = serializers.CharField(required=False, allow_blank=True)
 
-    preferences = NotificationPreferenceSerializer(many=True)
-
-
-# ---------------------------------------------------------------------------
-# Interest & Privacy Preference Serializers
-# ---------------------------------------------------------------------------
-
-
-class InterestPreferenceSerializer(serializers.ModelSerializer):
-    """Serializer for interest and privacy preferences."""
-
-    class Meta:
-        model = InterestPreference
-        exclude = []
-        read_only_fields = ["id", "user", "created_at", "updated_at"]
-
-
-# ---------------------------------------------------------------------------
-# Wallet & Payment History Serializers
-# ---------------------------------------------------------------------------
-
-
-class WalletSerializer(serializers.ModelSerializer):
-    """
-    Serializer for the user's MVP wallet/payment center.
-
-    The MVP wallet does not store money. The balance remains 0.00 and the
-    API exposes stored_balance_enabled=false so the frontend can show the
-    correct product meaning.
-    """
-
-    stored_balance_enabled = serializers.BooleanField(read_only=True)
-    balance_note = serializers.CharField(read_only=True)
-
-    class Meta:
-        model = Wallet
-        fields = [
-            "id",
-            "user",
-            "balance",
-            "currency",
-            "is_active",
-            "stored_balance_enabled",
-            "balance_note",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = [
-            "id",
-            "user",
-            "balance",
-            "stored_balance_enabled",
-            "balance_note",
-            "created_at",
-            "updated_at",
-        ]
-
-
-class PaymentHistorySerializer(serializers.ModelSerializer):
-    """Serializer for legacy/manual payment history records."""
-
-    payment_type_label = serializers.CharField(
-        source="get_payment_type_display",
-        read_only=True,
-    )
-    status_label = serializers.CharField(
-        source="get_status_display",
-        read_only=True,
-    )
-
-    class Meta:
-        model = PaymentHistory
-        fields = [
-            "id",
-            "user",
-            "payment_type",
-            "payment_type_label",
-            "amount",
-            "currency",
-            "status",
-            "status_label",
-            "reference",
-            "description",
-            "metadata",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = [
-            "id",
-            "user",
-            "payment_type_label",
-            "status_label",
-            "created_at",
-            "updated_at",
-        ]
-
-
-class WalletSummarySerializer(serializers.Serializer):
-    """
-    Response serializer for the MVP wallet/payment center.
-
-    This is not a stored-money wallet. It summarizes what the fan has paid for.
-    """
-
-    stored_balance_enabled = serializers.BooleanField()
-    balance = serializers.DecimalField(max_digits=12, decimal_places=2)
-    balance_note = serializers.CharField()
-    currency = serializers.CharField()
-    total_spent = serializers.DecimalField(max_digits=14, decimal_places=2)
-    successful_payments_count = serializers.IntegerField()
-    pending_payments_count = serializers.IntegerField()
-    failed_payments_count = serializers.IntegerField()
-    refunded_payments_count = serializers.IntegerField()
-    tickets_count = serializers.IntegerField()
-    memberships_count = serializers.IntegerField()
-    sponsorships_count = serializers.IntegerField()
-    recent_payments = serializers.ListField()
-    tickets = serializers.ListField()
-    memberships = serializers.ListField()
-    sponsorships = serializers.ListField()
+    def validate(self, attrs):
+        if attrs["action"] == "reject" and not attrs.get("rejection_reason"):
+            raise serializers.ValidationError(
+                {"rejection_reason": "Rejection reason is required."}
+            )
+        return attrs
 
 
 class CombinedPaymentHistoryItemSerializer(serializers.Serializer):
-    """Serializer for combined payment history across tickets, memberships, sponsorships."""
-
     id = serializers.CharField()
     source = serializers.CharField()
     source_id = serializers.IntegerField(required=False)
@@ -811,137 +741,39 @@ class CombinedPaymentHistoryItemSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField(required=False)
 
 
-# ---------------------------------------------------------------------------
-# Role Approval Serializers
-# ---------------------------------------------------------------------------
+PaymentHistorySerializer = CombinedPaymentHistoryItemSerializer
 
 
-class RoleApprovalListSerializer(serializers.ModelSerializer):
-    """Serializer for listing role approval requests."""
+class ClubProfileUpdateSerializer(serializers.ModelSerializer):
+    """Update serializer for club profile/branding."""
 
-    target_user_email = serializers.EmailField(
-        source="target_user.email", read_only=True
-    )
-    target_user_name = serializers.SerializerMethodField()
-    requested_by_email = serializers.EmailField(
-        source="requested_by.email", read_only=True
-    )
-    requested_by_name = serializers.SerializerMethodField()
-    reviewed_by_email = serializers.EmailField(
-        source="reviewed_by.email", read_only=True, default=None
-    )
-    reviewed_by_name = serializers.SerializerMethodField()
-    requested_role_display = serializers.CharField(
-        source="get_requested_role_display", read_only=True
-    )
-    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    logo = serializers.ImageField(required=False, allow_null=True)
+    banner = serializers.ImageField(required=False, allow_null=True)
 
     class Meta:
-        model = RoleApproval
-        fields = [
-            "id",
-            "target_user",
-            "target_user_email",
-            "target_user_name",
-            "requested_role",
-            "requested_role_display",
-            "requested_by",
-            "requested_by_email",
-            "requested_by_name",
-            "reviewed_by",
-            "reviewed_by_email",
-            "reviewed_by_name",
-            "status",
-            "status_display",
-            "reason",
-            "rejection_reason",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = [
-            "id",
-            "target_user",
-            "target_user_email",
-            "target_user_name",
-            "requested_role",
-            "requested_role_display",
-            "requested_by",
-            "requested_by_email",
-            "requested_by_name",
-            "reviewed_by",
-            "reviewed_by_email",
-            "reviewed_by_name",
-            "status",
-            "status_display",
-            "created_at",
-            "updated_at",
-        ]
+        model = Club
+        fields = (
+            "name",
+            "short_name",
+            "sport",
+            "logo",
+            "banner",
+            "primary_color",
+            "secondary_color",
+        )
 
-    def get_target_user_name(self, obj):
-        return obj.target_user.full_name or obj.target_user.email
+    def update(self, instance, validated_data):
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
 
-    def get_requested_by_name(self, obj):
-        return obj.requested_by.full_name or obj.requested_by.email
-
-    def get_reviewed_by_name(self, obj):
-        if obj.reviewed_by:
-            return obj.reviewed_by.full_name or obj.reviewed_by.email
-        return None
-
-
-class RoleApprovalReviewSerializer(serializers.Serializer):
-    """Serializer for approving or rejecting a role approval request."""
-
-    action = serializers.ChoiceField(choices=["approve", "reject"])
-    rejection_reason = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        help_text="Required if action is 'reject'.",
-    )
-
-    def validate(self, attrs):
-        if attrs["action"] == "reject" and not attrs.get("rejection_reason"):
-            raise serializers.ValidationError(
-                {
-                    "rejection_reason": "Rejection reason is required when rejecting a request."
-                }
-            )
-        return attrs
-
-
-# ---------------------------------------------------------------------------
-# Switch Workspace Serializer
-# ---------------------------------------------------------------------------
-
-
-class SwitchWorkspaceSerializer(serializers.Serializer):
-    """Serializer for switching the active workspace/role context."""
-
-    role = serializers.ChoiceField(choices=User.Role.choices)
-
-    def validate_role(self, value):
-        user = self.context.get("user")
-        if not user:
-            raise serializers.ValidationError("User context is required.")
-
-        if value not in user.roles:
-            raise serializers.ValidationError(
-                f"You do not have access to the '{value}' workspace."
-            )
-        return value
-
-
-# ---------------------------------------------------------------------------
-# Feed Item Serializers
-# ---------------------------------------------------------------------------
+        instance.save(update_fields=list(validated_data.keys()))
+        return instance
 
 
 class FeedItemSerializer(serializers.ModelSerializer):
-    """Serializer for personalized feed items."""
-
     class Meta:
         model = FeedItem
-        fields = [
+        fields = (
             "id",
             "user",
             "item_type",
@@ -955,56 +787,152 @@ class FeedItemSerializer(serializers.ModelSerializer):
             "link",
             "metadata",
             "created_at",
-        ]
-        read_only_fields = [
+        )
+        read_only_fields = fields
+
+
+class NotificationPreferenceSerializer(serializers.ModelSerializer):
+    event_label = serializers.CharField(
+        source="get_event_type_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = NotificationPreference
+        fields = (
             "id",
             "user",
-            "item_type",
-            "title",
-            "description",
-            "source_content_type",
-            "source_object_id",
-            "source_name",
-            "relevance_score",
-            "link",
-            "metadata",
+            "event_type",
+            "event_label",
+            "email_enabled",
+            "push_enabled",
+            "sms_enabled",
             "created_at",
-        ]
+            "updated_at",
+        )
+        read_only_fields = (
+            "id",
+            "user",
+        )
 
 
-class GoogleAuthSerializer(serializers.Serializer):
-    """Serializer for Google OAuth login/signup using an ID token."""
+class NotificationSerializer(serializers.ModelSerializer):
+    event_label = serializers.CharField(source="get_event_type_display", read_only=True)
+    category_label = serializers.CharField(
+        source="get_category_display", read_only=True
+    )
+    priority_label = serializers.CharField(
+        source="get_priority_display", read_only=True
+    )
 
-    id_token = serializers.CharField(write_only=True)
+    class Meta:
+        model = Notification
+        fields = (
+            "id",
+            "event_type",
+            "event_label",
+            "category",
+            "category_label",
+            "priority",
+            "priority_label",
+            "title",
+            "message",
+            "action_url",
+            "metadata",
+            "is_read",
+            "read_at",
+            "created_at",
+        )
+        read_only_fields = fields
 
-    def validate_id_token(self, value):
-        """Verify the Google ID token and return the verified payload."""
-        try:
-            payload = verify_google_id_token(value)
-        except InvalidGoogleTokenError as exc:
-            raise serializers.ValidationError(str(exc)) from exc
-        return payload
 
-    def validate(self, attrs):
-        payload = attrs["id_token"]
+class WalletSummarySerializer(serializers.Serializer):
+    stored_balance_enabled = serializers.BooleanField()
+    balance = serializers.DecimalField(max_digits=14, decimal_places=2)
+    balance_note = serializers.CharField()
+    currency = serializers.CharField()
+    total_spent = serializers.DecimalField(max_digits=14, decimal_places=2)
+    successful_payments_count = serializers.IntegerField()
+    pending_payments_count = serializers.IntegerField()
+    failed_payments_count = serializers.IntegerField()
+    refunded_payments_count = serializers.IntegerField()
+    tickets_count = serializers.IntegerField()
+    memberships_count = serializers.IntegerField()
+    sponsorships_count = serializers.IntegerField()
+    recent_payments = CombinedPaymentHistoryItemSerializer(many=True)
+    tickets = serializers.ListField(child=serializers.DictField())
+    memberships = serializers.ListField(child=serializers.DictField())
+    sponsorships = serializers.ListField(child=serializers.DictField())
 
-        email = payload.get("email", "").strip().lower()
-        if not email:
-            raise serializers.ValidationError(
-                "Google account does not have an email address."
-            )
 
-        attrs["email"] = email
-        attrs["first_name"] = payload.get("given_name", "").strip()
-        attrs["last_name"] = payload.get("family_name", "").strip()
-        attrs["avatar_url"] = payload.get("picture", "")
+class InterestPreferenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InterestPreference
+        fields = (
+            "id",
+            "user",
+            "interested_in_clubs",
+            "interested_in_leagues",
+            "interested_in_unions",
+            "interested_in_national_teams",
+            "interested_in_transfers",
+            "interested_in_highlights",
+            "interested_in_tickets",
+            "interested_in_merchandise",
+            "profile_visibility",
+            "show_followed_teams",
+            "show_attended_matches",
+            "activity_visibility",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "user", "created_at", "updated_at")
 
-        # If given_name/family_name missing, use the full name
-        if not attrs["first_name"] and not attrs["last_name"]:
-            full_name = payload.get("name", "").strip()
-            parts = full_name.split(" ", 1)
-            attrs["first_name"] = parts[0]
-            if len(parts) > 1:
-                attrs["last_name"] = parts[1]
 
-        return attrs
+class FollowResponseSerializer(serializers.ModelSerializer):
+    object_name = serializers.SerializerMethodField()
+    is_following = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Follow
+        fields = (
+            "id",
+            "content_type",
+            "object_id",
+            "object_name",
+            "is_following",
+            "created_at",
+        )
+        read_only_fields = fields
+
+    def get_object_name(self, obj):
+        followed_object = obj.followed_object
+        if followed_object is not None:
+            return str(followed_object)
+        return f"{obj.content_type}#{obj.object_id}"
+
+    def get_is_following(self, _obj):
+        return True
+
+
+class FollowActionSerializer(serializers.Serializer):
+    content_type = serializers.ChoiceField(choices=Follow.ContentType.choices)
+    object_id = serializers.IntegerField(min_value=1)
+
+
+class VenueSerializer(serializers.ModelSerializer):
+    """Serializer for club venues."""
+
+    class Meta:
+        model = Venue
+        fields = (
+            "id",
+            "club",
+            "name",
+            "location",
+            "pitch_count",
+            "is_active",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "club", "created_at", "updated_at")

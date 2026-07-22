@@ -113,8 +113,10 @@ class TestSwitchWorkspaceAPI:
         assert response.status_code == 400
         assert "role" in response.data
 
-    def test_switch_to_sponsor_workspace_with_sponsor_memberships(self, api_client, db):
-        """A user with sponsor memberships should be able to switch to SPONSOR."""
+    def test_switch_to_sponsor_workspace_with_legacy_individual_fields(
+        self, api_client, db
+    ):
+        """Legacy Individual Sponsor fields provide temporary Sponsor access."""
         user = User.objects.create_user(
             email="sponsoruser@example.com",
             password="testpass123",
@@ -123,6 +125,7 @@ class TestSwitchWorkspaceAPI:
             role=User.Role.FAN,
             is_email_verified=True,
             is_sponsor=True,
+            sponsor_type=User.SponsorType.INDIVIDUAL,
         )
         api_client.force_authenticate(user=user)
         response = api_client.post(
@@ -132,7 +135,7 @@ class TestSwitchWorkspaceAPI:
         )
         assert response.status_code == 200
         assert response.data["role"] == "SPONSOR"
-        assert response.data["frontend_dashboard_route"] == "/dashboard/sponsor"
+        assert response.data["frontend_dashboard_route"] == "/sponsor/dashboard"
 
     def test_switch_returns_available_dashboards(self, api_client, fan_user):
         """The response should include available_dashboards."""

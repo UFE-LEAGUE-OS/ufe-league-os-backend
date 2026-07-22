@@ -1,8 +1,54 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 
 from . import views
+from .governance_views import (
+    FantasyScoringRuleViewSet,
+    FantasyTransferRuleViewSet,
+    FantasySquadRuleViewSet,
+    FantasyPriceStructureViewSet,
+    FantasyEligibilityRuleViewSet,
+    FantasyCompetitionMappingViewSet,
+    FantasyFeatureFlagViewSet,
+)
+
+# Governance router
+governance_router = DefaultRouter()
+governance_router.register(
+    r"scoring-rules", FantasyScoringRuleViewSet, basename="fantasy-scoring-rule"
+)
+governance_router.register(
+    r"transfer-rules", FantasyTransferRuleViewSet, basename="fantasy-transfer-rule"
+)
+governance_router.register(
+    r"squad-rules", FantasySquadRuleViewSet, basename="fantasy-squad-rule"
+)
+governance_router.register(
+    r"price-structures",
+    FantasyPriceStructureViewSet,
+    basename="fantasy-price-structure",
+)
+governance_router.register(
+    r"eligibility-rules",
+    FantasyEligibilityRuleViewSet,
+    basename="fantasy-eligibility-rule",
+)
+governance_router.register(
+    r"competition-mappings",
+    FantasyCompetitionMappingViewSet,
+    basename="fantasy-competition-mapping",
+)
+governance_router.register(
+    r"feature-flags", FantasyFeatureFlagViewSet, basename="fantasy-feature-flag"
+)
 
 urlpatterns = [
+    # Original fantasy endpoints
+    path(
+        "overview/",
+        views.fantasy_overview_view,
+        name="fantasy-overview",
+    ),
     path(
         "competitions/",
         views.fantasy_competition_list_view,
@@ -23,16 +69,8 @@ urlpatterns = [
         views.fantasy_player_market_view,
         name="fantasy-player-market",
     ),
-    path(
-        "teams/",
-        views.fantasy_team_create_view,
-        name="fantasy-team-create",
-    ),
-    path(
-        "teams/me/",
-        views.my_fantasy_teams_view,
-        name="fantasy-my-teams",
-    ),
+    path("teams/", views.fantasy_team_create_view, name="fantasy-team-create"),
+    path("teams/me/", views.my_fantasy_teams_view, name="fantasy-my-teams"),
     path(
         "teams/<int:team_id>/",
         views.fantasy_team_detail_view,
@@ -53,31 +91,15 @@ urlpatterns = [
         views.fantasy_team_lineup_submit_view,
         name="fantasy-team-lineup-submit",
     ),
-    path(
-        "lineups/me/",
-        views.my_lineups_view,
-        name="fantasy-my-lineups",
-    ),
-    path(
-        "leagues/",
-        views.fantasy_league_create_view,
-        name="fantasy-league-create",
-    ),
+    path("lineups/me/", views.my_lineups_view, name="fantasy-my-lineups"),
+    path("leagues/", views.fantasy_league_create_view, name="fantasy-league-create"),
     path(
         "leagues/available/",
         views.fantasy_league_available_view,
         name="fantasy-league-available",
     ),
-    path(
-        "leagues/join/",
-        views.fantasy_league_join_view,
-        name="fantasy-league-join",
-    ),
-    path(
-        "leagues/my/",
-        views.my_fantasy_leagues_view,
-        name="fantasy-my-leagues",
-    ),
+    path("leagues/join/", views.fantasy_league_join_view, name="fantasy-league-join"),
+    path("leagues/my/", views.my_fantasy_leagues_view, name="fantasy-my-leagues"),
     path(
         "leagues/<int:league_id>/",
         views.fantasy_league_detail_view,
@@ -168,4 +190,6 @@ urlpatterns = [
         views.admin_player_score_reject_view,
         name="fantasy-admin-player-score-reject",
     ),
+    # Governance endpoints
+    path("", include(governance_router.urls)),
 ]

@@ -19,6 +19,7 @@ try:
 except ImportError:
     dj_database_url = None
 from decouple import Csv, config
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -42,6 +43,10 @@ ALLOWED_HOSTS = config(
     cast=Csv(),
 )
 
+# Render health checks and proxy headers
+USE_X_FORWARDED_HOST = True
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 
 # Application definition
 
@@ -57,14 +62,24 @@ INSTALLED_APPS = [
     "rest_framework",
     "drf_spectacular",
     "channels",
+    "storages",
+    "django_filters",
     # Local apps
     "accounts",
     "dashboards",
     "governance",
+    "teams",
     "sponsorships",
     "ticketing",
     "memberships",
     "fantasy",
+    "engagements",
+    "monitoring",
+    "platform_admin",
+    "club_operations",
+    "rbac.apps.RbacConfig",
+    "analytics.apps.AnalyticsConfig",
+    "finances",
 ]
 
 MIDDLEWARE = [
@@ -161,8 +176,166 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+USE_S3_MEDIA = config("USE_S3_MEDIA", default=False, cast=bool)
+PRIVATE_MEDIA_URL_EXPIRY = config(
+    "S3_PRIVATE_URL_EXPIRY",
+    default=900,
+    cast=int,
+)
+
+if PRIVATE_MEDIA_URL_EXPIRY <= 0:
+    raise ImproperlyConfigured("S3_PRIVATE_URL_EXPIRY must be greater than zero.")
+
+if USE_S3_MEDIA:
+    S3_ACCESS_KEY_ID = config(
+        "S3_ACCESS_KEY_ID",
+        default=config("AWS_ACCESS_KEY_ID", default=""),
+    )
+    S3_SECRET_ACCESS_KEY = config(
+        "S3_SECRET_ACCESS_KEY",
+        default=config("AWS_SECRET_ACCESS_KEY", default=""),
+    )
+
+    if not S3_ACCESS_KEY_ID or not S3_SECRET_ACCESS_KEY:
+        raise ImproperlyConfigured(
+            "S3 media is enabled but storage credentials are missing."
+        )
+
+    S3_PUBLIC_BUCKET_NAME = config(
+        "S3_PUBLIC_BUCKET_NAME",
+        default=config(
+            "AWS_STORAGE_BUCKET_NAME",
+            default="league-os-public",
+        ),
+    )
+    S3_PRIVATE_BUCKET_NAME = config(
+        "S3_PRIVATE_BUCKET_NAME",
+        default="league-os-private",
+    )
+    S3_REGION_NAME = config(
+        "S3_REGION_NAME",
+        default=config("AWS_S3_REGION_NAME", default="us-east-1"),
+    )
+    S3_ENDPOINT_URL = config(
+        "S3_ENDPOINT_URL",
+        default=config(
+            "AWS_S3_ENDPOINT_URL",
+            default=f"https://{S3_REGION_NAME}.digitaloceanspaces.com",
+        ),
+    ).rstrip("/")
+    S3_ADDRESSING_STYLE = config(
+        "S3_ADDRESSING_STYLE",
+        default="path",
+    )
+    S3_PUBLIC_CUSTOM_DOMAIN = config(
+        "S3_PUBLIC_CUSTOM_DOMAIN",
+        default=config("AWS_S3_CUSTOM_DOMAIN", default=""),
+    ).strip()
+    S3_PUBLIC_URL_PROTOCOL = config(
+        "S3_PUBLIC_URL_PROTOCOL",
+        default="https:",
+    ).strip()
+    S3_PUBLIC_CACHE_CONTROL = config(
+        "S3_PUBLIC_CACHE_CONTROL",
+        default="public, max-age=86400",
+    )
+    S3_PRIVATE_EXTERNAL_BASE_URL = (
+        config(
+            "S3_PRIVATE_EXTERNAL_BASE_URL",
+            default="",
+        )
+        .strip()
+        .rstrip("/")
+    )
+
+    if not S3_PUBLIC_URL_PROTOCOL.endswith(":"):
+        S3_PUBLIC_URL_PROTOCOL = f"{S3_PUBLIC_URL_PROTOCOL}:"
+
+    common_s3_options = {
+        "access_key": S3_ACCESS_KEY_ID,
+        "secret_key": S3_SECRET_ACCESS_KEY,
+        "region_name": S3_REGION_NAME,
+        "endpoint_url": S3_ENDPOINT_URL,
+        "addressing_style": S3_ADDRESSING_STYLE,
+        "signature_version": "s3v4",
+        "file_overwrite": False,
+    }
+
+    public_s3_options = {
+        **common_s3_options,
+        "bucket_name": S3_PUBLIC_BUCKET_NAME,
+        "default_acl": "public-read",
+        "querystring_auth": False,
+        "object_parameters": {
+            "CacheControl": S3_PUBLIC_CACHE_CONTROL,
+        },
+    }
+
+    if S3_PUBLIC_CUSTOM_DOMAIN:
+        public_s3_options.update(
+            {
+                "custom_domain": S3_PUBLIC_CUSTOM_DOMAIN,
+                "url_protocol": S3_PUBLIC_URL_PROTOCOL,
+            }
+        )
+
+    private_s3_options = {
+        **common_s3_options,
+        "bucket_name": S3_PRIVATE_BUCKET_NAME,
+        "default_acl": "private",
+        "querystring_auth": True,
+        "querystring_expire": PRIVATE_MEDIA_URL_EXPIRY,
+        "object_parameters": {
+            "CacheControl": "private, no-store",
+        },
+    }
+
+    STORAGES = {
+        "default": {
+            "BACKEND": "config.storage_backends.PublicMediaStorage",
+            "OPTIONS": public_s3_options,
+        },
+        "private": {
+            "BACKEND": "config.storage_backends.PrivateMediaStorage",
+            "OPTIONS": private_s3_options,
+        },
+        "staticfiles": {
+            "BACKEND": ("django.contrib.staticfiles.storage.StaticFilesStorage"),
+        },
+    }
+
+    if S3_PUBLIC_CUSTOM_DOMAIN:
+        MEDIA_URL = (
+            f"{S3_PUBLIC_URL_PROTOCOL}//" f"{S3_PUBLIC_CUSTOM_DOMAIN.rstrip('/')}/"
+        )
+    else:
+        MEDIA_URL = f"{S3_ENDPOINT_URL}/" f"{S3_PUBLIC_BUCKET_NAME}/"
+else:
+    MEDIA_URL = "/media/"
+    MEDIA_ROOT = BASE_DIR / "media"
+
+    PRIVATE_MEDIA_URL = "/private-media/"
+    PRIVATE_MEDIA_ROOT = BASE_DIR / "private_media"
+
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+            "OPTIONS": {
+                "location": MEDIA_ROOT,
+                "base_url": MEDIA_URL,
+            },
+        },
+        "private": {
+            "BACKEND": ("config.storage_backends.LocalPrivateMediaStorage"),
+            "OPTIONS": {
+                "location": PRIVATE_MEDIA_ROOT,
+                "base_url": PRIVATE_MEDIA_URL,
+            },
+        },
+        "staticfiles": {
+            "BACKEND": ("django.contrib.staticfiles.storage.StaticFilesStorage"),
+        },
+    }
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -171,6 +344,10 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Django REST Framework
 REST_FRAMEWORK = {
+    # Membership exports use ?format=csv and ?format=pdf.
+    # Disable DRF's renderer query-parameter override so those
+    # values reach the export view instead of producing a 404.
+    "URL_FORMAT_OVERRIDE": None,
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
@@ -220,8 +397,6 @@ CSRF_TRUSTED_ORIGINS = config(
     default="http://localhost:5173",
     cast=Csv(),
 )
-
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 SESSION_COOKIE_SECURE = config(
     "SESSION_COOKIE_SECURE",
@@ -296,7 +471,7 @@ FLUTTERWAVE_SECRET_HASH = config("FLUTTERWAVE_SECRET_HASH", default="")
 
 FLUTTERWAVE_REDIRECT_URL = config(
     "FLUTTERWAVE_REDIRECT_URL",
-    default="http://localhost:8000/api/sponsorships/flutterwave/verify/",
+    default="http://localhost:5173/sponsor/payment/processing",
 )
 
 # Sponsorship Payment
@@ -316,6 +491,16 @@ FLUTTERWAVE_TICKET_REDIRECT_URL = config(
     default="http://localhost:8000/api/ticketing/flutterwave/verify/",
 )
 
+FLUTTERWAVE_MEMBERSHIP_PAYMENT_TITLE = config(
+    "FLUTTERWAVE_MEMBERSHIP_PAYMENT_TITLE",
+    default="League OS Membership Payment",
+)
+
+FLUTTERWAVE_MEMBERSHIP_REDIRECT_URL = config(
+    "FLUTTERWAVE_MEMBERSHIP_REDIRECT_URL",
+    default="http://localhost:8000/api/memberships/flutterwave/verify/",
+)
+
 FLUTTERWAVE_PAYMENT_LOGO_URL = config(
     "FLUTTERWAVE_PAYMENT_LOGO_URL",
     default="",
@@ -325,6 +510,12 @@ FLUTTERWAVE_TIMEOUT_SECONDS = config(
     "FLUTTERWAVE_TIMEOUT_SECONDS",
     default=30,
     cast=int,
+)
+
+TICKETING_DEMO_CHECKOUT_ENABLED = config(
+    "TICKETING_DEMO_CHECKOUT_ENABLED",
+    default=False,
+    cast=bool,
 )
 
 TICKET_RESERVATION_MINUTES = config(
@@ -343,3 +534,9 @@ CHANNEL_LAYERS = {
         "BACKEND": "channels.layers.InMemoryChannelLayer",
     },
 }
+
+MEMBERSHIP_DEMO_CHECKOUT_ENABLED = config(
+    "MEMBERSHIP_DEMO_CHECKOUT_ENABLED",
+    default=False,
+    cast=bool,
+)

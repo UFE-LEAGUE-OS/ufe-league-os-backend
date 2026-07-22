@@ -1,0 +1,8 @@
+services:
+  backend:
+    build:
+      args:
+        REQUIREMENTS_FILE: requirements-test.txt
+    working_dir: /workspace
+    volumes:
+      - .:/workspace

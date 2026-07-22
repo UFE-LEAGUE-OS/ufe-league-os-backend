@@ -93,21 +93,46 @@ Authorization: Bearer <access_token>
 
 ## Governance
 
+Super-admin-only module for platform-wide governance configuration.
+
 | Method | Endpoint | Auth | Purpose |
 |---|---|---|---|
-| `GET/POST` | `/api/governance/sport-variants/` | Depends on view permissions | List/create sport variants. |
-| `GET/PATCH/DELETE` | `/api/governance/sport-variants/<pk>/` | Depends on view permissions | Detail/update/delete sport variant. |
-| `POST` | `/api/governance/sport-variants/<pk>/verify/` | Admin | Verify sport variant. |
-| `GET/POST` | `/api/governance/competition-formats/` | Depends on view permissions | List/create competition formats. |
-| `GET/PATCH/DELETE` | `/api/governance/competition-formats/<pk>/` | Depends on view permissions | Detail/update/delete competition format. |
-| `POST` | `/api/governance/competition-formats/<pk>/verify/` | Admin | Verify competition format. |
-| `GET/POST` | `/api/governance/rules/` | Depends on view permissions | List/create rules. |
-| `GET/PATCH/DELETE` | `/api/governance/rules/<pk>/` | Depends on view permissions | Detail/update/delete rule. |
-| `POST` | `/api/governance/rules/<pk>/publish/` | Admin | Publish rule. |
-| `POST` | `/api/governance/rules/<pk>/unpublish/` | Admin | Unpublish rule. |
-| `GET/POST` | `/api/governance/league-standards/` | Admin | Publish standards to leagues. |
-| `DELETE` | `/api/governance/league-standards/<pk>/` | Admin | Remove standard. |
-| `GET` | `/api/governance/leagues/<league_pk>/standards/` | Depends on view permissions | Standards for league. |
+| `GET` | `/api/governance/sport-variants/` | Super Admin | List sport variants. |
+| `POST` | `/api/governance/sport-variants/` | Super Admin | Create sport variant. |
+| `GET` | `/api/governance/sport-variants/<pk>/` | Super Admin | Retrieve sport variant. |
+| `PATCH` | `/api/governance/sport-variants/<pk>/` | Super Admin | Partial update sport variant. |
+| `PUT` | `/api/governance/sport-variants/<pk>/` | Super Admin | Full update sport variant. |
+| `DELETE` | `/api/governance/sport-variants/<pk>/` | Super Admin | Delete sport variant. |
+| `POST` | `/api/governance/sport-variants/<pk>/verify/` | Super Admin | Verify sport variant. |
+| `GET` | `/api/governance/competition-formats/` | Super Admin | List competition formats. |
+| `POST` | `/api/governance/competition-formats/` | Super Admin | Create competition format. |
+| `GET` | `/api/governance/competition-formats/<pk>/` | Super Admin | Retrieve competition format. |
+| `PATCH` | `/api/governance/competition-formats/<pk>/` | Super Admin | Partial update competition format. |
+| `PUT` | `/api/governance/competition-formats/<pk>/` | Super Admin | Full update competition format. |
+| `DELETE` | `/api/governance/competition-formats/<pk>/` | Super Admin | Delete competition format. |
+| `POST` | `/api/governance/competition-formats/<pk>/verify/` | Super Admin | Verify competition format. |
+| `GET` | `/api/governance/rules/` | Super Admin | List rules & standards. |
+| `POST` | `/api/governance/rules/` | Super Admin | Create rule/standard. |
+| `GET` | `/api/governance/rules/<pk>/` | Super Admin | Retrieve rule/standard. |
+| `PATCH` | `/api/governance/rules/<pk>/` | Super Admin | Partial update rule/standard. |
+| `PUT` | `/api/governance/rules/<pk>/` | Super Admin | Full update rule/standard. |
+| `DELETE` | `/api/governance/rules/<pk>/` | Super Admin | Delete rule/standard. |
+| `POST` | `/api/governance/rules/<pk>/publish/` | Super Admin | Publish rule/standard for league assignment. |
+| `POST` | `/api/governance/rules/<pk>/unpublish/` | Super Admin | Unpublish rule/standard. |
+| `GET` | `/api/governance/league-standards/` | Super Admin | List league-standard assignments. |
+| `POST` | `/api/governance/league-standards/` | Super Admin | Publish standards to leagues. |
+| `DELETE` | `/api/governance/league-standards/<pk>/` | Super Admin | Remove league-standard assignment. |
+| `GET` | `/api/governance/leagues/<league_pk>/standards/` | Super Admin | List standards for a league. |
+
+### Publish Standards to Leagues Request
+
+```json
+{
+  "rule_ids": [1, 2],
+  "league_ids": [10, 11],
+  "notes": "Optional assignment notes"
+}
+```
 
 ## Sponsorships
 
@@ -150,6 +175,15 @@ Authorization: Bearer <access_token>
 | `GET` | `/api/ticketing/flutterwave/verify/` | No | Verify Flutterwave ticket payment using `tx_ref` or `reference`. |
 | `POST` | `/api/ticketing/flutterwave/webhook/` | No | Flutterwave ticket webhook. |
 | `POST` | `/api/ticketing/validate/` | Ticketing/admin roles | Validate/check in a ticket. |
+| `GET` | `/api/ticketing/admin/ticket-types/` | Admin/staff | List ticket types for managed matches. |
+| `POST` | `/api/ticketing/admin/ticket-types/create/` | Admin/staff | Create ticket type for managed match. |
+| `GET` | `/api/ticketing/admin/ticket-types/<pk>/` | Admin/staff | Retrieve ticket type. |
+| `PATCH` | `/api/ticketing/admin/ticket-types/<pk>/update/` | Admin/staff | Update ticket type. |
+| `DELETE` | `/api/ticketing/admin/ticket-types/<pk>/delete/` | Admin/staff | Delete ticket type if no orders exist. |
+| `PATCH` | `/api/ticketing/admin/ticket-types/<pk>/inventory/` | Admin/staff | Update available inventory for a ticket type. |
+| `POST` | `/api/ticketing/admin/ticket-types/<pk>/publish/` | Admin/staff | Publish/unpublish/sell-out/reopen a ticket type. |
+| `POST` | `/api/ticketing/admin/matches/<match_id>/publish-sale/` | Admin/staff | Publish sale for all ticket types of a match. |
+| `GET` | `/api/ticketing/admin/sales-monitoring/` | Admin/staff | Ticket sales monitoring and performance metrics. |
 
 ### Ticket Checkout Request
 
@@ -186,6 +220,101 @@ GET /api/ticketing/flutterwave/verify/?tx_ref=LOS-TICKET-1-...
 {
   "scanned_code": "ticket-uuid-value",
   "match_id": 1
+}
+```
+
+## Monitoring & Audit
+
+Super-admin-only module for platform monitoring, audit trails, compliance, and security events.
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/api/monitoring/anomalies/` | Super Admin | List anomalies. |
+| `POST` | `/api/monitoring/anomalies/` | Super Admin | Create anomaly. |
+| `GET` | `/api/monitoring/anomalies/<pk>/` | Super Admin | Retrieve anomaly. |
+| `PATCH` | `/api/monitoring/anomalies/<pk>/` | Super Admin | Partial update anomaly. |
+| `PUT` | `/api/monitoring/anomalies/<pk>/` | Super Admin | Full update anomaly. |
+| `DELETE` | `/api/monitoring/anomalies/<pk>/` | Super Admin | Delete anomaly. |
+| `POST` | `/api/monitoring/anomalies/<pk>/resolve/` | Super Admin | Resolve anomaly. |
+| `GET` | `/api/monitoring/payments/` | Super Admin | List payment audit records. |
+| `GET` | `/api/monitoring/payments/<pk>/` | Super Admin | Retrieve payment audit. |
+| `GET` | `/api/monitoring/transactions/` | Super Admin | List transaction reconciliations. |
+| `POST` | `/api/monitoring/transactions/` | Super Admin | Create reconciliation. |
+| `GET` | `/api/monitoring/transactions/<pk>/` | Super Admin | Retrieve reconciliation. |
+| `PATCH` | `/api/monitoring/transactions/<pk>/` | Super Admin | Partial update reconciliation. |
+| `PUT` | `/api/monitoring/transactions/<pk>/` | Super Admin | Full update reconciliation. |
+| `POST` | `/api/monitoring/transactions/<pk>/verify/` | Super Admin | Verify reconciliation. |
+| `GET` | `/api/monitoring/system-logs/` | Super Admin | List system logs. |
+| `GET` | `/api/monitoring/system-logs/<pk>/` | Super Admin | Retrieve system log. |
+| `GET` | `/api/monitoring/compliance/` | Super Admin | List compliance trails. |
+| `POST` | `/api/monitoring/compliance/` | Super Admin | Create compliance trail. |
+| `GET` | `/api/monitoring/compliance/<pk>/` | Super Admin | Retrieve compliance trail. |
+| `PATCH` | `/api/monitoring/compliance/<pk>/` | Super Admin | Partial update compliance trail. |
+| `PUT` | `/api/monitoring/compliance/<pk>/` | Super Admin | Full update compliance trail. |
+| `GET` | `/api/monitoring/data-access/` | Super Admin | List data access audit records. |
+| `GET` | `/api/monitoring/data-access/<pk>/` | Super Admin | Retrieve data access audit. |
+| `GET` | `/api/monitoring/security-events/` | Super Admin | List security events. |
+| `POST` | `/api/monitoring/security-events/` | Super Admin | Create security event. |
+| `GET` | `/api/monitoring/security-events/<pk>/` | Super Admin | Retrieve security event. |
+| `POST` | `/api/monitoring/security-events/<pk>/resolve/` | Super Admin | Resolve security event. |
+
+## RBAC
+
+Super-admin-only module for managing role templates, permissions, permission bundles, user role assignments, user permission overrides, sessions, and impersonation.
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/api/rbac/permissions/` | Super Admin | List all permissions. |
+| `GET` | `/api/rbac/permissions/<pk>/` | Super Admin | Retrieve permission. |
+| `GET/POST` | `/api/rbac/bundles/` | Super Admin | List or create permission bundles. |
+| `GET/PUT/PATCH/DELETE` | `/api/rbac/bundles/<pk>/` | Super Admin | Retrieve, update, or delete permission bundle. |
+| `GET/POST` | `/api/rbac/role-templates/` | Super Admin | List or create role templates. |
+| `GET/PUT/PATCH/DELETE` | `/api/rbac/role-templates/<pk>/` | Super Admin | Retrieve, update, or delete role template. |
+| `GET/POST` | `/api/rbac/assignments/` | Super Admin | List or create user role assignments. |
+| `GET/PUT/PATCH/DELETE` | `/api/rbac/assignments/<pk>/` | Super Admin | Retrieve, update, or delete user role assignment. |
+| `GET/POST` | `/api/rbac/overrides/` | Super Admin | List or create user permission overrides. |
+| `GET/PUT/PATCH/DELETE` | `/api/rbac/overrides/<pk>/` | Super Admin | Retrieve, update, or delete permission override. |
+| `GET` | `/api/rbac/sessions/` | Super Admin | List user sessions. |
+| `GET/POST` | `/api/rbac/sessions/<pk>/` | Super Admin | Retrieve or revoke session. |
+| `GET/POST` | `/api/rbac/impersonation/` | Super Admin | List impersonation sessions or start new impersonation. |
+| `POST` | `/api/rbac/impersonation/<pk>/stop/` | Super Admin | Stop active impersonation session. |
+
+## Analytics
+
+Super-admin-only module for platform-wide analytics, reporting, and audit logging.
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/api/analytics/summary/` | Super Admin | Platform summary analytics (users, memberships, ticketing, sponsorships). |
+| `GET` | `/api/analytics/user-growth/` | Super Admin | User growth analytics with date filtering (start_date, end_date, period). |
+| `GET` | `/api/analytics/engagement/` | Super Admin | Engagement analytics (follows, events, polls, predictions). |
+| `GET` | `/api/analytics/membership/` | Super Admin | Membership analytics (active, expired, suspended). |
+| `GET` | `/api/analytics/ticketing/` | Super Admin | Ticketing analytics (orders, tickets). |
+| `GET` | `/api/analytics/sponsorship/` | Super Admin | Sponsorship analytics (accounts, agreements). |
+| `GET` | `/api/analytics/system-health/` | Super Admin | System health metrics (database, anomalies, security events). |
+| `GET` | `/api/analytics/access-logs/` | Super Admin | List analytics report access and export audit logs. |
+
+### Analytics Query Parameters
+
+| Parameter | Description |
+|---|---|
+| `start_date` | Filter start date (YYYY-MM-DD). |
+| `end_date` | Filter end date (YYYY-MM-DD). |
+| `period` | Aggregation period: `daily`, `weekly`, `monthly`. |
+
+### Analytics Response Examples
+
+All responses follow a table format:
+
+```json
+{
+  "data": [
+    {"metric": "Total Users", "value": 1234, "category": "users"},
+    {"metric": "Active Memberships", "value": 456, "category": "memberships"},
+    {"metric": "Paid Ticket Orders", "value": 345, "category": "ticketing"}
+  ],
+  "total_records": 3,
+  "generated_at": "2026-03-07T18:00:00Z"
 }
 ```
 

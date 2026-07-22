@@ -76,9 +76,10 @@ def build_checkout_payload(payment, request=None):
     amount = Decimal(payment.amount_paid).quantize(Decimal("0.01"))
 
     redirect_url = settings.FLUTTERWAVE_REDIRECT_URL
-    if request is not None and not redirect_url:
-        redirect_url = request.build_absolute_uri(
-            "/api/sponsorships/flutterwave/verify/"
+    if not redirect_url:
+        raise FlutterwaveError(
+            "FLUTTERWAVE_REDIRECT_URL must point to the frontend "
+            "sponsor payment processing page."
         )
 
     return {

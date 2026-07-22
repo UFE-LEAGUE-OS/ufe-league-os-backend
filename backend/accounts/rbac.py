@@ -1,4 +1,4 @@
-from .models import AuditLog, RoleApproval, User
+from .models import AuditLog, RoleApproval, User, ClubAdminScope
 
 ROLE_PERMISSIONS = {
     User.Role.FAN: {
@@ -8,6 +8,11 @@ ROLE_PERMISSIONS = {
     User.Role.CLUB_ADMIN: {
         "dashboard.club_admin",
         "dashboard.me",
+        "club.profile.view",
+        "club.profile.edit",
+        "club.squad.manage",
+        "club.members.manage",
+        "club.ticketing.manage",
     },
     User.Role.LEAGUE_ADMIN: {
         "dashboard.league_admin",
@@ -43,7 +48,7 @@ FRONTEND_DASHBOARD_ROUTES = {
     User.Role.SUPER_ADMIN: "/dashboard/super-admin",
     User.Role.REFEREE: "/dashboard/referee",
     User.Role.TICKETING_OFFICER: "/dashboard/ticketing-officer",
-    User.Role.SPONSOR: "/dashboard/sponsor",
+    User.Role.SPONSOR: "/sponsor/dashboard",
 }
 
 BACKEND_DASHBOARD_ROUTES = {
@@ -215,6 +220,161 @@ def get_role_permissions(role):
     return ROLE_PERMISSIONS.get(role, set())
 
 
+def user_has_union_workspace_access(user):
+    """Return True when a normal user account has an active union workspace."""
+
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+
+    union_memberships = getattr(user, "union_workspace_memberships", None)
+
+    if union_memberships is None:
+        return False
+
+    return union_memberships.filter(is_active=True, workspace__status="ACTIVE").exists()
+
+
+def get_union_workspace_permissions(user):
+    """Return permissions granted through active union workspace memberships."""
+
+    if user is None or not getattr(user, "is_authenticated", False):
+        return set()
+
+    union_memberships = getattr(user, "union_workspace_memberships", None)
+
+    if union_memberships is None:
+        return set()
+
+    permissions = set()
+
+    for membership in union_memberships.filter(
+        is_active=True,
+        workspace__status="ACTIVE",
+    ):
+        permissions.update(membership.effective_permissions)
+
+    if permissions:
+        permissions.add("dashboard.union_admin")
+        permissions.add("dashboard.me")
+        permissions.add("union.workspace.switch")
+
+    return permissions
+
+
+# Sub-role specific permission sets for club admin
+CLUB_ADMIN_SUB_ROLE_PERMISSIONS = {
+    ClubAdminScope.Role.CLUB_ADMIN: {
+        "club.profile.view",
+        "club.profile.edit",
+        "club.squad.manage",
+        "club.members.manage",
+        "club.ticketing.manage",
+        "club.events.manage",
+        "club.reports.view",
+        "club.finance.view",
+        "dashboard.club_admin",
+        "dashboard.me",
+    },
+    ClubAdminScope.Role.CHAIRMAN: {
+        "club.profile.view",
+        "club.profile.edit",
+        "club.squad.manage",
+        "club.members.manage",
+        "club.ticketing.manage",
+        "club.events.manage",
+        "club.reports.view",
+        "club.finance.view",
+        "club.admin.manage",
+        "club.settings.manage",
+        "club.transfers.manage",
+        "club.sponsorship.manage",
+        "dashboard.club_admin",
+        "dashboard.me",
+    },
+    ClubAdminScope.Role.TREASURER: {
+        "club.profile.view",
+        "club.finance.view",
+        "club.finance.manage",
+        "club.members.manage",
+        "club.ticketing.manage",
+        "club.reports.view",
+        "club.sponsorship.view",
+        "dashboard.club_admin",
+        "dashboard.me",
+    },
+    ClubAdminScope.Role.TEAM_MANAGER: {
+        "club.profile.view",
+        "club.squad.manage",
+        "club.events.manage",
+        "club.training.manage",
+        "club.matches.manage",
+        "club.reports.view",
+        "dashboard.club_admin",
+        "dashboard.me",
+    },
+    ClubAdminScope.Role.TICKETING_OFFICER: {
+        "club.profile.view",
+        "club.ticketing.manage",
+        "club.events.manage",
+        "club.reports.view",
+        "club.ticketing.validate",
+        "dashboard.club_admin",
+        "dashboard.me",
+    },
+    ClubAdminScope.Role.CUSTOM: {
+        "club.profile.view",
+        "dashboard.club_admin",
+        "dashboard.me",
+    },
+}
+
+
+def get_club_workspace_permissions(user):
+    """Return permissions granted through active club admin scope memberships."""
+    if user is None or not getattr(user, "is_authenticated", False):
+        return set()
+
+    # Using the related_name 'club_admin_scopes' from the new model
+    club_scopes = getattr(user, "club_admin_scopes", None)
+    if club_scopes is None:
+        return set()
+
+    permissions = set()
+    # Collect permissions from all active club admin scopes
+    for scope in club_scopes.filter(is_active=True).select_related("club"):
+        sub_role_perms = CLUB_ADMIN_SUB_ROLE_PERMISSIONS.get(scope.role, set())
+        permissions.update(sub_role_perms)
+
+    return permissions
+
+
+def user_has_club_workspace_access(user):
+    """Return True if the user has an active club admin scope."""
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+    return getattr(user, "club_admin_scopes", None).filter(is_active=True).exists()
+
+
+def get_club_admin_sub_role(user):
+    """Return the primary sub-role for a club admin user."""
+    if user is None or not getattr(user, "is_authenticated", False):
+        return None
+
+    club_scopes = getattr(user, "club_admin_scopes", None)
+    if club_scopes is None:
+        return None
+
+    active_scope = club_scopes.filter(is_active=True).select_related("club").first()
+    if active_scope:
+        return {
+            "role": active_scope.role,
+            "role_display": active_scope.get_role_display(),
+            "club_id": active_scope.club.id,
+            "club_name": active_scope.club.name,
+        }
+    return None
+
+
 def user_has_sponsor_access(user):
     """
     Return True when the user can access sponsor features.
@@ -251,6 +411,10 @@ def get_user_permissions(user):
     if user_has_sponsor_access(user):
         permissions |= get_role_permissions(User.Role.SPONSOR)
 
+    permissions |= get_union_workspace_permissions(user)
+
+    permissions |= get_club_workspace_permissions(user)
+
     return permissions
 
 
@@ -283,6 +447,26 @@ def get_dashboard_routes(user):
                 "role_display": "Sponsor",
                 "route": FRONTEND_DASHBOARD_ROUTES[User.Role.SPONSOR],
                 "backend_route": BACKEND_DASHBOARD_ROUTES[User.Role.SPONSOR],
+            }
+        )
+
+    if user_has_union_workspace_access(user) and user.role != User.Role.UNION_ADMIN:
+        routes.append(
+            {
+                "role": User.Role.UNION_ADMIN,
+                "role_display": "Union Admin Workspace",
+                "route": FRONTEND_DASHBOARD_ROUTES[User.Role.UNION_ADMIN],
+                "backend_route": BACKEND_DASHBOARD_ROUTES[User.Role.UNION_ADMIN],
+            }
+        )
+
+    if user_has_club_workspace_access(user) and user.role != User.Role.CLUB_ADMIN:
+        routes.append(
+            {
+                "role": User.Role.CLUB_ADMIN,
+                "role_display": "Club Admin Workspace",
+                "route": FRONTEND_DASHBOARD_ROUTES[User.Role.CLUB_ADMIN],
+                "backend_route": BACKEND_DASHBOARD_ROUTES[User.Role.CLUB_ADMIN],
             }
         )
 
@@ -363,3 +547,60 @@ def log_access_violation(request, status_code, detail=None):
         ip_address=get_client_ip(request),
         details=details,
     )
+
+
+# ---------------------------------------------------------------------------
+# Helper functions for teams app
+# ---------------------------------------------------------------------------
+
+
+def get_user_clubs(user):
+    """
+    Return the list of clubs that the user can manage as a CLUB_ADMIN.
+
+    Rules:
+    - SUPER_ADMIN can manage all clubs.
+    - CLUB_ADMIN can manage clubs where they are the assigned admin.
+    - UNION_ADMIN can manage clubs under their union workspace leagues.
+    """
+    from .models import Club
+
+    if user is None or not user.is_authenticated:
+        return Club.objects.none()
+
+    if user.role == User.Role.SUPER_ADMIN:
+        return Club.objects.all()
+
+    if user.role == User.Role.CLUB_ADMIN:
+        # Clubs where user is the designated admin
+        return Club.objects.filter(admin=user)
+
+    if user.role in (User.Role.UNION_ADMIN, User.Role.LEAGUE_ADMIN):
+        # Union admins can access clubs in leagues under their unions
+
+        workspace_clubs = Club.objects.filter(
+            league_memberships__league__union__workspace__memberships__user=user,
+            league_memberships__league__union__workspace__memberships__is_active=True,
+            league_memberships__league__union__workspace__memberships__workspace__status="ACTIVE",
+        )
+        return workspace_clubs.distinct()
+
+    return Club.objects.none()
+
+
+def get_user_union_workspaces(user):
+    """
+    Return the list of active UnionWorkspace records the user belongs to.
+    """
+    if user is None or not user.is_authenticated:
+        return []
+
+    from dashboards.models import UnionWorkspaceMembership
+
+    memberships = UnionWorkspaceMembership.objects.filter(
+        user=user,
+        is_active=True,
+        workspace__status="ACTIVE",
+    ).select_related("workspace")
+
+    return [m.workspace for m in memberships]

@@ -1,6 +1,48 @@
-from django.urls import path
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
 
 from . import views
+from .governance_views import (
+    SponsorFrameworkViewSet,
+    CampaignVisibilitySettingsViewSet,
+    SystemPlacementViewSet,
+    BenefitSharingPolicyViewSet,
+    SponsorshipInventoryViewSet,
+    CampaignPerformanceViewSet,
+    SponsorshipApprovalWorkflowViewSet,
+    ComplianceAuditViewSet,
+)
+
+# Governance router
+governance_router = DefaultRouter()
+governance_router.register(
+    r"frameworks", SponsorFrameworkViewSet, basename="sponsor-framework"
+)
+governance_router.register(
+    r"visibility-settings",
+    CampaignVisibilitySettingsViewSet,
+    basename="campaign-visibility",
+)
+governance_router.register(
+    r"placements", SystemPlacementViewSet, basename="system-placement"
+)
+governance_router.register(
+    r"benefit-policies", BenefitSharingPolicyViewSet, basename="benefit-policy"
+)
+governance_router.register(
+    r"inventory", SponsorshipInventoryViewSet, basename="sponsorship-inventory"
+)
+governance_router.register(
+    r"performance", CampaignPerformanceViewSet, basename="campaign-performance"
+)
+governance_router.register(
+    r"approval-workflows",
+    SponsorshipApprovalWorkflowViewSet,
+    basename="approval-workflow",
+)
+governance_router.register(
+    r"compliance-audits", ComplianceAuditViewSet, basename="compliance-audit"
+)
 
 urlpatterns = [
     path("register/", views.sponsor_register_view, name="sponsor-register"),
@@ -39,6 +81,11 @@ urlpatterns = [
         "packages/<int:package_id>/benefits/",
         views.sponsor_package_benefits_view,
         name="sponsor-package-benefits",
+    ),
+    path(
+        "packages/<int:package_id>/opportunities/",
+        views.sponsor_package_opportunities_view,
+        name="sponsor-package-opportunities",
     ),
     path(
         "packages/<int:package_id>/revenue-share-rules/",
@@ -120,4 +167,6 @@ urlpatterns = [
         views.flutterwave_webhook_view,
         name="flutterwave-webhook",
     ),
+    # Governance endpoints
+    path("governance/", include(governance_router.urls)),
 ]

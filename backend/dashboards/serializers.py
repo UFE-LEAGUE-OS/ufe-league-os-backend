@@ -1,15 +1,59 @@
 from rest_framework import serializers
 
 from accounts.models import Club
-from .models import Union, League, Competition, Match, Standing
+from .models import (
+    Union,
+    League,
+    Competition,
+    Match,
+    Standing,
+    UnionWorkspace,
+    UnionWorkspaceMembership,
+)
+
+
+def build_file_url(request, file_field):
+    if not file_field:
+        return ""
+
+    try:
+        url = file_field.url
+    except ValueError:
+        return ""
+
+    return request.build_absolute_uri(url) if request else url
 
 
 class ClubListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for public club listing."""
 
+    logo_url = serializers.SerializerMethodField()
+    banner_url = serializers.SerializerMethodField()
+    sport_display = serializers.CharField(source="get_sport_display", read_only=True)
+
     class Meta:
         model = Club
-        fields = ["id", "name", "slug", "created_at"]
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "short_name",
+            "sport",
+            "sport_display",
+            "logo",
+            "logo_url",
+            "banner",
+            "banner_url",
+            "primary_color",
+            "secondary_color",
+            "created_at",
+        ]
+
+    def get_logo_url(self, obj):
+        return build_file_url(self.context.get("request"), obj.logo)
+
+    def get_banner_url(self, obj):
+        return build_file_url(self.context.get("request"), obj.banner)
 
 
 class UnionSerializer(serializers.ModelSerializer):
@@ -80,6 +124,8 @@ class MatchListSerializer(serializers.ModelSerializer):
     away_club_name = serializers.CharField(source="away_club.name", read_only=True)
     home_club_slug = serializers.SlugField(source="home_club.slug", read_only=True)
     away_club_slug = serializers.SlugField(source="away_club.slug", read_only=True)
+    home_club_logo_url = serializers.SerializerMethodField()
+    away_club_logo_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Match
@@ -90,9 +136,11 @@ class MatchListSerializer(serializers.ModelSerializer):
             "home_club",
             "home_club_name",
             "home_club_slug",
+            "home_club_logo_url",
             "away_club",
             "away_club_name",
             "away_club_slug",
+            "away_club_logo_url",
             "status",
             "match_date",
             "venue",
@@ -109,6 +157,12 @@ class MatchListSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
+    def get_home_club_logo_url(self, obj):
+        return build_file_url(self.context.get("request"), obj.home_club.logo)
+
+    def get_away_club_logo_url(self, obj):
+        return build_file_url(self.context.get("request"), obj.away_club.logo)
+
 
 class MatchDetailSerializer(serializers.ModelSerializer):
     """Detailed serializer for a single match, including computed properties."""
@@ -117,8 +171,10 @@ class MatchDetailSerializer(serializers.ModelSerializer):
     competition_slug = serializers.SlugField(source="competition.slug", read_only=True)
     home_club_name = serializers.CharField(source="home_club.name", read_only=True)
     home_club_slug = serializers.SlugField(source="home_club.slug", read_only=True)
+    home_club_logo_url = serializers.SerializerMethodField()
     away_club_name = serializers.CharField(source="away_club.name", read_only=True)
     away_club_slug = serializers.SlugField(source="away_club.slug", read_only=True)
+    away_club_logo_url = serializers.SerializerMethodField()
     is_fixture = serializers.BooleanField(read_only=True)
     has_result = serializers.BooleanField(read_only=True)
 
@@ -132,9 +188,11 @@ class MatchDetailSerializer(serializers.ModelSerializer):
             "home_club",
             "home_club_name",
             "home_club_slug",
+            "home_club_logo_url",
             "away_club",
             "away_club_name",
             "away_club_slug",
+            "away_club_logo_url",
             "status",
             "match_date",
             "venue",
@@ -153,6 +211,12 @@ class MatchDetailSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def get_home_club_logo_url(self, obj):
+        return build_file_url(self.context.get("request"), obj.home_club.logo)
+
+    def get_away_club_logo_url(self, obj):
+        return build_file_url(self.context.get("request"), obj.away_club.logo)
 
 
 class StandingSerializer(serializers.ModelSerializer):
@@ -187,3 +251,77 @@ class StandingTableSerializer(serializers.Serializer):
     competition_name = serializers.CharField(read_only=True)
     competition_id = serializers.IntegerField(read_only=True)
     entries = serializers.ListField(child=StandingSerializer(), read_only=True)
+
+
+class UnionWorkspaceSerializer(serializers.ModelSerializer):
+    admin_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UnionWorkspace
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "acronym",
+            "sport",
+            "workspace_type",
+            "description",
+            "primary_color",
+            "status",
+            "admin_count",
+            "created_at",
+        ]
+
+    def get_admin_count(self, obj):
+        return obj.memberships.filter(is_active=True).count()
+
+
+class UnionWorkspaceMembershipSerializer(serializers.ModelSerializer):
+    workspace = UnionWorkspaceSerializer(read_only=True)
+    role_display = serializers.CharField(source="get_role_display", read_only=True)
+    effective_permissions = serializers.ListField(read_only=True)
+
+    class Meta:
+        model = UnionWorkspaceMembership
+        fields = [
+            "id",
+            "workspace",
+            "role",
+            "role_display",
+            "effective_permissions",
+            "is_active",
+            "created_at",
+        ]
+
+
+class UnionWorkspaceUserSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(source="user.id", read_only=True)
+    user_email = serializers.EmailField(source="user.email", read_only=True)
+    user_first_name = serializers.CharField(source="user.first_name", read_only=True)
+    user_last_name = serializers.CharField(source="user.last_name", read_only=True)
+    user_full_name = serializers.CharField(source="user.full_name", read_only=True)
+    workspace_slug = serializers.CharField(source="workspace.slug", read_only=True)
+    workspace_acronym = serializers.CharField(
+        source="workspace.acronym", read_only=True
+    )
+    role_display = serializers.CharField(source="get_role_display", read_only=True)
+    effective_permissions = serializers.ListField(read_only=True)
+
+    class Meta:
+        model = UnionWorkspaceMembership
+        fields = [
+            "id",
+            "user_id",
+            "user_email",
+            "user_first_name",
+            "user_last_name",
+            "user_full_name",
+            "workspace_slug",
+            "workspace_acronym",
+            "role",
+            "role_display",
+            "effective_permissions",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]

@@ -9,6 +9,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.dashboard_entitlements import resolve_dashboard_access
 from accounts.serializers import UserSerializer
 
 from .models import (
@@ -21,6 +22,7 @@ from .models import (
     SponsorPayment,
     SponsorPaymentSchedule,
     SponsorWorkflowEvent,
+    SponsorshipOpportunity,
 )
 
 from .flutterwave import (
@@ -86,6 +88,7 @@ from .serializers import (
     SponsorPaymentScheduleSerializer,
     SponsorPaymentSerializer,
     SponsorRegistrationSerializer,
+    SponsorshipOpportunitySerializer,
 )
 
 
@@ -100,7 +103,6 @@ def sponsor_register_view(request):
     if serializer.is_valid():
         sponsor_account = serializer.save()
         user = sponsor_account.owner
-
         return Response(
             {
                 "message": (
@@ -152,6 +154,7 @@ def sponsor_accounts_view(request):
 
     if serializer.is_valid():
         sponsor_account = serializer.save()
+        dashboard_access = resolve_dashboard_access(request.user)
 
         return Response(
             {
@@ -160,6 +163,7 @@ def sponsor_accounts_view(request):
                     sponsor_account,
                     context={"request": request},
                 ).data,
+                "dashboard_access": dashboard_access,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -275,6 +279,7 @@ def sponsor_packages_view(request):
             "approved_by",
         ).prefetch_related(
             "benefits",
+            "opportunities",
             "revenue_share_rules",
         )
 
@@ -290,6 +295,10 @@ def sponsor_packages_view(request):
         scope_type = request.query_params.get("scope_type")
         category = request.query_params.get("category")
         status_filter = request.query_params.get("status")
+        objective = request.query_params.get("objective")
+        duration_type = request.query_params.get("duration_type")
+        sport = request.query_params.get("sport")
+        is_template = request.query_params.get("is_template")
 
         if owner_type:
             packages = packages.filter(owner_type=owner_type.upper())
@@ -299,6 +308,20 @@ def sponsor_packages_view(request):
 
         if category:
             packages = packages.filter(category=category.upper())
+
+        if objective:
+            packages = packages.filter(objective=objective.upper())
+
+        if duration_type:
+            packages = packages.filter(duration_type=duration_type.upper())
+
+        if sport:
+            packages = packages.filter(sport=sport.upper())
+
+        if is_template is not None:
+            packages = packages.filter(
+                is_template=is_template.lower() in {"1", "true", "yes"}
+            )
 
         if status_filter and is_sponsor_hub_admin(request.user):
             packages = packages.filter(status=status_filter.upper())
@@ -631,6 +654,72 @@ def sponsor_package_revenue_share_rules_view(request, package_id):
 
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
+def sponsor_package_opportunities_view(request, package_id):
+    sponsor_package = get_sponsor_package_for_request(package_id)
+
+    if sponsor_package is None:
+        return Response(
+            {"detail": "Sponsor package not found."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if request.method == "GET":
+        opportunities = sponsor_package.opportunities.all()
+
+        if not is_sponsor_hub_admin(request.user):
+            opportunities = opportunities.filter(
+                status=SponsorshipOpportunity.Status.AVAILABLE
+            )
+
+        return Response(
+            {
+                "count": opportunities.count(),
+                "results": SponsorshipOpportunitySerializer(
+                    opportunities,
+                    many=True,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if not can_manage_sponsor_package(request.user, sponsor_package):
+        return Response(
+            {
+                "detail": (
+                    "You do not have permission to add "
+                    "opportunities to this package."
+                )
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    data = request.data.copy()
+    data["sponsor_package"] = sponsor_package.id
+    serializer = SponsorshipOpportunitySerializer(data=data)
+
+    if serializer.is_valid():
+        opportunity = serializer.save()
+
+        return Response(
+            {
+                "message": "Sponsorship opportunity created successfully.",
+                "opportunity": SponsorshipOpportunitySerializer(
+                    opportunity,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    return Response(
+        serializer.errors,
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
 def sponsor_agreements_view(request):
     """
     List sponsorship agreements or create a sponsorship agreement.
@@ -643,6 +732,7 @@ def sponsor_agreements_view(request):
         agreements = SponsorAgreement.objects.select_related(
             "sponsor_account",
             "sponsor_package",
+            "opportunity",
             "created_by",
             "approved_by",
         ).prefetch_related(
@@ -733,9 +823,44 @@ def sponsor_agreements_view(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    opportunity = None
+    opportunity_id = request.data.get("opportunity")
+
+    if opportunity_id:
+        opportunity = SponsorshipOpportunity.objects.filter(
+            id=opportunity_id,
+            sponsor_package=sponsor_package,
+        ).first()
+
+        if opportunity is None:
+            return Response(
+                {
+                    "opportunity": (
+                        "The selected opportunity does not belong " "to this package."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if opportunity.status != SponsorshipOpportunity.Status.AVAILABLE:
+            return Response(
+                {"opportunity": "This sponsorship opportunity is not available."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
     data = request.data.copy()
-    data.setdefault("total_value", sponsor_package.price_amount)
-    data.setdefault("currency", sponsor_package.currency)
+
+    if opportunity is not None:
+        data["opportunity"] = opportunity.id
+        data["status"] = SponsorAgreement.Status.SUBMITTED
+        data.setdefault("total_value", opportunity.price_amount)
+        data.setdefault("currency", opportunity.currency)
+        data.setdefault("starts_at", opportunity.starts_at)
+        data.setdefault("ends_at", opportunity.ends_at)
+    else:
+        data.setdefault("total_value", sponsor_package.price_amount)
+        data.setdefault("currency", sponsor_package.currency)
+
     data.setdefault("platform_fee_required", sponsor_package.requires_platform_fee)
     data.setdefault("platform_fee_amount", sponsor_package.platform_fee_amount)
 
