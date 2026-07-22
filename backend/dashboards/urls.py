@@ -145,6 +145,26 @@ urlpatterns = [
         name="union-admin-competition-identities",
     ),
     path(
+        "union-admin/competition-create/",
+        union_competition_views.union_admin_competition_create_view,
+        name="union-admin-competition-create",
+    ),
+    path(
+        "union-admin/competition-administrators/eligible/",
+        union_competition_views.union_admin_competition_eligible_administrators_view,
+        name="union-admin-competition-administrators-eligible",
+    ),
+    path(
+        "union-admin/competitions/<int:competition_id>/administrators/",
+        union_competition_views.union_admin_competition_administrators_view,
+        name="union-admin-competition-administrators",
+    ),
+    path(
+        "union-admin/competitions/<int:competition_id>/administrators/<int:scope_id>/",
+        union_competition_views.union_admin_competition_administrator_detail_view,
+        name="union-admin-competition-administrator-detail",
+    ),
+    path(
         "union-admin/competition-identities/<int:identity_id>/editions/",
         union_competition_views.union_admin_competition_editions_view,
         name="union-admin-competition-editions",

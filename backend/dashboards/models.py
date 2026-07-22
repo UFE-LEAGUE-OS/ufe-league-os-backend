@@ -276,6 +276,8 @@ class LeagueAdminScope(models.Model):
     class Role(models.TextChoices):
         LEAGUE_ADMIN = "LEAGUE_ADMIN", "League Administrator"
         COMPETITION_ADMIN = "COMPETITION_ADMIN", "Competition Administrator"
+        FIXTURES_MANAGER = "FIXTURES_MANAGER", "Fixtures Manager"
+        REGISTRAR = "REGISTRAR", "Registrar"
         OFFICIALS_COORDINATOR = "OFFICIALS_COORDINATOR", "Officials Coordinator"
         VIEWER = "VIEWER", "Viewer"
 
