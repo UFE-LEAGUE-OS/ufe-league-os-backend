@@ -153,6 +153,38 @@ class CompetitionEditionTests(APITestCase):
         self.assertEqual(response.data["results"][0]["id"], self.identity.id)
         self.assertEqual(response.data["results"][0]["default_format"], {})
 
+    def test_editions_endpoint_preserves_legacy_and_empty_structure_verbatim(self):
+        self.client.force_authenticate(self.owner)
+
+        stored_structures = (
+            {"round_robin": True},
+            {},
+        )
+
+        for stored_structure in stored_structures:
+            with self.subTest(stored_structure=stored_structure):
+                self.old_edition.structure = stored_structure
+                self.old_edition.save(update_fields=["structure"])
+
+                response = self.client.get(
+                    (
+                        "/api/dashboards/union-admin/"
+                        f"competition-identities/{self.identity.id}/editions/"
+                    ),
+                    {"workspace": self.workspace.slug},
+                )
+
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual(response.data["count"], 1)
+                self.assertEqual(
+                    response.data["results"][0]["id"],
+                    self.old_edition.id,
+                )
+                self.assertEqual(
+                    response.data["results"][0]["structure"],
+                    stored_structure,
+                )
+
     def _creation_payload(self, **overrides):
         payload = {
             "workspace": self.workspace.slug,

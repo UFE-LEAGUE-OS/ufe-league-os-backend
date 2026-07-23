@@ -183,7 +183,7 @@ class CompetitionEditionSerializer(serializers.ModelSerializer):
     published_by_email = serializers.EmailField(
         source="published_by.email", read_only=True
     )
-    structure = CompetitionFormatSerializer(required=False)
+    structure = serializers.JSONField(read_only=True)
     allowed_transitions = serializers.SerializerMethodField()
 
     def get_allowed_transitions(self, obj):
